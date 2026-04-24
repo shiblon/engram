@@ -123,8 +123,8 @@ func runInject(cmd *cobra.Command, _ []string) error {
 	}
 	defer db.Close()
 
-	result, err := engram.Inject(ctx, db, injectSessions)
-	if err != nil || (len(result.Files) == 0 && len(result.Searches) == 0) {
+	projectResult, err := engram.Inject(ctx, db, injectSessions)
+	if err != nil {
 		fmt.Println("{}")
 		return nil
 	}
@@ -134,7 +134,18 @@ func runInject(cmd *cobra.Command, _ []string) error {
 		fmt.Fprintf(os.Stderr, "engram prune: %v\n", err)
 	}
 
-	fmt.Println(string(engram.FormatInjectOutput(result, injectSessions)))
+	// Read global memories (personality, preferences). Non-fatal if absent.
+	var globalResult engram.InjectResult
+	if globalPath, err := engram.GlobalDBPath(); err == nil {
+		if _, err := os.Stat(globalPath); err == nil {
+			if gdb, err := engram.Open(ctx, globalPath); err == nil {
+				globalResult, _ = engram.Inject(ctx, gdb, injectSessions)
+				gdb.Close()
+			}
+		}
+	}
+
+	fmt.Println(string(engram.FormatInjectOutput(globalResult, projectResult, injectSessions)))
 	return nil
 }
 
@@ -178,5 +189,5 @@ func init() {
 	injectCmd.Flags().IntVar(&injectSessions, "sessions", engram.DefaultInjectSessions, "number of recent sessions to include")
 	injectCmd.Flags().IntVar(&injectKeep, "keep", engram.DefaultPruneSessions, "number of sessions to keep")
 	pruneCmd.Flags().IntVar(&pruneKeep, "keep", engram.DefaultPruneSessions, "number of sessions to keep")
-	rootCmd.AddCommand(recordCmd, injectCmd, pruneCmd)
+	rootCmd.AddCommand(recordCmd, injectCmd, pruneCmd, memCmd)
 }
