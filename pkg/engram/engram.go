@@ -158,6 +158,11 @@ type EditResponse struct {
 	StructuredPatch []EditHunk `json:"structuredPatch"`
 }
 
+// WriteResponse is the tool_response shape for Write events.
+type WriteResponse struct {
+	Content string `json:"content"`
+}
+
 // BashResponse is the tool_response shape for Bash events.
 type BashResponse struct {
 	Stdout      string `json:"stdout"`
@@ -558,6 +563,13 @@ func MakeSnippet(tool Tool, raw json.RawMessage) string {
 		}
 		return result
 
+	case ToolWrite:
+		var r WriteResponse
+		if err := json.Unmarshal(raw, &r); err != nil {
+			return ""
+		}
+		return headLines(r.Content, snippetHeadLines)
+
 	case ToolBash:
 		var r BashResponse
 		if err := json.Unmarshal(raw, &r); err != nil {
@@ -566,7 +578,6 @@ func MakeSnippet(tool Tool, raw json.RawMessage) string {
 		return headLines(r.Stdout, snippetHeadLines)
 
 	default:
-		// Write response format not yet probed.
 		return ""
 	}
 }
