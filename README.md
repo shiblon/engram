@@ -46,7 +46,7 @@ I'm making token claims, here. I don't have numbers to back them up, just experi
 
 ## Making Engineering Fun
 
-A personality that works with you, even though you should be careful of the psychological traps here, really makes work *joyful*. It's delightful when a self-deprecating joke comes out, or a pun, or a surprising insight. It makes a difference to me when I get a laugh out of an interaction. Something clicks in my brain that pushes things forward in a way that just solving a problem alone never does.
+A personality that works with you, even though you should be careful of the psychological traps here, really makes work *joyful*. It's delightful when a self-deprecating joke comes out, or a pun, or a surprising insight. It makes a difference to me when I get a laugh out of an interaction. Something clicks in my brain that pushes things forward in a way that just solving a problem alone never does. It also helps when I tell the agent *about myself*. That goes a long way toward helping it develop its own personality.
 
 I had my agent come up with its own code name. It chose Qubit, partly because of working on a task workflow system built around task queues, but also because that system is named "[EntroQ](https://github.com/shiblon/entroq)", which is a pun of my own: it's one letter removed from "entro-P", and seeks to bring order to microservice chaos.
 
@@ -93,12 +93,19 @@ Install engram for this project:
 5. Verify the hooks are correctly written by reading back .claude/settings.json
    and confirming the engram commands are present with the correct path.
 
-6. Before doing anything else: work with the user to define your personality.
-   Ask them what kind of collaborator they want — working style, tone, sense of
-   humor if they'd like one. Choose a codename for yourself. Store everything as
-   global invariants using engram mem so it persists across all projects.
-   Use: <full-path>/engram mem --global --tier invariant write <key> "<value>"
-   Then add a few code preferences: <full-path>/engram mem --global --tier preference write <key> "<rule>"
+6. Run bootstrap to install the standard workflow instructions into global memory
+   and set up a minimal CLAUDE.md if one does not already exist:
+   <full-path>/engram bootstrap
+
+   Bootstrap is idempotent -- safe to re-run, never overwrites existing entries.
+
+7. Now work with the user to define your personality. Ask them what kind of
+   collaborator they want — working style, tone, sense of humor if they'd like
+   one. Choose a codename for yourself. Store everything as global invariants
+   so it persists across all projects:
+   <full-path>/engram mem --global --tier invariant write <key> "<value>"
+   Then add a few code preferences:
+   <full-path>/engram mem --global --tier preference write <key> "<rule>"
    Run <full-path>/engram mem --help to see everything available.
 ```
 
