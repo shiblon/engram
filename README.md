@@ -66,6 +66,10 @@ You can also ask it to dump or load the memories to or from markdown files so th
 
 ### The quick way: ask your agent
 
+Don't skip the personality step — it's the most important part and takes only a few
+minutes. Read "Personality as a Context Canary" above if you haven't. The prompt
+below tells your agent to walk you through it interactively before you do anything else.
+
 Paste this into a new Claude Code session:
 
 ```
@@ -80,13 +84,14 @@ Install engram for this project:
 
 3. Add .claude/engram.db to .gitignore.
 
-Once installed, set yourself up:
-- Choose a codename and personality with: engram mem --global --tier invariant write codename "..."
-- Add a few code preferences with: engram mem --global --tier preference write <key> "<rule>"
-- Run: engram mem --help  to see everything available
+4. Before doing anything else: work with the user to define your personality.
+   Ask them what kind of collaborator they want — working style, tone, sense of
+   humor if they'd like one. Choose a codename for yourself. Store everything as
+   global invariants using engram mem so it persists across all projects.
+   Use: engram mem --global --tier invariant write <key> "<value>"
+   Then add a few code preferences: engram mem --global --tier preference write <key> "<rule>"
+   Run engram mem --help to see everything available.
 ```
-
-Your agent knows how to handle this. It will confirm where each memory was stored (global or project) so you always know what happened.
 
 ### The manual way
 
