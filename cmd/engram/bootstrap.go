@@ -66,10 +66,12 @@ func runBootstrap(cmd *cobra.Command, _ []string) error {
 	defer db.Close()
 
 	wrote, skipped := 0, 0
-	for key, content := range map[string]string{
+
+	invariants := map[string]string{
 		"engram-workflow": bootstrapWorkflow,
 		"engram-canary":   bootstrapCanary,
-	} {
+	}
+	for key, content := range invariants {
 		existing, err := engram.ReadMemory(ctx, db, engram.TierInvariant, key)
 		if err != nil {
 			return err
@@ -88,6 +90,34 @@ func runBootstrap(cmd *cobra.Command, _ []string) error {
 		}
 		fmt.Printf("wrote: invariant/%s\n", key)
 		wrote++
+	}
+
+	// Write the personality setup todo as a short-term memory only if no
+	// personality invariant exists yet -- it's self-deleting once done.
+	personality, err := engram.ReadMemory(ctx, db, engram.TierInvariant, "personality")
+	if err != nil {
+		return err
+	}
+	if personality == nil {
+		setupKey := "setup-personality"
+		existing, err := engram.ReadMemory(ctx, db, engram.TierShort, setupKey)
+		if err != nil {
+			return err
+		}
+		if existing != nil {
+			fmt.Printf("skip (exists): short/%s\n", setupKey)
+			skipped++
+		} else {
+			if err := engram.WriteMemory(ctx, db, engram.Memory{
+				Tier:    engram.TierShort,
+				Key:     setupKey,
+				Content: "Work with the user to define your personality, choose a codename, and set code preferences. Store personality and codename as global invariants, preferences as global preferences. Delete this entry when done.",
+			}); err != nil {
+				return err
+			}
+			fmt.Printf("wrote: short/%s\n", setupKey)
+			wrote++
+		}
 	}
 
 	if !bootstrapGlobalOnly {

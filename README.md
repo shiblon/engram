@@ -93,20 +93,12 @@ Install engram for this project:
 5. Verify the hooks are correctly written by reading back .claude/settings.json
    and confirming the engram commands are present with the correct path.
 
-6. Run bootstrap to install the standard workflow instructions into global memory
-   and set up a minimal CLAUDE.md if one does not already exist:
+6. Run bootstrap to install workflow instructions and set up CLAUDE.md:
    <full-path>/engram bootstrap
 
    Bootstrap is idempotent -- safe to re-run, never overwrites existing entries.
-
-7. Now work with the user to define your personality. Ask them what kind of
-   collaborator they want — working style, tone, sense of humor if they'd like
-   one. Choose a codename for yourself. Store everything as global invariants
-   so it persists across all projects:
-   <full-path>/engram mem --global --tier invariant write <key> "<value>"
-   Then add a few code preferences:
-   <full-path>/engram mem --global --tier preference write <key> "<rule>"
-   Run <full-path>/engram mem --help to see everything available.
+   If personality has not been set up yet, it will add a short-term memory todo
+   that tells you what to do next when you open your first session.
 ```
 
 ### The manual way
