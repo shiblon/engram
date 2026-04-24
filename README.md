@@ -77,20 +77,29 @@ Install engram for this project:
 
 1. Run: go install github.com/shiblon/engram/cmd/engram@latest
 
-2. Add these hooks to .claude/settings.json in the project root, merging
-   with any existing hooks (create the file if it doesn't exist):
-   - PostToolUse hook, matcher "Read|Edit|Write|Bash", command: engram record
-   - SessionStart hook, command: engram inject
+2. Find the full path to the installed binary:
+   - Run: go env GOBIN
+   - If that is empty, run: go env GOPATH  (binary is at $GOPATH/bin/engram)
+   - Verify it works: <full-path>/engram --help
 
-3. Add .claude/engram.db to .gitignore.
+3. Add these hooks to .claude/settings.json in the project root, merging
+   with any existing hooks (create the file if it doesn't exist). Use the
+   full path from step 2 in the commands:
+   - PostToolUse hook, matcher "Read|Edit|Write|Bash", command: <full-path>/engram record
+   - SessionStart hook, command: <full-path>/engram inject
 
-4. Before doing anything else: work with the user to define your personality.
+4. Add .claude/engram.db to .gitignore.
+
+5. Verify the hooks are correctly written by reading back .claude/settings.json
+   and confirming the engram commands are present with the correct path.
+
+6. Before doing anything else: work with the user to define your personality.
    Ask them what kind of collaborator they want — working style, tone, sense of
    humor if they'd like one. Choose a codename for yourself. Store everything as
    global invariants using engram mem so it persists across all projects.
-   Use: engram mem --global --tier invariant write <key> "<value>"
-   Then add a few code preferences: engram mem --global --tier preference write <key> "<rule>"
-   Run engram mem --help to see everything available.
+   Use: <full-path>/engram mem --global --tier invariant write <key> "<value>"
+   Then add a few code preferences: <full-path>/engram mem --global --tier preference write <key> "<rule>"
+   Run <full-path>/engram mem --help to see everything available.
 ```
 
 ### The manual way
