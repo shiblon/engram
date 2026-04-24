@@ -2,7 +2,7 @@
 
 *NOTE: inspired by a combination of [auto-memory](https://github.com/dezgit2025/auto-memory) and work done by a beloved colleague of mine from Atlassian: [Kevin Harris](https://www.linkedin.com/in/pwnx0r/).
 
-Just want to install and get moving? Scroll down.
+Just want to install and get moving? [Jump to installation.](#installation)
 
 Memory affects everything about people. It affects personality, the ability to hold a conversation, and the ability to get things done. This is also true for AI agents, but the story there is fragmented and memory does not always behave as we expect.
 
