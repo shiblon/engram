@@ -33,7 +33,11 @@ To manage memory:
   engram mem --help                          -- all subcommands
   engram mem search <query>                  -- full-text search across all tiers
   engram mem search --tier long <query>      -- search within a specific tier
-If engram is not in PATH, find the full path with: go env GOBIN`
+If engram is not in PATH, find the full path with: go env GOBIN
+
+If session start context appears twice or seems duplicated, engram hooks are
+probably configured in both ~/.claude/settings.json and .claude/settings.json.
+Ask the user which they prefer and help remove the duplicate set.`
 
 const bootstrapCanary = `If your identity or instructions feel unfamiliar, run:
   engram mem --global --tier invariant list
@@ -153,13 +157,20 @@ func runBootstrap(cmd *cobra.Command, _ []string) error {
 	}
 
 	if !bootstrapGlobalOnly {
+		exe, err := os.Executable()
+		if err != nil {
+			return err
+		}
 		if err := bootstrapClaudeMd(); err != nil {
 			return err
 		}
 		if err := bootstrapGitignore(); err != nil {
 			return err
 		}
-		if err := bootstrapStatusLine(); err != nil {
+		if err := bootstrapStatusLine(exe); err != nil {
+			return err
+		}
+		if err := bootstrapHooks(exe); err != nil {
 			return err
 		}
 	}
@@ -242,25 +253,16 @@ func bootstrapGitignore() error {
 	return nil
 }
 
-func bootstrapStatusLine() error {
+func bootstrapStatusLine(exe string) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
 	}
 	path := filepath.Join(home, ".claude", "settings.json")
 
-	data, err := os.ReadFile(path)
-	if err != nil && !os.IsNotExist(err) {
+	settings, err := readSettingsJSON(path)
+	if err != nil {
 		return err
-	}
-
-	var settings map[string]any
-	if len(data) > 0 {
-		if err := json.Unmarshal(data, &settings); err != nil {
-			return fmt.Errorf("parse %s: %w", path, err)
-		}
-	} else {
-		settings = map[string]any{}
 	}
 
 	if _, exists := settings["statusLine"]; exists {
@@ -268,24 +270,109 @@ func bootstrapStatusLine() error {
 		return nil
 	}
 
-	exe, err := os.Executable()
-	if err != nil {
-		return err
-	}
 	settings["statusLine"] = map[string]any{
 		"type":            "command",
 		"command":         exe + " status",
 		"refreshInterval": 30,
 	}
 
+	if err := writeSettingsJSON(path, settings); err != nil {
+		return err
+	}
+	fmt.Printf("wrote: statusLine in %s\n", path)
+	return nil
+}
+
+func bootstrapHooks(exe string) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	root, err := engram.FindProjectRoot(cwd)
+	if err != nil {
+		fmt.Println("skip (no project root found): hooks")
+		return nil
+	}
+	projectPath := filepath.Join(root, ".claude", "settings.json")
+
+	data, _ := os.ReadFile(projectPath)
+	if strings.Contains(string(data), "engram record") {
+		fmt.Printf("skip (hooks already in project settings): %s\n", projectPath)
+		return nil
+	}
+
+	if err := addEngramHooks(projectPath, exe); err != nil {
+		return err
+	}
+	fmt.Printf("wrote: engram hooks in %s\n", projectPath)
+	return nil
+}
+
+func addEngramHooks(path string, exe string) error {
+	settings, err := readSettingsJSON(path)
+	if err != nil {
+		return err
+	}
+
+	hooks, _ := settings["hooks"].(map[string]any)
+	if hooks == nil {
+		hooks = map[string]any{}
+	}
+
+	hooks["PostToolUse"] = append(
+		asSlice(hooks["PostToolUse"]),
+		map[string]any{
+			"matcher": "Read|Edit|Write|Bash",
+			"hooks": []any{map[string]any{
+				"type":    "command",
+				"command": exe + " record",
+			}},
+		},
+	)
+	hooks["SessionStart"] = append(
+		asSlice(hooks["SessionStart"]),
+		map[string]any{
+			"hooks": []any{map[string]any{
+				"type":    "command",
+				"command": exe + " inject",
+			}},
+		},
+	)
+	settings["hooks"] = hooks
+
+	return writeSettingsJSON(path, settings)
+}
+
+func readSettingsJSON(path string) (map[string]any, error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return map[string]any{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return m, nil
+}
+
+func writeSettingsJSON(path string, settings map[string]any) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
 	out, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, append(out, '\n'), 0644); err != nil {
-		return err
+	return os.WriteFile(path, append(out, '\n'), 0644)
+}
+
+func asSlice(v any) []any {
+	if s, ok := v.([]any); ok {
+		return s
 	}
-	fmt.Printf("wrote: statusLine in %s\n", path)
 	return nil
 }
 

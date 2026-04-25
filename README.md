@@ -84,16 +84,9 @@ Install engram:
 2. Find the full path: run go env GOBIN (or go env GOPATH, binary at $GOPATH/bin/engram)
    Verify: <full-path>/engram --help
 
-3. Add hooks to .claude/settings.json in the project root (merge with existing):
-   - PostToolUse hook, matcher "Read|Edit|Write|Bash", command: <full-path>/engram record
-   - SessionStart hook, command: <full-path>/engram inject
-
-4. Run: <full-path>/engram bootstrap
+3. Run: <full-path>/engram bootstrap
 
 Open a new session when done -- the short-term stack will guide you from there.
-If it prompts you to set up personality, run engram mem --global --tier invariant list
-first. If personality and codename are already configured from another project, skip
-that step and just delete the setup-personality entry from the short-term stack.
 ```
 
 ### Manual setup
