@@ -16,7 +16,7 @@ The problem with re-explaining things during every session start has been mitiga
 
 If memory is well structured and easily accessed in a database, then you can actually get more done with fewer tokens. Access patterns matter, which is why [rtk](https://github.com/rtk-ai/rtk) (Rust Token Killer) has a chance of working. It isn't just intercepting tokens, it's imposing *structure*. That structure just happens to look like a token filter. There are other structures that can help, as well.
 
-Engram imposes structure.
+Engram imposes structure, and it does so in a way that feels more seamless than normal, raw interactions without it.
 
 ## Personality as a Context Canary
 
