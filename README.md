@@ -96,6 +96,10 @@ go install github.com/shiblon/engram/cmd/engram@latest
 engram bootstrap   # or: $(go env GOBIN)/engram bootstrap if not in PATH
 ```
 
+No Go toolchain? Download a pre-built binary for your platform from
+[github.com/shiblon/engram/releases/latest](https://github.com/shiblon/engram/releases/latest),
+extract it, and place `engram` somewhere in your PATH.
+
 Bootstrap sets up CLAUDE.md, installs workflow instructions into global memory,
 adds project-level file tracking hooks to `.claude/settings.json`, updates
 `.gitignore`, and queues a personality setup todo for your first session. Open a
