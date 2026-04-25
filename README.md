@@ -40,7 +40,7 @@ Engram makes memory explicit, editable, and searchable. It imposes a pretty flex
 
 The agent can also describe to you how its memory works. You can ask it what it can do, and it can tell you how it treats memory.
 
-If you are interacting with it and say, "I don't want to continue just yet, we need to brainstorm on design first," it can know that you mean to store the current context in short-term memory, and to pop the stack when the design question is settled. That's not built-in. Engram does this, and at a token cost that is tiny compared to working with defaults.
+If you are interacting with it and say, "I don't want to continue just yet, we need to brainstorm on design first," it can know that you mean to store the current context in short-term memory, and to pop the stack when the design question is settled. That's not built-in for your basic code agent. Engram does this, and at a token cost that is tiny compared to working with defaults.
 
 I'm making token claims, here. I don't have numbers to back them up, just experience. Not terribly satisfying, I know.
 
