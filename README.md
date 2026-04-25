@@ -68,7 +68,30 @@ The core of engram is the memory system — personality, preferences, and memory
 tiers that work entirely through conversation. The hooks that track file activity
 are an enhancement on top of that, not a requirement.
 
-**Minimum viable setup: just install and bootstrap.**
+It is recommended that you just ask your agent to do the whole thing, but there are manual instructions below if you would rather not do it that way.
+
+### Ask your agent to do it
+
+Paste this into a new Claude Code session:
+
+```
+Install engram:
+
+1. Run: go install github.com/shiblon/engram/cmd/engram@latest
+
+2. Find the full path: run go env GOBIN (or go env GOPATH, binary at $GOPATH/bin/engram)
+   Verify: <full-path>/engram --help
+
+3. Add hooks to .claude/settings.json in the project root (merge with existing):
+   - PostToolUse hook, matcher "Read|Edit|Write|Bash", command: <full-path>/engram record
+   - SessionStart hook, command: <full-path>/engram inject
+
+4. Run: <full-path>/engram bootstrap
+
+Open a new session when done -- the short-term stack will guide you from there.
+```
+
+**Minimum manual setup: just install and bootstrap.**
 
 ```sh
 go install github.com/shiblon/engram/cmd/engram@latest
@@ -109,27 +132,6 @@ where it was installed.
 Run `engram bootstrap` again after adding hooks — it's idempotent and will add
 the database to `.gitignore` if it's not already there.
 
-### Ask your agent to do it
-
-Paste this into a new Claude Code session:
-
-```
-Install engram:
-
-1. Run: go install github.com/shiblon/engram/cmd/engram@latest
-
-2. Find the full path: run go env GOBIN (or go env GOPATH, binary at $GOPATH/bin/engram)
-   Verify: <full-path>/engram --help
-
-3. Add hooks to .claude/settings.json in the project root (merge with existing):
-   - PostToolUse hook, matcher "Read|Edit|Write|Bash", command: <full-path>/engram record
-   - SessionStart hook, command: <full-path>/engram inject
-
-4. Run: <full-path>/engram bootstrap
-
-Open a new session when done -- the short-term stack will guide you from there.
-```
-
 ### Commit your personality to git (optional but recommended)
 
 ```sh
@@ -142,7 +144,7 @@ travels with you.
 
 ## Day-to-day Usage
 
-Once engram is running, you mostly just talk to your agent. Here are the patterns worth knowing.
+Once engram is running, you mostly just talk to your agent. Here are some patterns worth trying.
 
 **Remembering things**
 
