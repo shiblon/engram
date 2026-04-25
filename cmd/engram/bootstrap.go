@@ -20,6 +20,11 @@ Memory tiers:
 - long: settled project decisions and facts
 - short: in-flight context, conversation stack, backlog items
 
+Global memories (invariant, preference) apply to all projects. Before writing or
+updating any global memory, always ask the user for confirmation -- global changes
+affect every project and session. Check what is already there first:
+engram mem --global --tier invariant list
+
 When starting a digression: save current context to short-term memory first, confirm it is there, then proceed. When done, re-read short-term and resume.
 
 When a task finishes: check short-term for anything worth promoting to long-term, and delete what is no longer relevant.
@@ -112,7 +117,7 @@ func runBootstrap(cmd *cobra.Command, _ []string) error {
 			if err := engram.WriteMemory(ctx, db, engram.Memory{
 				Tier:    engram.TierShort,
 				Key:     setupKey,
-				Content: "Work with the user to define your personality, choose a codename, and set code preferences. Store personality and codename as global invariants, preferences as global preferences. Delete this entry when done.",
+				Content: "Set up personality and preferences. FIRST run: engram mem --global --tier invariant list -- if personality and codename are already configured from another project, skip to preferences or just delete this entry. Otherwise: work with the user to choose a codename and define a personality, store both as global invariants, add code preferences as global preferences. Delete this entry when done.",
 			}); err != nil {
 				return err
 			}
