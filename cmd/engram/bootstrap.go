@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -127,6 +128,9 @@ func runBootstrap(cmd *cobra.Command, _ []string) error {
 		if err := bootstrapGitignore(); err != nil {
 			return err
 		}
+		if err := bootstrapStatusLine(); err != nil {
+			return err
+		}
 	}
 
 	fmt.Printf("\n%d written, %d skipped\n", wrote, skipped)
@@ -198,6 +202,53 @@ func bootstrapGitignore() error {
 		return err
 	}
 	fmt.Printf("wrote: %s\n", path)
+	return nil
+}
+
+func bootstrapStatusLine() error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(home, ".claude", "settings.json")
+
+	data, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	var settings map[string]any
+	if len(data) > 0 {
+		if err := json.Unmarshal(data, &settings); err != nil {
+			return fmt.Errorf("parse %s: %w", path, err)
+		}
+	} else {
+		settings = map[string]any{}
+	}
+
+	if _, exists := settings["statusLine"]; exists {
+		fmt.Printf("skip (exists): statusLine in %s\n", path)
+		return nil
+	}
+
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	settings["statusLine"] = map[string]any{
+		"type":            "command",
+		"command":         exe + " status",
+		"refreshInterval": 30,
+	}
+
+	out, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, append(out, '\n'), 0644); err != nil {
+		return err
+	}
+	fmt.Printf("wrote: statusLine in %s\n", path)
 	return nil
 }
 
