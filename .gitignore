@@ -5,3 +5,6 @@ CLAUDE.md
 .claude/engram.db
 .claude/engram.db-shm
 .claude/engram.db-wal
+
+# dist binaries
+/dist
