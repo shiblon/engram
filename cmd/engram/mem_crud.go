@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -66,9 +67,11 @@ var memReadCmd = &cobra.Command{
 	},
 }
 
+var memListJSON bool
+
 var memListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List all memories in a tier",
+	Short: "List memories. Omit --tier to list all tiers.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
 		h, err := openMemDB(ctx)
@@ -77,16 +80,37 @@ var memListCmd = &cobra.Command{
 		}
 		defer h.DB.Close()
 
-		memories, err := engram.ListMemories(ctx, h.DB, engram.Tier(memTier))
+		var memories []engram.Memory
+		if cmd.Flag("tier").Changed {
+			memories, err = engram.ListMemories(ctx, h.DB, engram.Tier(memTier))
+		} else {
+			for _, t := range []engram.Tier{engram.TierInvariant, engram.TierPreference, engram.TierLong, engram.TierShort} {
+				ms, err := engram.ListMemories(ctx, h.DB, t)
+				if err != nil {
+					return err
+				}
+				memories = append(memories, ms...)
+			}
+		}
 		if err != nil {
 			return err
 		}
+
+		if memListJSON {
+			out, err := json.Marshal(memories)
+			if err != nil {
+				return err
+			}
+			fmt.Println(string(out))
+			return nil
+		}
+
 		if len(memories) == 0 {
-			fmt.Printf("no %s memories\n", memTier)
+			fmt.Println("no memories")
 			return nil
 		}
 		for i, m := range memories {
-			fmt.Printf("%d. [%s] %s\n", i+1, m.Key, m.Content)
+			fmt.Printf("%d. [%s/%s] %s\n", i+1, m.Tier, m.Key, m.Content)
 		}
 		return nil
 	},
@@ -159,6 +183,7 @@ var memPopCmd = &cobra.Command{
 }
 
 func init() {
+	memListCmd.Flags().BoolVar(&memListJSON, "json", false, "output as JSON array")
 	memPromoteCmd.Flags().StringVar(&promoteFrom, "from", string(engram.TierShort), "source tier")
 	memPromoteCmd.Flags().StringVar(&promoteTo, "to", string(engram.TierLong), "destination tier")
 
