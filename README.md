@@ -91,7 +91,7 @@ Install engram:
 Open a new session when done -- the short-term stack will guide you from there.
 ```
 
-**Minimum manual setup: just install and bootstrap.**
+### Manual setup
 
 ```sh
 go install github.com/shiblon/engram/cmd/engram@latest
