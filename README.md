@@ -93,42 +93,13 @@ Open a new session when done -- the short-term stack will guide you from there.
 
 ```sh
 go install github.com/shiblon/engram/cmd/engram@latest
-engram bootstrap
+engram bootstrap   # or: $(go env GOBIN)/engram bootstrap if not in PATH
 ```
 
 Bootstrap sets up CLAUDE.md, installs workflow instructions into global memory,
-and queues a personality setup todo for your first session. Open a new Claude Code
-session and your agent will know what to do.
-
-### Add file tracking (optional but recommended)
-
-The hooks make engram aware of which files you've been working on, so each session
-opens with recent context already loaded. Add them to `.claude/settings.json` in
-your project root:
-
-```json
-{
-  "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "Read|Edit|Write|Bash",
-        "hooks": [{ "type": "command", "command": "engram record" }]
-      }
-    ],
-    "SessionStart": [
-      {
-        "hooks": [{ "type": "command", "command": "engram inject" }]
-      }
-    ]
-  }
-}
-```
-
-If `engram` isn't in your PATH, use the full path: `go env GOBIN` will tell you
-where it was installed.
-
-Run `engram bootstrap` again after adding hooks — it's idempotent and will add
-the database to `.gitignore` if it's not already there.
+adds project-level file tracking hooks to `.claude/settings.json`, updates
+`.gitignore`, and queues a personality setup todo for your first session. Open a
+new Claude Code session and your agent will know what to do.
 
 ### Commit your personality to git (optional but recommended)
 
