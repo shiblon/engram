@@ -1,6 +1,6 @@
 # ENGRAM - A Memory and Personality Aid for Claude Code
 
-*NOTE: inspired by a combination of [auto-memory](https://github.com/dezgit2025/auto-memory) and work done by a beloved colleague of mine from Atlassian: [Kevin Harris](https://www.linkedin.com/in/pwnx0r/).
+*NOTE: inspired by a combination of [auto-memory](https://github.com/dezgit2025/auto-memory) and work done by a beloved colleague of mine from Atlassian: [Kevin Harris](https://www.linkedin.com/in/pwnx0r/).*
 
 Just want to install and get moving? [Jump to installation.](#installation)
 
