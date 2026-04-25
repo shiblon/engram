@@ -20,7 +20,7 @@ Engram imposes structure.
 
 ## Personality as a Context Canary
 
-The credit goes to [Kevin Harris](https://www.linkedin.com/in/pwnx0r/) for this one. If you decided to give your agent a personality, you are deciding to give it a characteristic that humans have evolved highly tuned sensitivity to. You *notice* when personality shifts in the middle of a conversation. You evolved to understand when something is "off". Making the context window something less like "85% full" and something more like "suddenly this quirky agent got more serious" makes it easier to know when something is about to get weird.
+The credit goes to [Kevin Harris](https://www.linkedin.com/in/pwnx0r/) for the ideas behind this one (I actually never found out *how* he did any of it, I just got the concept). If you decided to give your agent a personality, you are deciding to give it a characteristic that humans have evolved highly tuned sensitivity to. You *notice* when personality shifts in the middle of a conversation. You evolved to understand when something is "off". Making the context window something less like "85% full" and something more like "suddenly this quirky agent got more serious" makes it easier to know when something is about to get weird.
 
 I give my agent a personality. In my case, I asked it to be enthusiastic about elegance, strict about readability and maintainability, and to take delight in the occasional code-related pun. I've tuned that a little over time, but it works well for me. I've seen people really enjoy "snarky" agents, or "chaos gremlin scientist" agents, or "just be GlaDOS" agents. When something is about to go wrong with your code, you tend to notice a shift in personality first.
 
@@ -34,7 +34,7 @@ The point was that I *noticed early*. That's the power of personality.
 
 Whether agents store memory in .md files or just in session context is not necessarily something people think about much, at least not until it bites them. If you ask an agent to remember something, sometimes they'll just count on their own session context to keep track of it. A few code files and a compaction later and that thing is completely forgotten.
 
-Or, the agent can write a markdown file with info in it, but the format is all over the map, and that can make the agent confused. "What do you mean by 'backlog', exactly?" is a question I got once, and we had to go the rounds figuring out that it meant something like long-term memory, and that it should be checked and updated every time we finished a task. This is simply not built in, and it can burn a pile of tokens just figuring out together.
+Or, the agent can write a markdown file with info in it, but the format is all over the map, and that can make the agent confused. "What do you mean by 'backlog', exactly?" is a question I got once, and we had to go the rounds figuring out that it meant something like long-term memory, and that it should be checked and updated every time we finished a task. This is simply not built in, and it can burn a pile of tokens just figuring it out together.
 
 Engram makes memory explicit, editable, and searchable. It imposes a pretty flexible structure on the idea of remembering things. It's important that it be flexible, and it's also important that it be structured. There is a difference between long-term and short-term memory, there is a difference between global invariants and project invariants. And you can specify your own.
 
@@ -48,7 +48,7 @@ I'm making token claims, here. I don't have numbers to back them up, just experi
 
 A personality that works with you, even though you should be careful of the psychological traps here, really makes work *joyful*. It's delightful when a self-deprecating joke comes out, or a pun, or a surprising insight. It makes a difference to me when I get a laugh out of an interaction. Something clicks in my brain that pushes things forward in a way that just solving a problem alone never does. It also helps when I tell the agent *about myself*. That goes a long way toward helping it develop its own personality.
 
-I had my agent come up with its own code name. It chose Qubit, partly because of working on a task workflow system built around task queues, but also because that system is named "[EntroQ](https://github.com/shiblon/entroq)", which is a pun of my own: it's one letter removed from "entro-P", and seeks to bring order to microservice chaos.
+I had my agent come up with its own code name. It chose Qubit, partly because of working on a task workflow system built around task queues, but also because that system is named "[EntroQ](https://github.com/shiblon/entroq)", which is a pun of my own: it's one letter removed from "Entro-P", and seeks to bring order to microservice chaos.
 
 Qubit was not only about queues, it was also about quantum uncertainty, and having that name in there gives me yet *another* basic canary: if the agent can remember its name, we haven't drifted too far, yet.
 
@@ -64,56 +64,26 @@ You can also ask it to dump or load the memories to or from markdown files so th
 
 ## Installation
 
-### The quick way: ask your agent
+The core of engram is the memory system — personality, preferences, and memory
+tiers that work entirely through conversation. The hooks that track file activity
+are an enhancement on top of that, not a requirement.
 
-Don't skip the personality step — it's the most important part and takes only a few
-minutes. Read "Personality as a Context Canary" above if you haven't. The prompt
-below tells your agent to walk you through it interactively before you do anything else.
-
-Paste this into a new Claude Code session:
-
-```
-Install engram for this project:
-
-1. Run: go install github.com/shiblon/engram/cmd/engram@latest
-
-2. Find the full path to the installed binary:
-   - Run: go env GOBIN
-   - If that is empty, run: go env GOPATH  (binary is at $GOPATH/bin/engram)
-   - Verify it works: <full-path>/engram --help
-
-3. Add these hooks to .claude/settings.json in the project root, merging
-   with any existing hooks (create the file if it doesn't exist). Use the
-   full path from step 2 in the commands:
-   - PostToolUse hook, matcher "Read|Edit|Write|Bash", command: <full-path>/engram record
-   - SessionStart hook, command: <full-path>/engram inject
-
-4. Add .claude/engram.db to .gitignore.
-
-5. Verify the hooks are correctly written by reading back .claude/settings.json
-   and confirming the engram commands are present with the correct path.
-
-6. Run bootstrap to install workflow instructions and set up CLAUDE.md:
-   <full-path>/engram bootstrap
-
-   Bootstrap is idempotent -- safe to re-run, never overwrites existing entries.
-   If personality has not been set up yet, it will add a short-term memory todo
-   that tells you what to do next when you open your first session.
-```
-
-### The manual way
-
-**1. Install the binary**
+**Minimum viable setup: just install and bootstrap.**
 
 ```sh
 go install github.com/shiblon/engram/cmd/engram@latest
+engram bootstrap
 ```
 
-`engram` will be at `$GOBIN` (usually `~/go/bin` or `~/bin`). Make sure that directory is in your PATH, or use the full path in the hook commands below.
+Bootstrap sets up CLAUDE.md, installs workflow instructions into global memory,
+and queues a personality setup todo for your first session. Open a new Claude Code
+session and your agent will know what to do.
 
-**2. Add hooks to your project**
+### Add file tracking (optional but recommended)
 
-Create or edit `.claude/settings.json` in your repository root:
+The hooks make engram aware of which files you've been working on, so each session
+opens with recent context already loaded. Add them to `.claude/settings.json` in
+your project root:
 
 ```json
 {
@@ -133,44 +103,42 @@ Create or edit `.claude/settings.json` in your repository root:
 }
 ```
 
-**3. Gitignore the database**
+If `engram` isn't in your PATH, use the full path: `go env GOBIN` will tell you
+where it was installed.
 
-Add to `.gitignore`:
+Run `engram bootstrap` again after adding hooks — it's idempotent and will add
+the database to `.gitignore` if it's not already there.
+
+### Ask your agent to do it
+
+Paste this into a new Claude Code session:
+
 ```
-.claude/engram.db
-.claude/engram.db-shm
-.claude/engram.db-wal
+Install engram:
+
+1. Run: go install github.com/shiblon/engram/cmd/engram@latest
+
+2. Find the full path: run go env GOBIN (or go env GOPATH, binary at $GOPATH/bin/engram)
+   Verify: <full-path>/engram --help
+
+3. Add hooks to .claude/settings.json in the project root (merge with existing):
+   - PostToolUse hook, matcher "Read|Edit|Write|Bash", command: <full-path>/engram record
+   - SessionStart hook, command: <full-path>/engram inject
+
+4. Run: <full-path>/engram bootstrap
+
+Open a new session when done -- the short-term stack will guide you from there.
 ```
 
-**4. Bootstrap your agent**
-
-Open a new session in the project — engram will be active immediately. Then:
-
-```sh
-# Give your agent a name (stored globally, applies to all projects)
-engram mem --global --tier invariant write codename "Qubit"
-
-# Add some personality
-engram mem --global --tier invariant write personality "Playful, precise, delights in elegant solutions."
-
-# Add code preferences
-engram mem --global --tier preference write no-panic "Never use panic() in library code, use error returns."
-engram mem --global --tier preference write ascii-only "ASCII-only source code. No Unicode outside string literals."
-
-# See everything available
-engram mem --help
-```
-
-The next session you open will greet you by name with your preferences in context.
-
-**5. Commit your personality to git (optional but recommended)**
+### Commit your personality to git (optional but recommended)
 
 ```sh
 engram mem --global dump   # exports to ~/.claude/memory/*.md
 engram mem dump            # exports project memories to .claude/memory/*.md
 ```
 
-Check those markdown files into git. On a new machine, `engram mem load` restores everything. Your agent's identity travels with you.
+On a new machine, `engram mem load` restores everything. Your agent's identity
+travels with you.
 
 ## Day-to-day Usage
 

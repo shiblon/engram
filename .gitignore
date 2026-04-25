@@ -1,2 +1,7 @@
 .claude
 CLAUDE.md
+
+# engram database
+.claude/engram.db
+.claude/engram.db-shm
+.claude/engram.db-wal
