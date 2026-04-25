@@ -527,6 +527,43 @@ func ReadMemoryTop(ctx context.Context, db *sql.DB, tier Tier) (*Memory, error) 
 	return &m, nil
 }
 
+// SearchMemories performs a full-text search over memories. If tier is
+// non-empty, results are filtered to that tier.
+func SearchMemories(ctx context.Context, db *sql.DB, query string, tier Tier) ([]Memory, error) {
+	var rows *sql.Rows
+	var err error
+	if tier != "" {
+		rows, err = db.QueryContext(ctx, `
+			SELECT m.id, m.ts, m.tier, m.key, m.content, COALESCE(m.session_id, '')
+			FROM memories_fts f
+			JOIN memories m ON m.id = f.rowid
+			WHERE memories_fts MATCH ? AND m.tier = ?
+			ORDER BY rank
+		`, query, tier)
+	} else {
+		rows, err = db.QueryContext(ctx, `
+			SELECT m.id, m.ts, m.tier, m.key, m.content, COALESCE(m.session_id, '')
+			FROM memories_fts f
+			JOIN memories m ON m.id = f.rowid
+			WHERE memories_fts MATCH ?
+			ORDER BY rank
+		`, query)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("search memories: %w", err)
+	}
+	defer rows.Close()
+	var out []Memory
+	for rows.Next() {
+		var m Memory
+		if err := rows.Scan(&m.ID, &m.TS, &m.Tier, &m.Key, &m.Content, &m.SessionID); err != nil {
+			return nil, fmt.Errorf("search scan: %w", err)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 // MakeSnippet extracts a snippet from a raw tool_response JSON payload.
 func MakeSnippet(tool Tool, raw json.RawMessage) string {
 	switch tool {

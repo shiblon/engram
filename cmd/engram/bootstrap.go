@@ -29,14 +29,18 @@ When starting a digression: save current context to short-term memory first, con
 
 When a task finishes: check short-term for anything worth promoting to long-term, and delete what is no longer relevant.
 
-To manage memory: engram mem --help
+To manage memory:
+  engram mem --help                          -- all subcommands
+  engram mem search <query>                  -- full-text search across all tiers
+  engram mem search --tier long <query>      -- search within a specific tier
 If engram is not in PATH, find the full path with: go env GOBIN`
 
 const bootstrapCanary = `If your identity or instructions feel unfamiliar, run:
   engram mem --global --tier invariant list
 That is the signal to re-bootstrap from the inject context at session start.`
 
-const bootstrapClaudeMD = `# Global Claude Instructions
+const bootstrapClaudeMD = `<!-- engram:start -->
+# Global Claude Instructions
 
 Your personality, preferences, and behavioral instructions are managed by
 engram and injected at session start. The context above this note is the
@@ -44,6 +48,7 @@ source of truth for who you are and what you know.
 
 If your identity or instructions feel unfamiliar, run:
   engram mem --global --tier invariant list
+<!-- engram:end -->
 `
 
 var bootstrapGlobalOnly bool
@@ -126,6 +131,27 @@ func runBootstrap(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
+	// Write the memory migration todo -- self-deleting once done.
+	migrateKey := "migrate-existing-memory"
+	existing, err := engram.ReadMemory(ctx, db, engram.TierShort, migrateKey)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		fmt.Printf("skip (exists): short/%s\n", migrateKey)
+		skipped++
+	} else {
+		if err := engram.WriteMemory(ctx, db, engram.Memory{
+			Tier:    engram.TierShort,
+			Key:     migrateKey,
+			Content: "Migrate existing memory into engram. First check whether global memories are already configured: engram mem --global --tier invariant list. Then follow the appropriate path:\n\nIf global memories are NOT yet set up: also migrate any global context you have been maintaining (personality, preferences, coding rules from CLAUDE.md or similar files) into the global engram DB as invariants and preferences. Ask the user before writing anything global.\n\nIf global memories ARE already set up: leave them alone entirely.\n\nIn both cases: look for project-specific memory or context for THIS project -- markdown files, notes, project-level context files -- and migrate relevant content into the project engram tiers (not global): settled decisions to long-term, in-flight work to short-term. Delete or archive source files once migrated. If nothing is found, delete this entry.",
+		}); err != nil {
+			return err
+		}
+		fmt.Printf("wrote: short/%s\n", migrateKey)
+		wrote++
+	}
+
 	if !bootstrapGlobalOnly {
 		if err := bootstrapClaudeMd(); err != nil {
 			return err
@@ -157,8 +183,14 @@ func bootstrapClaudeMd() error {
 		return err
 	}
 
+	if strings.Contains(string(data), "<!-- engram:start -->") {
+		fmt.Printf("skip (already has engram section): %s\n", path)
+		return nil
+	}
+
 	if strings.Contains(string(data), "engram") {
-		fmt.Printf("skip (already has engram content): %s\n", path)
+		fmt.Printf("skip (has engram content but no markers -- not modifying): %s\n", path)
+		fmt.Println("  Add <!-- engram:start --> and <!-- engram:end --> markers manually, or move the file and re-run bootstrap.")
 		return nil
 	}
 
