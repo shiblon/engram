@@ -4,6 +4,8 @@
 
 Just want to install and get moving? [Jump to installation.](#installation)
 
+*NOTE 2: if you want this to work for other agents, just let me know! We can figure it out.*
+
 Memory affects everything about people. It affects personality, the ability to hold a conversation, and the ability to get things done. This is also true for AI agents, but the story there is fragmented and memory does not always behave as we expect.
 
 It turns out that we can very easily do better. Engram is not just about doing better, though, it's about *making the process joyful*. Writing code, doing engineering brainstorming, finding bugs; these things can be a real pain. One thing I've missed when doing remote work has been the fun and joyful interactions that come from working side-by-side with someone who is suffering with you while also being supportive and making you laugh through your lunch.
