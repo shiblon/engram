@@ -154,9 +154,6 @@ func runBootstrap(cmd *cobra.Command, _ []string) error {
 		if err := bootstrapClaudeMd(); err != nil {
 			return err
 		}
-		if err := bootstrapGitignore(); err != nil {
-			return err
-		}
 		if err := bootstrapStatusLine(exe); err != nil {
 			return err
 		}
@@ -208,36 +205,6 @@ func bootstrapClaudeMd() error {
 	return nil
 }
 
-func bootstrapGitignore() error {
-	root, err := engram.FindProjectRoot(effectiveCWD())
-	if err != nil {
-		// Not in a project -- skip silently.
-		return nil
-	}
-	path := filepath.Join(root, ".gitignore")
-
-	data, err := os.ReadFile(path)
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-
-	if strings.Contains(string(data), ".engram") {
-		fmt.Printf("skip (already present): %s\n", path)
-		return nil
-	}
-
-	entries := "\n# engram database\n/.engram/\n"
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	if _, err := f.WriteString(entries); err != nil {
-		return err
-	}
-	fmt.Printf("wrote: %s\n", path)
-	return nil
-}
 
 func bootstrapStatusLine(exe string) error {
 	home, err := os.UserHomeDir()

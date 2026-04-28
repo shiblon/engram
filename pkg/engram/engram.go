@@ -306,8 +306,13 @@ func openWithFallback(ctx context.Context, canonical, legacy string) (*sql.DB, e
 			}
 		}
 	}
-	if err := os.MkdirAll(filepath.Dir(canonical), 0755); err != nil {
+	dir := filepath.Dir(canonical)
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("create db dir: %w", err)
+	}
+	gi := filepath.Join(dir, ".gitignore")
+	if _, err := os.Stat(gi); os.IsNotExist(err) {
+		_ = os.WriteFile(gi, []byte("*\n"), 0644)
 	}
 	return Open(ctx, canonical)
 }
