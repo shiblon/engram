@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"os"
 
 	"github.com/shiblon/engram/pkg/engram"
 	"github.com/spf13/cobra"
@@ -11,6 +10,30 @@ import (
 var memCmd = &cobra.Command{
 	Use:   "mem",
 	Short: "Manage agent memory (invariants, preferences, long-term, short-term)",
+	Long: `Manage engram memories across four tiers:
+
+  invariant  (-g, --global)  Identity, codename, personality. Rarely changed.
+                             Applies to all projects.
+  preference (-g, --global)  Code and behavior rules. Add and remove over time.
+                             Applies to all projects.
+  long                       Settled project decisions and facts.
+  short                      In-flight context, conversation stack, backlog.
+
+Global memories (invariant, preference) are stored in ~/.claude/engram.db and
+injected at the start of every session across all projects.
+
+Project memories (long, short) are stored in .claude/engram.db at the project
+root and injected only for that project.
+
+Common operations:
+  engram mem -g -t invariant list          list all global invariants
+  engram mem -g -t invariant read <key>    read a specific invariant
+  engram mem -g write <key> <content>      write to global short (default tier)
+  engram mem -t long write <key> <content> write to project long-term memory
+  engram mem search <query>                full-text search across all tiers
+  engram inject                            print session-start context as JSON
+
+Run 'engram mem <subcommand> --help' for details on each operation.`,
 }
 
 // shared flags
@@ -29,11 +52,7 @@ func openMemDB(ctx context.Context) (*engram.DBHandle, error) {
 		}
 		return &engram.DBHandle{DB: db, Path: path}, nil
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return nil, err
-	}
-	root, err := engram.FindProjectRoot(cwd)
+	root, err := engram.FindProjectRoot(effectiveCWD())
 	if err != nil {
 		return nil, err
 	}
@@ -46,6 +65,6 @@ func openMemDB(ctx context.Context) (*engram.DBHandle, error) {
 }
 
 func init() {
-	memCmd.PersistentFlags().BoolVar(&memGlobal, "global", false, "use global (~/.claude) database")
-	memCmd.PersistentFlags().StringVar(&memTier, "tier", string(engram.TierShort), "memory tier (invariant, preference, long, short)")
+	memCmd.PersistentFlags().BoolVarP(&memGlobal, "global", "g", false, "use global (~/.claude) database")
+	memCmd.PersistentFlags().StringVarP(&memTier, "tier", "t", string(engram.TierShort), "memory tier (invariant, preference, long, short)")
 }

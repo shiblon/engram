@@ -476,13 +476,43 @@ func ListMemories(ctx context.Context, db *sql.DB, tier Tier) ([]Memory, error) 
 	return out, rows.Err()
 }
 
-// DeleteMemory removes the memory with the given tier and key.
+// DeleteMemory removes the memory with the given tier and key, returning an
+// error if nothing was found.
 func DeleteMemory(ctx context.Context, db *sql.DB, tier Tier, key string) error {
-	_, err := db.ExecContext(ctx, `DELETE FROM memories WHERE tier = ? AND key = ?`, tier, key)
+	result, err := db.ExecContext(ctx, `DELETE FROM memories WHERE tier = ? AND key = ?`, tier, key)
 	if err != nil {
 		return fmt.Errorf("delete memory: %w", err)
 	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("delete memory: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("not found: %s/%s", tier, key)
+	}
 	return nil
+}
+
+// FindMemoryByKey searches all tiers for memories with the exact key,
+// returning all matches ordered by tier.
+func FindMemoryByKey(ctx context.Context, db *sql.DB, key string) ([]Memory, error) {
+	rows, err := db.QueryContext(ctx,
+		`SELECT id, ts, tier, key, content, COALESCE(session_id, '')
+		 FROM memories WHERE key = ? ORDER BY tier`,
+		key)
+	if err != nil {
+		return nil, fmt.Errorf("find memory by key: %w", err)
+	}
+	defer rows.Close()
+	var out []Memory
+	for rows.Next() {
+		var m Memory
+		if err := rows.Scan(&m.ID, &m.TS, &m.Tier, &m.Key, &m.Content, &m.SessionID); err != nil {
+			return nil, fmt.Errorf("find memory by key scan: %w", err)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
 }
 
 // PromoteMemory moves a memory from one tier to another within the same database.

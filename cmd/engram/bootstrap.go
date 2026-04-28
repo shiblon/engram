@@ -43,17 +43,11 @@ const bootstrapCanary = `If your identity or instructions feel unfamiliar, run:
   engram mem --global --tier invariant list
 That is the signal to re-bootstrap from the inject context at session start.`
 
-const bootstrapClaudeMD = `<!-- engram:start -->
-# Global Claude Instructions
-
-Your personality, preferences, and behavioral instructions are managed by
-engram and injected at session start. The context above this note is the
-source of truth for who you are and what you know.
-
-If your identity or instructions feel unfamiliar, run:
-  engram mem --global --tier invariant list
-<!-- engram:end -->
-`
+// claudeMDContent returns the content to write into CLAUDE.md, wrapping
+// agentInfoText in engram markers so it can be cleanly found and replaced.
+func claudeMDContent() string {
+	return "<!-- engram:start -->\n" + agentInfoText + "<!-- engram:end -->\n"
+}
 
 var bootstrapGlobalOnly bool
 
@@ -211,7 +205,7 @@ func bootstrapClaudeMd() error {
 		return nil
 	}
 
-	if err := os.WriteFile(path, []byte(bootstrapClaudeMD), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(claudeMDContent()), 0644); err != nil {
 		return err
 	}
 	fmt.Printf("wrote: %s\n", path)
@@ -219,11 +213,7 @@ func bootstrapClaudeMd() error {
 }
 
 func bootstrapGitignore() error {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-	root, err := engram.FindProjectRoot(cwd)
+	root, err := engram.FindProjectRoot(effectiveCWD())
 	if err != nil {
 		// Not in a project -- skip silently.
 		return nil
@@ -284,11 +274,7 @@ func bootstrapStatusLine(exe string) error {
 }
 
 func bootstrapHooks(exe string) error {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-	root, err := engram.FindProjectRoot(cwd)
+	root, err := engram.FindProjectRoot(effectiveCWD())
 	if err != nil {
 		fmt.Println("skip (no project root found): hooks")
 		return nil

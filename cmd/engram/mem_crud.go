@@ -44,7 +44,7 @@ var memWriteCmd = &cobra.Command{
 
 var memReadCmd = &cobra.Command{
 	Use:   "read <key>",
-	Short: "Read a memory entry",
+	Short: "Read a memory entry. Omit --tier to search all tiers.",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
@@ -54,15 +54,28 @@ var memReadCmd = &cobra.Command{
 		}
 		defer h.DB.Close()
 
+		if !cmd.Flag("tier").Changed {
+			matches, err := engram.FindMemoryByKey(ctx, h.DB, args[0])
+			if err != nil {
+				return err
+			}
+			if len(matches) == 0 {
+				return fmt.Errorf("not found: %s", args[0])
+			}
+			for _, m := range matches {
+				fmt.Printf("[%s/%s]\n%s\n\n", m.Tier, m.Key, m.Content)
+			}
+			return nil
+		}
+
 		m, err := engram.ReadMemory(ctx, h.DB, engram.Tier(memTier), args[0])
 		if err != nil {
 			return err
 		}
 		if m == nil {
-			fmt.Printf("no %s memory found with key %q\n", memTier, args[0])
-			return nil
+			return fmt.Errorf("not found: %s/%s", memTier, args[0])
 		}
-		fmt.Printf("[%s] %s\n%s\n", m.Tier, m.Key, m.Content)
+		fmt.Printf("[%s/%s]\n%s\n", m.Tier, m.Key, m.Content)
 		return nil
 	},
 }
@@ -118,7 +131,7 @@ var memListCmd = &cobra.Command{
 
 var memDeleteCmd = &cobra.Command{
 	Use:   "delete <key>",
-	Short: "Delete a memory entry",
+	Short: "Delete a memory entry. Omit --tier to delete if unambiguous.",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
@@ -127,6 +140,24 @@ var memDeleteCmd = &cobra.Command{
 			return err
 		}
 		defer h.DB.Close()
+
+		if !cmd.Flag("tier").Changed {
+			matches, err := engram.FindMemoryByKey(ctx, h.DB, args[0])
+			if err != nil {
+				return err
+			}
+			if len(matches) == 0 {
+				return fmt.Errorf("not found: %s", args[0])
+			}
+			if len(matches) > 1 {
+				fmt.Printf("ambiguous: %q found in multiple tiers, specify --tier:\n", args[0])
+				for _, m := range matches {
+					fmt.Printf("  %s/%s\n", m.Tier, m.Key)
+				}
+				return fmt.Errorf("ambiguous key")
+			}
+			return engram.DeleteMemory(ctx, h.DB, matches[0].Tier, args[0])
+		}
 
 		return engram.DeleteMemory(ctx, h.DB, engram.Tier(memTier), args[0])
 	},
@@ -149,11 +180,31 @@ var memPromoteCmd = &cobra.Command{
 		}
 		defer h.DB.Close()
 
+		// If --from not explicitly set, find the tier automatically.
+		from := engram.Tier(promoteFrom)
+		if !cmd.Flag("from").Changed {
+			matches, err := engram.FindMemoryByKey(ctx, h.DB, args[0])
+			if err != nil {
+				return err
+			}
+			if len(matches) == 0 {
+				return fmt.Errorf("not found: %s", args[0])
+			}
+			if len(matches) > 1 {
+				fmt.Printf("ambiguous: %q found in multiple tiers, specify --from:\n", args[0])
+				for _, m := range matches {
+					fmt.Printf("  %s/%s\n", m.Tier, m.Key)
+				}
+				return fmt.Errorf("ambiguous key")
+			}
+			from = matches[0].Tier
+		}
+
 		if err := engram.PromoteMemory(ctx, h.DB, args[0],
-			engram.Tier(promoteFrom), engram.Tier(promoteTo)); err != nil {
+			from, engram.Tier(promoteTo)); err != nil {
 			return err
 		}
-		fmt.Printf("promoted %q from %s to %s\n", args[0], promoteFrom, promoteTo)
+		fmt.Printf("promoted %q from %s to %s\n", args[0], from, promoteTo)
 		return nil
 	},
 }

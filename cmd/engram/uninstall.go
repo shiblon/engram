@@ -195,11 +195,7 @@ func uninstallClaudeMd() error {
 }
 
 func uninstallGitignore() error {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-	root, err := engram.FindProjectRoot(cwd)
+	root, err := engram.FindProjectRoot(effectiveCWD())
 	if err != nil {
 		fmt.Println("skip (no project root found): .gitignore")
 		return nil
@@ -229,11 +225,7 @@ func uninstallGitignore() error {
 }
 
 func uninstallDB() error {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-	root, err := engram.FindProjectRoot(cwd)
+	root, err := engram.FindProjectRoot(effectiveCWD())
 	if err != nil {
 		fmt.Println("skip (no project root found): database")
 		return nil

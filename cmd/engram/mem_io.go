@@ -111,7 +111,7 @@ func resolveMemDir() string {
 		home, _ := os.UserHomeDir()
 		return filepath.Join(home, ".claude", "memory")
 	}
-	cwd, _ := os.Getwd()
+	cwd := effectiveCWD()
 	root, err := engram.FindProjectRoot(cwd)
 	if err != nil {
 		return ".claude/memory"

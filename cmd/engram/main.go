@@ -16,10 +16,21 @@ func main() {
 	}
 }
 
+var rootCWD string
+
 var rootCmd = &cobra.Command{
 	Use:          "engram",
 	Short:        "Per-project tool-use memory for Claude Code",
 	SilenceUsage: true,
+}
+
+// effectiveCWD returns the user-supplied --cwd, or the process working directory.
+func effectiveCWD() string {
+	if rootCWD != "" {
+		return rootCWD
+	}
+	cwd, _ := os.Getwd()
+	return cwd
 }
 
 // record
@@ -162,11 +173,7 @@ var pruneCmd = &cobra.Command{
 func runPrune(cmd *cobra.Command, _ []string) error {
 	ctx := context.Background()
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-	root, err := engram.FindProjectRoot(cwd)
+	root, err := engram.FindProjectRoot(effectiveCWD())
 	if err != nil {
 		return err
 	}
@@ -186,6 +193,7 @@ func runPrune(cmd *cobra.Command, _ []string) error {
 }
 
 func init() {
+	rootCmd.PersistentFlags().StringVarP(&rootCWD, "cwd", "d", "", "working directory for project root resolution (default: current directory)")
 	injectCmd.Flags().IntVar(&injectSessions, "sessions", engram.DefaultInjectSessions, "number of recent sessions to include")
 	injectCmd.Flags().IntVar(&injectKeep, "keep", engram.DefaultPruneSessions, "number of sessions to keep")
 	pruneCmd.Flags().IntVar(&pruneKeep, "keep", engram.DefaultPruneSessions, "number of sessions to keep")
