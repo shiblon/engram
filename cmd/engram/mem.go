@@ -42,26 +42,22 @@ var memTier string
 
 func openMemDB(ctx context.Context) (*engram.DBHandle, error) {
 	if memGlobal {
-		path, err := engram.GlobalDBPath()
+		db, err := engram.OpenGlobalDB(ctx)
 		if err != nil {
 			return nil, err
 		}
-		db, err := engram.Open(ctx, path)
-		if err != nil {
-			return nil, err
-		}
+		path, _ := engram.GlobalDBPath()
 		return &engram.DBHandle{DB: db, Path: path}, nil
 	}
 	root, err := engram.FindProjectRoot(effectiveCWD())
 	if err != nil {
 		return nil, err
 	}
-	path := engram.DBPath(root)
-	db, err := engram.Open(ctx, path)
+	db, err := engram.OpenProjectDB(ctx, root)
 	if err != nil {
 		return nil, err
 	}
-	return &engram.DBHandle{DB: db, Path: path}, nil
+	return &engram.DBHandle{DB: db, Path: engram.DBPath(root)}, nil
 }
 
 func init() {

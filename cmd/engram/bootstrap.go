@@ -64,11 +64,7 @@ Existing keys are never overwritten -- bootstrap is safe to re-run.`,
 func runBootstrap(cmd *cobra.Command, _ []string) error {
 	ctx := context.Background()
 
-	globalPath, err := engram.GlobalDBPath()
-	if err != nil {
-		return err
-	}
-	db, err := engram.Open(ctx, globalPath)
+	db, err := engram.OpenGlobalDB(ctx)
 	if err != nil {
 		return err
 	}
@@ -225,12 +221,12 @@ func bootstrapGitignore() error {
 		return err
 	}
 
-	if strings.Contains(string(data), "engram.db") {
+	if strings.Contains(string(data), ".engram") {
 		fmt.Printf("skip (already present): %s\n", path)
 		return nil
 	}
 
-	entries := "\n# engram database\n.claude/engram.db\n.claude/engram.db-shm\n.claude/engram.db-wal\n"
+	entries := "\n# engram database\n/.engram/\n"
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return err

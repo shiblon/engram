@@ -44,9 +44,20 @@ short-term memory immediately without being asked. Confirm it was saved.
 Run: engram mem --help
 
 for full details. Quick reference:
+
+Tiers:
 - invariant/preference (--global): personality, rules -- applies to all projects
 - long:                            settled project decisions and facts
 - short:                           in-flight context, stack, backlog
+
+Common commands:
+  engram mem -t short list             list all short-term entries
+  engram mem -t short read <key>       read one short-term entry
+  engram mem -t long list              list all long-term entries
+  engram mem write <key> <content>     write to short-term (default tier)
+  engram mem -t long write <key> ...   write to long-term
+  engram mem pop                       read and remove top of short stack
+  engram mem search <query>            full-text search across all tiers
 `
 
 var agentInfoCmd = &cobra.Command{

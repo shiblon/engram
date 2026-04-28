@@ -79,7 +79,7 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	db, err := engram.Open(ctx, engram.DBPath(root))
+	db, err := engram.OpenProjectDB(ctx, root)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "engram record: %v\n", err)
 		return nil
@@ -121,13 +121,12 @@ func runInject(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	dbPath := engram.DBPath(root)
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+	if !engram.ProjectDBExists(root) {
 		fmt.Println("{}")
 		return nil
 	}
 
-	db, err := engram.Open(ctx, dbPath)
+	db, err := engram.OpenProjectDB(ctx, root)
 	if err != nil {
 		fmt.Println("{}")
 		return nil
@@ -147,12 +146,10 @@ func runInject(cmd *cobra.Command, _ []string) error {
 
 	// Read global memories (personality, preferences). Non-fatal if absent.
 	var globalResult engram.InjectResult
-	if globalPath, err := engram.GlobalDBPath(); err == nil {
-		if _, err := os.Stat(globalPath); err == nil {
-			if gdb, err := engram.Open(ctx, globalPath); err == nil {
-				globalResult, _ = engram.Inject(ctx, gdb, injectSessions)
-				gdb.Close()
-			}
+	if engram.GlobalDBExists() {
+		if gdb, err := engram.OpenGlobalDB(ctx); err == nil {
+			globalResult, _ = engram.Inject(ctx, gdb, injectSessions)
+			gdb.Close()
 		}
 	}
 
@@ -178,7 +175,7 @@ func runPrune(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	db, err := engram.Open(ctx, engram.DBPath(root))
+	db, err := engram.OpenProjectDB(ctx, root)
 	if err != nil {
 		return err
 	}

@@ -224,9 +224,13 @@ func FindProjectRoot(start string) (string, error) {
 		return "", err
 	}
 	for {
+		// .engram/ takes priority -- canonical engram project marker.
+		if info, err := os.Stat(filepath.Join(current, ".engram")); err == nil && info.IsDir() {
+			return current, nil
+		}
+		// .claude/ is the legacy marker (skip at $HOME).
 		if current != home {
-			info, err := os.Stat(filepath.Join(current, ".claude"))
-			if err == nil && info.IsDir() {
+			if info, err := os.Stat(filepath.Join(current, ".claude")); err == nil && info.IsDir() {
 				return current, nil
 			}
 		}
@@ -244,8 +248,13 @@ func FindProjectRoot(start string) (string, error) {
 	return "", fmt.Errorf("no project root found from %s", start)
 }
 
-// DBPath returns the path to the engram database for the given project root.
+// DBPath returns the canonical project database path for the given root.
 func DBPath(root string) string {
+	return filepath.Join(root, ".engram", "mem.db")
+}
+
+// LegacyDBPath returns the old project database path, used for read fallback.
+func LegacyDBPath(root string) string {
 	return filepath.Join(root, ".claude", "engram.db")
 }
 
@@ -255,13 +264,81 @@ type DBHandle struct {
 	Path string
 }
 
-// GlobalDBPath returns the path to the global engram database in $HOME/.claude.
+// GlobalDBPath returns the canonical global database path in $HOME/.engram.
 func GlobalDBPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("global db path: %w", err)
 	}
+	return filepath.Join(home, ".engram", "mem.db"), nil
+}
+
+// LegacyGlobalDBPath returns the old global database path, used for read fallback.
+func LegacyGlobalDBPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("legacy global db path: %w", err)
+	}
 	return filepath.Join(home, ".claude", "engram.db"), nil
+}
+
+// dbExists reports whether any of the given paths refer to an existing file.
+// Empty paths are silently skipped.
+func dbExists(paths ...string) bool {
+	for _, p := range paths {
+		if p != "" {
+			if _, err := os.Stat(p); err == nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// openWithFallback opens canonical if it exists (or neither exists), falling
+// back to legacy if canonical is absent. Creates canonical's directory when
+// opening canonical.
+func openWithFallback(ctx context.Context, canonical, legacy string) (*sql.DB, error) {
+	if _, err := os.Stat(canonical); os.IsNotExist(err) {
+		if legacy != "" {
+			if _, err := os.Stat(legacy); err == nil {
+				return Open(ctx, legacy)
+			}
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(canonical), 0755); err != nil {
+		return nil, fmt.Errorf("create db dir: %w", err)
+	}
+	return Open(ctx, canonical)
+}
+
+// ProjectDBExists reports whether any project database exists at root.
+func ProjectDBExists(root string) bool {
+	return dbExists(DBPath(root), LegacyDBPath(root))
+}
+
+// GlobalDBExists reports whether any global database exists.
+func GlobalDBExists() bool {
+	path, _ := GlobalDBPath()
+	legacy, _ := LegacyGlobalDBPath()
+	return dbExists(path, legacy)
+}
+
+// OpenProjectDB opens the project database, falling back to the legacy path if
+// the canonical path does not yet exist.
+func OpenProjectDB(ctx context.Context, root string) (*sql.DB, error) {
+	return openWithFallback(ctx, DBPath(root), LegacyDBPath(root))
+}
+
+// OpenGlobalDB opens the global database, falling back to the legacy path if
+// the canonical path does not yet exist.
+func OpenGlobalDB(ctx context.Context) (*sql.DB, error) {
+	path, err := GlobalDBPath()
+	if err != nil {
+		return nil, err
+	}
+	legacy, _ := LegacyGlobalDBPath()
+	return openWithFallback(ctx, path, legacy)
 }
 
 // Open opens (and initializes) the engram database at path. The caller is
@@ -441,39 +518,55 @@ func WriteMemory(ctx context.Context, db *sql.DB, m Memory) error {
 	return nil
 }
 
-// ReadMemory returns the memory with the given tier and key, or nil if not found.
-func ReadMemory(ctx context.Context, db *sql.DB, tier Tier, key string) (*Memory, error) {
-	row := db.QueryRowContext(ctx,
-		`SELECT id, ts, tier, key, content, COALESCE(session_id, '') FROM memories WHERE tier = ? AND key = ?`,
-		tier, key)
-	var m Memory
-	if err := row.Scan(&m.ID, &m.TS, &m.Tier, &m.Key, &m.Content, &m.SessionID); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read memory: %w", err)
+// queryMemories is the shared implementation for ReadMemory, ReadMemoryTop, ListMemories, and FindMemoryByKey.
+// An empty tier matches all tiers.
+func queryMemories(ctx context.Context, db *sql.DB, tier Tier, key string, limit int) ([]Memory, error) {
+	q := `SELECT id, ts, tier, key, content, COALESCE(session_id, '') FROM memories WHERE true`
+	var args []any
+	if tier != "" {
+		q += ` AND tier = ?`
+		args = append(args, tier)
 	}
-	return &m, nil
-}
-
-// ListMemories returns all memories for a tier, ordered by ts descending.
-func ListMemories(ctx context.Context, db *sql.DB, tier Tier) ([]Memory, error) {
-	rows, err := db.QueryContext(ctx,
-		`SELECT id, ts, tier, key, content, COALESCE(session_id, '') FROM memories WHERE tier = ? ORDER BY ts DESC`,
-		tier)
+	if key != "" {
+		q += ` AND key = ?`
+		args = append(args, key)
+	}
+	q += ` ORDER BY ts DESC`
+	if limit > 0 {
+		q += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := db.QueryContext(ctx, q, args...)
 	if err != nil {
-		return nil, fmt.Errorf("list memories: %w", err)
+		return nil, fmt.Errorf("query memories: %w", err)
 	}
 	defer rows.Close()
 	var out []Memory
 	for rows.Next() {
 		var m Memory
 		if err := rows.Scan(&m.ID, &m.TS, &m.Tier, &m.Key, &m.Content, &m.SessionID); err != nil {
-			return nil, fmt.Errorf("list memories scan: %w", err)
+			return nil, fmt.Errorf("query memories scan: %w", err)
 		}
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+// ReadMemory returns the memory with the given tier and key, or nil if not found.
+func ReadMemory(ctx context.Context, db *sql.DB, tier Tier, key string) (*Memory, error) {
+	ms, err := queryMemories(ctx, db, tier, key, 1)
+	if err != nil {
+		return nil, err
+	}
+	if len(ms) == 0 {
+		return nil, nil
+	}
+	return &ms[0], nil
+}
+
+// ListMemories returns all memories for a tier, ordered by ts descending.
+func ListMemories(ctx context.Context, db *sql.DB, tier Tier) ([]Memory, error) {
+	return queryMemories(ctx, db, tier, "", 0)
 }
 
 // DeleteMemory removes the memory with the given tier and key, returning an
@@ -493,26 +586,9 @@ func DeleteMemory(ctx context.Context, db *sql.DB, tier Tier, key string) error 
 	return nil
 }
 
-// FindMemoryByKey searches all tiers for memories with the exact key,
-// returning all matches ordered by tier.
+// FindMemoryByKey searches all tiers for memories with the exact key.
 func FindMemoryByKey(ctx context.Context, db *sql.DB, key string) ([]Memory, error) {
-	rows, err := db.QueryContext(ctx,
-		`SELECT id, ts, tier, key, content, COALESCE(session_id, '')
-		 FROM memories WHERE key = ? ORDER BY tier`,
-		key)
-	if err != nil {
-		return nil, fmt.Errorf("find memory by key: %w", err)
-	}
-	defer rows.Close()
-	var out []Memory
-	for rows.Next() {
-		var m Memory
-		if err := rows.Scan(&m.ID, &m.TS, &m.Tier, &m.Key, &m.Content, &m.SessionID); err != nil {
-			return nil, fmt.Errorf("find memory by key scan: %w", err)
-		}
-		out = append(out, m)
-	}
-	return out, rows.Err()
+	return queryMemories(ctx, db, "", key, 0)
 }
 
 // PromoteMemory moves a memory from one tier to another within the same database.
@@ -544,41 +620,30 @@ func PopMemory(ctx context.Context, db *sql.DB, tier Tier) (*Memory, error) {
 
 // ReadMemoryTop returns the most recent memory for a tier without deleting it.
 func ReadMemoryTop(ctx context.Context, db *sql.DB, tier Tier) (*Memory, error) {
-	row := db.QueryRowContext(ctx,
-		`SELECT id, ts, tier, key, content, COALESCE(session_id, '') FROM memories WHERE tier = ? ORDER BY ts DESC LIMIT 1`,
-		tier)
-	var m Memory
-	if err := row.Scan(&m.ID, &m.TS, &m.Tier, &m.Key, &m.Content, &m.SessionID); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read memory top: %w", err)
+	ms, err := queryMemories(ctx, db, tier, "", 1)
+	if err != nil {
+		return nil, err
 	}
-	return &m, nil
+	if len(ms) == 0 {
+		return nil, nil
+	}
+	return &ms[0], nil
 }
 
 // SearchMemories performs a full-text search over memories. If tier is
 // non-empty, results are filtered to that tier.
 func SearchMemories(ctx context.Context, db *sql.DB, query string, tier Tier) ([]Memory, error) {
-	var rows *sql.Rows
-	var err error
+	q := `SELECT m.id, m.ts, m.tier, m.key, m.content, COALESCE(m.session_id, '')
+		FROM memories_fts f
+		JOIN memories m ON m.id = f.rowid
+		WHERE memories_fts MATCH ?`
+	args := []any{query}
 	if tier != "" {
-		rows, err = db.QueryContext(ctx, `
-			SELECT m.id, m.ts, m.tier, m.key, m.content, COALESCE(m.session_id, '')
-			FROM memories_fts f
-			JOIN memories m ON m.id = f.rowid
-			WHERE memories_fts MATCH ? AND m.tier = ?
-			ORDER BY rank
-		`, query, tier)
-	} else {
-		rows, err = db.QueryContext(ctx, `
-			SELECT m.id, m.ts, m.tier, m.key, m.content, COALESCE(m.session_id, '')
-			FROM memories_fts f
-			JOIN memories m ON m.id = f.rowid
-			WHERE memories_fts MATCH ?
-			ORDER BY rank
-		`, query)
+		q += ` AND m.tier = ?`
+		args = append(args, tier)
 	}
+	q += ` ORDER BY rank`
+	rows, err := db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("search memories: %w", err)
 	}

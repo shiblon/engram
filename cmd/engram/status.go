@@ -19,8 +19,8 @@ func runStatus(_ *cobra.Command, _ []string) error {
 	ctx := context.Background()
 
 	name := "engram"
-	if globalPath, err := engram.GlobalDBPath(); err == nil {
-		if db, err := engram.Open(ctx, globalPath); err == nil {
+	if engram.GlobalDBExists() {
+		if db, err := engram.OpenGlobalDB(ctx); err == nil {
 			if m, err := engram.ReadMemory(ctx, db, engram.TierInvariant, "codename"); err == nil && m != nil {
 				name = m.Content
 			}
@@ -29,8 +29,8 @@ func runStatus(_ *cobra.Command, _ []string) error {
 	}
 
 	shortCount := 0
-	if globalPath, err := engram.GlobalDBPath(); err == nil {
-		if db, err := engram.Open(ctx, globalPath); err == nil {
+	if engram.GlobalDBExists() {
+		if db, err := engram.OpenGlobalDB(ctx); err == nil {
 			if items, err := engram.ListMemories(ctx, db, engram.TierShort); err == nil {
 				shortCount += len(items)
 			}
@@ -40,7 +40,7 @@ func runStatus(_ *cobra.Command, _ []string) error {
 	cwd, err := os.Getwd()
 	if err == nil {
 		if root, err := engram.FindProjectRoot(cwd); err == nil {
-			if db, err := engram.Open(ctx, engram.DBPath(root)); err == nil {
+			if db, err := engram.OpenProjectDB(ctx, root); err == nil {
 				if items, err := engram.ListMemories(ctx, db, engram.TierShort); err == nil {
 					shortCount += len(items)
 				}

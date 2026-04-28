@@ -87,14 +87,11 @@ func registerMCPTools(s *server.MCPServer) {
 func openMCPDB(ctx context.Context, req mcp.CallToolRequest) (*engram.DBHandle, error) {
 	global, _ := req.GetArguments()["global"].(bool)
 	if global {
-		path, err := engram.GlobalDBPath()
+		db, err := engram.OpenGlobalDB(ctx)
 		if err != nil {
 			return nil, err
 		}
-		db, err := engram.Open(ctx, path)
-		if err != nil {
-			return nil, err
-		}
+		path, _ := engram.GlobalDBPath()
 		return &engram.DBHandle{DB: db, Path: path}, nil
 	}
 	cwd, _ := req.GetArguments()["cwd"].(string)
@@ -105,7 +102,7 @@ func openMCPDB(ctx context.Context, req mcp.CallToolRequest) (*engram.DBHandle, 
 	if err != nil {
 		return nil, fmt.Errorf("no project root found from %s", cwd)
 	}
-	db, err := engram.Open(ctx, engram.DBPath(root))
+	db, err := engram.OpenProjectDB(ctx, root)
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +119,7 @@ func mcpInject(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResul
 		return mcp.NewToolResultText("{}"), nil
 	}
 
-	db, err := engram.Open(ctx, engram.DBPath(root))
+	db, err := engram.OpenProjectDB(ctx, root)
 	if err != nil {
 		return mcp.NewToolResultText("{}"), nil
 	}
@@ -131,8 +128,8 @@ func mcpInject(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResul
 	projectResult, _ := engram.Inject(ctx, db, engram.DefaultInjectSessions)
 
 	var globalResult engram.InjectResult
-	if globalPath, err := engram.GlobalDBPath(); err == nil {
-		if gdb, err := engram.Open(ctx, globalPath); err == nil {
+	if engram.GlobalDBExists() {
+		if gdb, err := engram.OpenGlobalDB(ctx); err == nil {
 			globalResult, _ = engram.Inject(ctx, gdb, engram.DefaultInjectSessions)
 			gdb.Close()
 		}
