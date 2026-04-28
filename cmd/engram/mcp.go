@@ -23,20 +23,69 @@ func runMCP(_ *cobra.Command, _ []string) error {
 		"engram",
 		"0.1.0",
 		server.WithToolCapabilities(true),
+		server.WithResourceCapabilities(false, false),
 	)
 
+	registerMCPResources(s)
 	registerMCPTools(s)
 
 	return server.ServeStdio(s)
 }
 
-func registerMCPTools(s *server.MCPServer) {
-	// inject: return session-start context for a project
-	s.AddTool(mcp.NewTool("inject",
-		mcp.WithDescription("Return engram memory context for a project. Used at session start."),
-		mcp.WithString("cwd", mcp.Required(), mcp.Description("Project working directory")),
-	), mcpInject)
+func registerMCPResources(s *server.MCPServer) {
+	s.AddResource(mcp.Resource{
+		URI:         "engram://inject",
+		Name:        "Engram session context",
+		Description: "Personality, preferences, memories, and recent file activity for this project. Read at session start.",
+		MIMEType:    "text/plain",
+	}, mcpResourceInject)
 
+	s.AddResource(mcp.Resource{
+		URI:         "engram://agentinfo",
+		Name:        "Engram agent instructions",
+		Description: "How to use engram: memory workflow, tiers, and commands.",
+		MIMEType:    "text/plain",
+	}, mcpResourceAgentInfo)
+}
+
+func mcpResourceInject(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+	cwd := effectiveCWD()
+
+	root, err := engram.FindProjectRoot(cwd)
+	if err != nil {
+		return textResource(req.Params.URI, "{}"), nil
+	}
+
+	db, err := engram.OpenProjectDB(ctx, root)
+	if err != nil {
+		return textResource(req.Params.URI, "{}"), nil
+	}
+	defer db.Close()
+
+	projectResult, _ := engram.Inject(ctx, db, engram.DefaultInjectSessions)
+
+	var globalResult engram.InjectResult
+	if engram.GlobalDBExists() {
+		if gdb, err := engram.OpenGlobalDB(ctx); err == nil {
+			globalResult, _ = engram.Inject(ctx, gdb, engram.DefaultInjectSessions)
+			gdb.Close()
+		}
+	}
+
+	return textResource(req.Params.URI, engram.InjectContextText(globalResult, projectResult, engram.DefaultInjectSessions)), nil
+}
+
+func mcpResourceAgentInfo(_ context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+	return textResource(req.Params.URI, agentInfoText), nil
+}
+
+func textResource(uri, text string) []mcp.ResourceContents {
+	return []mcp.ResourceContents{
+		mcp.TextResourceContents{URI: uri, MIMEType: "text/plain", Text: text},
+	}
+}
+
+func registerMCPTools(s *server.MCPServer) {
 	// mem_write: upsert a memory entry
 	s.AddTool(mcp.NewTool("mem_write",
 		mcp.WithDescription("Write (upsert) a memory entry."),
@@ -109,35 +158,6 @@ func openMCPDB(ctx context.Context, req mcp.CallToolRequest) (*engram.DBHandle, 
 	return &engram.DBHandle{DB: db, Path: engram.DBPath(root)}, nil
 }
 
-func mcpInject(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	cwd, _ := req.GetArguments()["cwd"].(string)
-	if cwd == "" {
-		cwd = effectiveCWD()
-	}
-	root, err := engram.FindProjectRoot(cwd)
-	if err != nil {
-		return mcp.NewToolResultText("{}"), nil
-	}
-
-	db, err := engram.OpenProjectDB(ctx, root)
-	if err != nil {
-		return mcp.NewToolResultText("{}"), nil
-	}
-	defer db.Close()
-
-	projectResult, _ := engram.Inject(ctx, db, engram.DefaultInjectSessions)
-
-	var globalResult engram.InjectResult
-	if engram.GlobalDBExists() {
-		if gdb, err := engram.OpenGlobalDB(ctx); err == nil {
-			globalResult, _ = engram.Inject(ctx, gdb, engram.DefaultInjectSessions)
-			gdb.Close()
-		}
-	}
-
-	out := engram.FormatInjectOutput(globalResult, projectResult, engram.DefaultInjectSessions)
-	return mcp.NewToolResultText(string(out)), nil
-}
 
 func mcpMemWrite(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	h, err := openMCPDB(ctx, req)

@@ -730,7 +730,8 @@ type injectHookOutput struct {
 }
 
 // FormatInjectOutput formats the session-start hook output JSON.
-func FormatInjectOutput(global, project InjectResult, nSessions int) []byte {
+// InjectContextText formats global and project inject results as plain text.
+func InjectContextText(global, project InjectResult, nSessions int) string {
 	var parts []string
 
 	if len(global.Invariants) > 0 {
@@ -782,10 +783,15 @@ func FormatInjectOutput(global, project InjectResult, nSessions int) []byte {
 				"Ask your agent to set a personality, codename, and preferences with `engram mem write`.")
 	}
 
+	return strings.Join(parts, "\n\n")
+}
+
+// FormatInjectOutput wraps InjectContextText in the SessionStart hook JSON envelope.
+func FormatInjectOutput(global, project InjectResult, nSessions int) []byte {
 	out, _ := json.Marshal(injectOutput{
 		HookSpecificOutput: injectHookOutput{
 			HookEventName:     "SessionStart",
-			AdditionalContext: strings.Join(parts, "\n\n"),
+			AdditionalContext: InjectContextText(global, project, nSessions),
 		},
 	})
 	return out
