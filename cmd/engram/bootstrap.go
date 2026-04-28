@@ -43,11 +43,6 @@ const bootstrapCanary = `If your identity or instructions feel unfamiliar, run:
   engram mem --global --tier invariant list
 That is the signal to re-bootstrap from the inject context at session start.`
 
-// claudeMDContent returns the content to write into CLAUDE.md, wrapping
-// agentInfoText in engram markers so it can be cleanly found and replaced.
-func claudeMDContent() string {
-	return "<!-- engram:start -->\n" + agentInfoText + "<!-- engram:end -->\n"
-}
 
 var bootstrapGlobalOnly bool
 
@@ -151,6 +146,9 @@ func runBootstrap(cmd *cobra.Command, _ []string) error {
 		if err != nil {
 			return err
 		}
+		if err := bootstrapEngramMd(); err != nil {
+			return err
+		}
 		if err := bootstrapClaudeMd(); err != nil {
 			return err
 		}
@@ -169,6 +167,19 @@ func runBootstrap(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+func bootstrapEngramMd() error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(home, ".claude", "engram.md")
+	if err := os.WriteFile(path, []byte(agentInfoText), 0644); err != nil {
+		return err
+	}
+	fmt.Printf("wrote: %s\n", path)
+	return nil
+}
+
 func bootstrapClaudeMd() error {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -180,28 +191,28 @@ func bootstrapClaudeMd() error {
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
+	content := string(data)
 
-	if strings.Contains(string(data), "<!-- engram:start -->") {
-		fmt.Printf("skip (already has engram section): %s\n", path)
+	if strings.Contains(content, "@engram.md") {
+		fmt.Printf("skip (already present): @engram.md in %s\n", path)
 		return nil
 	}
 
-	if strings.Contains(string(data), "engram") {
-		fmt.Printf("skip (has engram content but no markers -- not modifying): %s\n", path)
-		fmt.Println("  Add <!-- engram:start --> and <!-- engram:end --> markers manually, or move the file and re-run bootstrap.")
+	if strings.Contains(content, "<!-- engram:start -->") {
+		fmt.Printf("skip (has old marker-style engram section): %s\n", path)
+		fmt.Println("  Run 'engram uninstall' first to remove it, then re-run bootstrap.")
 		return nil
 	}
 
-	if len(data) > 0 {
-		fmt.Printf("skip (exists without engram content -- not modifying): %s\n", path)
-		fmt.Println("  Add engram content manually, or move the file and re-run bootstrap.")
-		return nil
-	}
-
-	if err := os.WriteFile(path, []byte(claudeMDContent()), 0644); err != nil {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
 		return err
 	}
-	fmt.Printf("wrote: %s\n", path)
+	defer f.Close()
+	if _, err := f.WriteString("\n@engram.md\n"); err != nil {
+		return err
+	}
+	fmt.Printf("wrote: @engram.md in %s\n", path)
 	return nil
 }
 
