@@ -143,11 +143,16 @@ func bootstrapGlobalDB(ctx context.Context) (int, int, error) {
 
 // bootstrap claude
 
+var bootstrapClaudeGlobal bool
+
 var bootstrapClaudeCmd = &cobra.Command{
 	Use:   "claude",
 	Short: "Set up Claude Code hooks, CLAUDE.md, and global DB invariants",
 	Long: `Bootstrap Claude Code by writing global DB invariants, patching ~/.claude/CLAUDE.md,
-and adding engram hooks to the project's .claude/settings.json.
+and adding engram hooks to settings.json.
+
+By default hooks are written to the project's .claude/settings.json.
+Use -g to write hooks to ~/.claude/settings.json instead (for personal machines).
 
 Existing keys and entries are never overwritten -- safe to re-run.`,
 	RunE: runBootstrapClaude,
@@ -174,7 +179,7 @@ func runBootstrapClaude(cmd *cobra.Command, _ []string) error {
 	if err := bootstrapStatusLine(exe); err != nil {
 		return err
 	}
-	if err := bootstrapHooks(exe); err != nil {
+	if err := bootstrapHooks(exe, bootstrapClaudeGlobal); err != nil {
 		return err
 	}
 
@@ -264,24 +269,33 @@ func bootstrapStatusLine(exe string) error {
 	return nil
 }
 
-func bootstrapHooks(exe string) error {
-	root, err := engram.FindProjectRoot(effectiveCWD())
-	if err != nil {
-		fmt.Println("skip (no project root found): hooks")
-		return nil
+func bootstrapHooks(exe string, global bool) error {
+	var path string
+	if global {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return err
+		}
+		path = filepath.Join(home, ".claude", "settings.json")
+	} else {
+		root, err := engram.FindProjectRoot(effectiveCWD())
+		if err != nil {
+			fmt.Println("skip (no project root found): hooks")
+			return nil
+		}
+		path = filepath.Join(root, ".claude", "settings.json")
 	}
-	projectPath := filepath.Join(root, ".claude", "settings.json")
 
-	data, _ := os.ReadFile(projectPath)
+	data, _ := os.ReadFile(path)
 	if strings.Contains(string(data), "engram record") {
-		fmt.Printf("skip (hooks already in project settings): %s\n", projectPath)
+		fmt.Printf("skip (hooks already present): %s\n", path)
 		return nil
 	}
 
-	if err := addEngramHooks(projectPath, exe); err != nil {
+	if err := addEngramHooks(path, exe); err != nil {
 		return err
 	}
-	fmt.Printf("wrote: engram hooks in %s\n", projectPath)
+	fmt.Printf("wrote: engram hooks in %s\n", path)
 	return nil
 }
 
@@ -578,6 +592,7 @@ func asSlice(v any) []any {
 }
 
 func init() {
+	bootstrapClaudeCmd.Flags().BoolVarP(&bootstrapClaudeGlobal, "global", "g", false, "write hooks to ~/.claude/settings.json instead of the project's .claude/settings.json")
 	bootstrapCmd.AddCommand(bootstrapClaudeCmd, bootstrapAntigravityCmd, bootstrapGeminiCmd, bootstrapCopilotCmd)
 	rootCmd.AddCommand(bootstrapCmd)
 }

@@ -29,12 +29,13 @@ Memories are NOT deleted by any subcommand. Use 'engram mem' to manage them.`,
 // uninstall claude
 
 var uninstallClaudeDropDB bool
+var uninstallClaudeGlobal bool
 
 var uninstallClaudeCmd = &cobra.Command{
 	Use:   "claude",
 	Short: "Remove Claude Code hooks, statusLine, and CLAUDE.md entries",
 	Long: `Uninstall Claude Code integration:
-  - Removes engram hooks from ~/.claude/settings.json
+  - Removes engram hooks from settings.json (project or global with -g)
   - Removes the statusLine from ~/.claude/settings.json
   - Removes the engram section from ~/.claude/CLAUDE.md (if markers present)
   - Removes engram entries from .gitignore in the current project
@@ -44,7 +45,7 @@ Memories are NOT deleted. Use --drop-db to also delete the project database.`,
 }
 
 func runUninstallClaude(cmd *cobra.Command, _ []string) error {
-	if err := uninstallSettings(); err != nil {
+	if err := uninstallSettings(uninstallClaudeGlobal); err != nil {
 		return err
 	}
 	if err := uninstallClaudeMd(); err != nil {
@@ -63,12 +64,22 @@ func runUninstallClaude(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-func uninstallSettings() error {
+func uninstallSettings(global bool) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(home, ".claude", "settings.json")
+	var path string
+	if global {
+		path = filepath.Join(home, ".claude", "settings.json")
+	} else {
+		root, err := engram.FindProjectRoot(effectiveCWD())
+		if err != nil {
+			fmt.Println("skip (no project root found): hooks")
+			return nil
+		}
+		path = filepath.Join(root, ".claude", "settings.json")
+	}
 
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -369,6 +380,7 @@ func runUninstallAntigravity(_ *cobra.Command, _ []string) error {
 
 func init() {
 	uninstallClaudeCmd.Flags().BoolVar(&uninstallClaudeDropDB, "drop-db", false, "also delete the project database")
+	uninstallClaudeCmd.Flags().BoolVarP(&uninstallClaudeGlobal, "global", "g", false, "remove hooks from ~/.claude/settings.json instead of the project's .claude/settings.json")
 	uninstallCmd.AddCommand(uninstallClaudeCmd, uninstallGeminiCmd, uninstallAntigravityCmd, uninstallCopilotCmd)
 	rootCmd.AddCommand(uninstallCmd)
 }

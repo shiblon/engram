@@ -1,10 +1,10 @@
-# ENGRAM - A Memory and Personality Aid for Claude Code
+# ENGRAM - A Memory and Personality Aid for AI Agents
 
 *NOTE: inspired by a combination of [auto-memory](https://github.com/dezgit2025/auto-memory) and work done by a beloved colleague of mine from Atlassian: [Kevin Harris](https://www.linkedin.com/in/pwnx0r/).*
 
 Just want to install and get moving? [Jump to installation.](#installation)
 
-*NOTE 2: if you want this to work for other agents, just let me know! We can figure it out.*
+*NOTE 2: Claude Code has full hook support (session start + file tracking). Gemini CLI, AntiGravity, and GitHub Copilot are supported via system prompt instructions. Cursor support is coming.*
 
 Memory affects everything about people. It affects personality, the ability to hold a conversation, and the ability to get things done. This is also true for AI agents, but the story there is fragmented and memory does not always behave as we expect.
 
@@ -14,7 +14,7 @@ Agents are not humans, but they *can* restore some of that joy. Engram is about 
 
 ## Token Savings
 
-The problem with re-explaining things during every session start has been mitigated to a large extent, at least for the way in which I've been using Claude. I found that before I took some pains to make memory explicitly managed, this was an issue. I had to rebootstrap it frequently. This costs tokens and shortens your effective context window. The author of [auto-memory](https://github.com/dezgit2025/auto-memory) goes into some very nice detail about the issue and their particular solution (which only works on copilot, inspiring me and Qubit, my Claude personality, to build it for Claude).
+The problem with re-explaining things during every session start has been mitigated to a large extent, at least for the way in which I've been using AI agents. Before I took some pains to make memory explicitly managed, this was a real issue. I had to rebootstrap frequently. This costs tokens and shortens your effective context window. The author of [auto-memory](https://github.com/dezgit2025/auto-memory) goes into some very nice detail about the issue and their particular solution, which inspired this project.
 
 If memory is well structured and easily accessed in a database, then you can actually get more done with fewer tokens. Access patterns matter, which is why [rtk](https://github.com/rtk-ai/rtk) (Rust Token Killer) has a chance of working. It isn't just intercepting tokens, it's imposing *structure*. That structure just happens to look like a token filter. There are other structures that can help, as well.
 
@@ -74,17 +74,26 @@ It is recommended that you just ask your agent to do the whole thing, but there 
 
 ### Ask your agent to do it
 
-Paste this into a new Claude Code session:
+Paste this into a new session:
 
 ```
 Install engram:
 
-1. Run: go install github.com/shiblon/engram/cmd/engram@latest
+1. Make sure Go is installed: run "go version". If it's missing, install it
+   with your system package manager (e.g. "brew install go" on Mac) or
+   download it from https://go.dev/dl -- it's a standard installer.
 
-2. Find the full path: run go env GOBIN (or go env GOPATH, binary at $GOPATH/bin/engram)
+2. Run: go install github.com/shiblon/engram/cmd/engram@latest
+
+3. Find the full path: run go env GOBIN (or go env GOPATH, binary at $GOPATH/bin/engram)
    Verify: <full-path>/engram --help
 
-3. Run: <full-path>/engram bootstrap
+4. Run one of:
+   <full-path>/engram bootstrap claude -g   # Claude Code (personal machine)
+   <full-path>/engram bootstrap claude      # Claude Code (project only)
+   <full-path>/engram bootstrap gemini      # Gemini CLI
+   <full-path>/engram bootstrap antigravity # AntiGravity
+   <full-path>/engram bootstrap copilot     # GitHub Copilot (run in project dir)
 
 Open a new session when done -- the short-term stack will guide you from there.
 ```
@@ -92,24 +101,26 @@ Open a new session when done -- the short-term stack will guide you from there.
 ### Manual setup
 
 ```sh
+# Install Go if needed: use your package manager (such as `brew install go` on Mac)
+# or the official package site https://go.dev/dl
 go install github.com/shiblon/engram/cmd/engram@latest
-engram bootstrap   # or: $(go env GOBIN)/engram bootstrap if not in PATH
+engram bootstrap claude -g   # or without -g for project-only hooks
 ```
 
-No Go toolchain? Download a pre-built binary for your platform from
+Prefer not to install Go? Download a pre-built binary from
 [github.com/shiblon/engram/releases/latest](https://github.com/shiblon/engram/releases/latest),
 extract it, and place `engram` somewhere in your PATH.
 
-Bootstrap sets up CLAUDE.md, installs workflow instructions into global memory,
-adds project-level file tracking hooks to `.claude/settings.json`, updates
-`.gitignore`, and queues a personality setup todo for your first session. Open a
-new Claude Code session and your agent will know what to do.
+Bootstrap writes workflow instructions into global memory, sets up
+session-start injection, and queues a personality setup todo for your first
+session. For Claude Code it also adds file tracking hooks. Open a new session
+when done and your agent will know what to do.
 
 ### Commit your personality to git (optional but recommended)
 
 ```sh
-engram mem --global dump   # exports to ~/.claude/memory/*.md
-engram mem dump            # exports project memories to .claude/memory/*.md
+engram mem --global dump   # exports to ~/.engram/memory/*.md
+engram mem dump            # exports project memories to .engram/memory/*.md
 ```
 
 On a new machine, `engram mem load` restores everything. Your agent's identity
