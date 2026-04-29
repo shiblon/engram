@@ -4,7 +4,7 @@
 
 Just want to install and get moving? [Jump to installation.](#installation)
 
-*NOTE 2: Claude Code has full hook support (session start + file tracking). Gemini CLI, AntiGravity, and GitHub Copilot are supported via system prompt instructions. Cursor support is coming.*
+*NOTE 2: Claude Code has full hook support (session start + file tracking). Gemini CLI, AntiGravity, GitHub Copilot, and Cursor are supported via system prompt injection.*
 
 Memory affects everything about people. It affects personality, the ability to hold a conversation, and the ability to get things done. This is also true for AI agents, but the story there is fragmented and memory does not always behave as we expect.
 
@@ -94,6 +94,7 @@ Install engram:
    <full-path>/engram bootstrap gemini      # Gemini CLI
    <full-path>/engram bootstrap antigravity # AntiGravity
    <full-path>/engram bootstrap copilot     # GitHub Copilot (run in project dir)
+   <full-path>/engram bootstrap cursor      # Cursor (run in project dir)
 
 Open a new session when done -- the short-term stack will guide you from there.
 ```

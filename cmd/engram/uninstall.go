@@ -22,6 +22,7 @@ Subcommands:
   gemini       -- remove the Gemini CLI GEMINI.md section and SessionStart hook
   antigravity  -- remove the AntiGravity Knowledge Item
   copilot      -- remove the engram section from .github/copilot-instructions.md
+  cursor       -- remove the engram section from .cursorrules
 
 Memories are NOT deleted by any subcommand. Use 'engram mem' to manage them.`,
 }
@@ -349,6 +350,46 @@ func runUninstallCopilot(_ *cobra.Command, _ []string) error {
 	return nil
 }
 
+// uninstall cursor
+
+var uninstallCursorCmd = &cobra.Command{
+	Use:   "cursor",
+	Short: "Remove the engram section from .cursorrules",
+	RunE:  runUninstallCursor,
+}
+
+var engramCursorSection = regexp.MustCompile(`(?m)\n## Engram Session Protocol\n[\s\S]*?Do not skip this step\.\n?`)
+
+func runUninstallCursor(_ *cobra.Command, _ []string) error {
+	root, err := engram.FindProjectRoot(effectiveCWD())
+	if err != nil {
+		fmt.Println("skip (no project root found): .cursorrules")
+		return nil
+	}
+	path := filepath.Join(root, ".cursorrules")
+
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		fmt.Printf("skip (not found): %s\n", path)
+	} else if err != nil {
+		return err
+	} else {
+		updated := engramCursorSection.ReplaceAllString(string(data), "")
+		if updated == string(data) {
+			fmt.Printf("skip (no engram section): %s\n", path)
+		} else {
+			if err := os.WriteFile(path, []byte(updated), 0644); err != nil {
+				return err
+			}
+			fmt.Printf("removed: engram section from %s\n", path)
+		}
+	}
+
+	fmt.Println("\nDone. Global memories (personality, preferences) were not touched.")
+	fmt.Println("To remove them: engram mem --global --tier invariant list  (then delete as needed)")
+	return nil
+}
+
 // uninstall antigravity
 
 var uninstallAntigravityCmd = &cobra.Command{
@@ -381,6 +422,6 @@ func runUninstallAntigravity(_ *cobra.Command, _ []string) error {
 func init() {
 	uninstallClaudeCmd.Flags().BoolVar(&uninstallClaudeDropDB, "drop-db", false, "also delete the project database")
 	uninstallClaudeCmd.Flags().BoolVarP(&uninstallClaudeGlobal, "global", "g", false, "remove hooks from ~/.claude/settings.json instead of the project's .claude/settings.json")
-	uninstallCmd.AddCommand(uninstallClaudeCmd, uninstallGeminiCmd, uninstallAntigravityCmd, uninstallCopilotCmd)
+	uninstallCmd.AddCommand(uninstallClaudeCmd, uninstallGeminiCmd, uninstallAntigravityCmd, uninstallCopilotCmd, uninstallCursorCmd)
 	rootCmd.AddCommand(uninstallCmd)
 }

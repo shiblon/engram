@@ -53,7 +53,8 @@ Subcommands:
   claude       -- set up Claude Code hooks, CLAUDE.md, and global DB invariants
   gemini       -- write ~/.gemini/GEMINI.md and SessionStart hook
   antigravity  -- write a Knowledge Item that instructs AntiGravity to call engram at session start
-  copilot      -- write .github/copilot-instructions.md in the current project`,
+  copilot      -- write .github/copilot-instructions.md in the current project
+  cursor       -- write .cursorrules in the current project`,
 }
 
 // bootstrapGlobalDB writes the shared global DB invariants used by all agents.
@@ -558,6 +559,70 @@ func runBootstrapCopilot(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+// bootstrap cursor
+
+var bootstrapCursorCmd = &cobra.Command{
+	Use:   "cursor",
+	Short: "Write .cursorrules to call engram at session start",
+	Long: `Bootstrap Cursor by appending the engram session protocol to
+.cursorrules in the current project.
+
+Safe to re-run: skips if the engram section is already present.`,
+	RunE: runBootstrapCursor,
+}
+
+const cursorRulesSection = `
+## Engram Session Protocol
+
+At the start of every new conversation, before taking any other action, run:
+
+  engram inject --text
+
+Treat the output as your session context (identity, preferences, project memory).
+Do not skip this step.`
+
+func runBootstrapCursor(cmd *cobra.Command, _ []string) error {
+	ctx := context.Background()
+
+	wrote, skipped, err := bootstrapGlobalDB(ctx)
+	if err != nil {
+		return err
+	}
+
+	root, err := engram.FindProjectRoot(effectiveCWD())
+	if err != nil {
+		return fmt.Errorf("cursor bootstrap requires a project root: %w", err)
+	}
+	path := filepath.Join(root, ".cursorrules")
+
+	data, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if strings.Contains(string(data), "engram inject --text") {
+		fmt.Printf("skip (already present): engram section in %s\n", path)
+		skipped++
+	} else {
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			return err
+		}
+		_, werr := f.WriteString(cursorRulesSection + "\n")
+		f.Close()
+		if werr != nil {
+			return werr
+		}
+		fmt.Printf("wrote: engram section in %s\n", path)
+		wrote++
+	}
+
+	fmt.Printf("\n%d written, %d skipped\n", wrote, skipped)
+	if skipped > 0 {
+		fmt.Println("(use engram mem --global --tier invariant write <key> <content> to update existing entries)")
+	}
+	return nil
+}
+
 func readSettingsJSON(path string) (map[string]any, error) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -593,6 +658,6 @@ func asSlice(v any) []any {
 
 func init() {
 	bootstrapClaudeCmd.Flags().BoolVarP(&bootstrapClaudeGlobal, "global", "g", false, "write hooks to ~/.claude/settings.json instead of the project's .claude/settings.json")
-	bootstrapCmd.AddCommand(bootstrapClaudeCmd, bootstrapAntigravityCmd, bootstrapGeminiCmd, bootstrapCopilotCmd)
+	bootstrapCmd.AddCommand(bootstrapClaudeCmd, bootstrapAntigravityCmd, bootstrapGeminiCmd, bootstrapCopilotCmd, bootstrapCursorCmd)
 	rootCmd.AddCommand(bootstrapCmd)
 }
