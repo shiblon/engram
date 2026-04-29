@@ -12,23 +12,38 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var uninstallDropDB bool
-
 var uninstallCmd = &cobra.Command{
 	Use:   "uninstall",
-	Short: "Remove engram hooks, statusLine, and gitignore entries",
-	Long: `Uninstall reverses what bootstrap did:
+	Short: "Remove engram configuration for a specific AI agent",
+	Long: `Uninstall removes engram configuration for a given AI agent.
+
+Subcommands:
+  claude       -- remove Claude Code hooks, statusLine, and CLAUDE.md entries
+  gemini       -- remove the Gemini CLI GEMINI.md section and SessionStart hook
+  antigravity  -- remove the AntiGravity Knowledge Item
+  copilot      -- remove the engram section from .github/copilot-instructions.md
+
+Memories are NOT deleted by any subcommand. Use 'engram mem' to manage them.`,
+}
+
+// uninstall claude
+
+var uninstallClaudeDropDB bool
+
+var uninstallClaudeCmd = &cobra.Command{
+	Use:   "claude",
+	Short: "Remove Claude Code hooks, statusLine, and CLAUDE.md entries",
+	Long: `Uninstall Claude Code integration:
   - Removes engram hooks from ~/.claude/settings.json
   - Removes the statusLine from ~/.claude/settings.json
   - Removes the engram section from ~/.claude/CLAUDE.md (if markers present)
   - Removes engram entries from .gitignore in the current project
 
-Memories are NOT deleted. Use 'engram mem' commands to manage them manually.
-Use --drop-db to also delete the project database.`,
-	RunE: runUninstall,
+Memories are NOT deleted. Use --drop-db to also delete the project database.`,
+	RunE: runUninstallClaude,
 }
 
-func runUninstall(cmd *cobra.Command, _ []string) error {
+func runUninstallClaude(cmd *cobra.Command, _ []string) error {
 	if err := uninstallSettings(); err != nil {
 		return err
 	}
@@ -38,7 +53,7 @@ func runUninstall(cmd *cobra.Command, _ []string) error {
 	if err := uninstallGitignore(); err != nil {
 		return err
 	}
-	if uninstallDropDB {
+	if uninstallClaudeDropDB {
 		if err := uninstallDB(); err != nil {
 			return err
 		}
@@ -244,7 +259,116 @@ func uninstallDB() error {
 	return nil
 }
 
+// uninstall gemini
+
+var uninstallGeminiCmd = &cobra.Command{
+	Use:   "gemini",
+	Short: "Remove the Gemini CLI knowledge file written by bootstrap gemini",
+	RunE:  runUninstallGemini,
+}
+
+var engramGeminiSection = regexp.MustCompile(`(?m)\n## Engram Session Protocol\n[\s\S]*?Do not skip this step\.\n?`)
+
+func runUninstallGemini(_ *cobra.Command, _ []string) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	mdPath := filepath.Join(home, ".gemini", "GEMINI.md")
+	data, err := os.ReadFile(mdPath)
+	if os.IsNotExist(err) {
+		fmt.Printf("skip (not found): %s\n", mdPath)
+	} else if err != nil {
+		return err
+	} else {
+		updated := engramGeminiSection.ReplaceAllString(string(data), "")
+		if updated == string(data) {
+			fmt.Printf("skip (no engram section): %s\n", mdPath)
+		} else {
+			if err := os.WriteFile(mdPath, []byte(updated), 0644); err != nil {
+				return err
+			}
+			fmt.Printf("removed: engram section from %s\n", mdPath)
+		}
+	}
+
+	fmt.Println("\nDone. Global memories (personality, preferences) were not touched.")
+	fmt.Println("To remove them: engram mem --global --tier invariant list  (then delete as needed)")
+	return nil
+}
+
+// uninstall copilot
+
+var uninstallCopilotCmd = &cobra.Command{
+	Use:   "copilot",
+	Short: "Remove the engram section from .github/copilot-instructions.md",
+	RunE:  runUninstallCopilot,
+}
+
+var engramCopilotSection = regexp.MustCompile(`(?m)\n## Engram Session Protocol\n[\s\S]*?Do not skip this step\.\n?`)
+
+func runUninstallCopilot(_ *cobra.Command, _ []string) error {
+	root, err := engram.FindProjectRoot(effectiveCWD())
+	if err != nil {
+		fmt.Println("skip (no project root found): copilot-instructions.md")
+		return nil
+	}
+	path := filepath.Join(root, ".github", "copilot-instructions.md")
+
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		fmt.Printf("skip (not found): %s\n", path)
+	} else if err != nil {
+		return err
+	} else {
+		updated := engramCopilotSection.ReplaceAllString(string(data), "")
+		if updated == string(data) {
+			fmt.Printf("skip (no engram section): %s\n", path)
+		} else {
+			if err := os.WriteFile(path, []byte(updated), 0644); err != nil {
+				return err
+			}
+			fmt.Printf("removed: engram section from %s\n", path)
+		}
+	}
+
+	fmt.Println("\nDone. Global memories (personality, preferences) were not touched.")
+	fmt.Println("To remove them: engram mem --global --tier invariant list  (then delete as needed)")
+	return nil
+}
+
+// uninstall antigravity
+
+var uninstallAntigravityCmd = &cobra.Command{
+	Use:   "antigravity",
+	Short: "Remove the AntiGravity Knowledge Item written by bootstrap antigravity",
+	RunE:  runUninstallAntigravity,
+}
+
+func runUninstallAntigravity(_ *cobra.Command, _ []string) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	kiDir := filepath.Join(home, ".gemini", "antigravity", "knowledge", "engram_protocol")
+
+	if _, err := os.Stat(kiDir); os.IsNotExist(err) {
+		fmt.Printf("skip (not found): %s\n", kiDir)
+	} else {
+		if err := os.RemoveAll(kiDir); err != nil {
+			return err
+		}
+		fmt.Printf("removed: %s\n", kiDir)
+	}
+
+	fmt.Println("\nDone. Global memories (personality, preferences) were not touched.")
+	fmt.Println("To remove them: engram mem --global --tier invariant list  (then delete as needed)")
+	return nil
+}
+
 func init() {
-	uninstallCmd.Flags().BoolVar(&uninstallDropDB, "drop-db", false, "also delete the project database")
+	uninstallClaudeCmd.Flags().BoolVar(&uninstallClaudeDropDB, "drop-db", false, "also delete the project database")
+	uninstallCmd.AddCommand(uninstallClaudeCmd, uninstallGeminiCmd, uninstallAntigravityCmd, uninstallCopilotCmd)
 	rootCmd.AddCommand(uninstallCmd)
 }

@@ -156,11 +156,11 @@ You:   what have we decided about this project?
 You:   are you bootstrapped?  (checks for codename + personality)
 ```
 
-**Pruning and promoting**
+**Pruning and moving**
 
 ```
 You:   that auth task is done, remove it from the backlog
-You:   actually, promote that note to long-term — it turned into a real decision
+You:   actually, move that note to long-term — it turned into a real decision
 You:   clear the short-term stack, we're starting fresh
 ```
 

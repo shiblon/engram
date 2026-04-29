@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/shiblon/engram/pkg/engram"
 	"github.com/spf13/cobra"
@@ -65,6 +66,10 @@ func runMigrate(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("open source: %w", err)
 	}
 
+	if err := os.MkdirAll(filepath.Dir(dstPath), 0755); err != nil {
+		src.Close()
+		return fmt.Errorf("create destination dir: %w", err)
+	}
 	dst, err := engram.Open(ctx, dstPath)
 	if err != nil {
 		src.Close()

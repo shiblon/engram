@@ -164,14 +164,20 @@ var memDeleteCmd = &cobra.Command{
 }
 
 var (
-	promoteFrom string
-	promoteTo   string
+	moveFrom string
+	moveTo   string
 )
 
-var memPromoteCmd = &cobra.Command{
-	Use:   "promote <key>",
-	Short: "Move a memory from one tier to another",
-	Args:  cobra.ExactArgs(1),
+var memMoveCmd = &cobra.Command{
+	Use:   "move <key>",
+	Short: "Move a memory to a different tier",
+	Long: `Move a memory from one tier to another within the same database.
+
+The source tier is inferred automatically unless --from is specified.
+Use --to to specify the destination tier (required).
+
+Tiers: invariant, preference, long, short`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
 		h, err := openMemDB(ctx)
@@ -180,8 +186,11 @@ var memPromoteCmd = &cobra.Command{
 		}
 		defer h.DB.Close()
 
-		// If --from not explicitly set, find the tier automatically.
-		from := engram.Tier(promoteFrom)
+		if moveTo == "" {
+			return fmt.Errorf("--to is required")
+		}
+
+		from := engram.Tier(moveFrom)
 		if !cmd.Flag("from").Changed {
 			matches, err := engram.FindMemoryByKey(ctx, h.DB, args[0])
 			if err != nil {
@@ -200,11 +209,11 @@ var memPromoteCmd = &cobra.Command{
 			from = matches[0].Tier
 		}
 
-		if err := engram.PromoteMemory(ctx, h.DB, args[0],
-			from, engram.Tier(promoteTo)); err != nil {
+		if err := engram.MoveMemory(ctx, h.DB, args[0],
+			from, engram.Tier(moveTo)); err != nil {
 			return err
 		}
-		fmt.Printf("promoted %q from %s to %s\n", args[0], from, promoteTo)
+		fmt.Printf("moved %q from %s to %s\n", args[0], from, moveTo)
 		return nil
 	},
 }
@@ -235,8 +244,8 @@ var memPopCmd = &cobra.Command{
 
 func init() {
 	memListCmd.Flags().BoolVar(&memListJSON, "json", false, "output as JSON array")
-	memPromoteCmd.Flags().StringVar(&promoteFrom, "from", string(engram.TierShort), "source tier")
-	memPromoteCmd.Flags().StringVar(&promoteTo, "to", string(engram.TierLong), "destination tier")
+	memMoveCmd.Flags().StringVar(&moveFrom, "from", "", "source tier (inferred if omitted)")
+	memMoveCmd.Flags().StringVar(&moveTo, "to", "", "destination tier (required)")
 
-	memCmd.AddCommand(memWriteCmd, memReadCmd, memListCmd, memDeleteCmd, memPromoteCmd, memPopCmd)
+	memCmd.AddCommand(memWriteCmd, memReadCmd, memListCmd, memDeleteCmd, memMoveCmd, memPopCmd)
 }

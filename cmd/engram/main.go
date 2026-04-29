@@ -99,6 +99,7 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 var (
 	injectSessions int
 	injectKeep     int
+	injectText     bool
 )
 
 var injectCmd = &cobra.Command{
@@ -111,37 +112,10 @@ func runInject(cmd *cobra.Command, _ []string) error {
 	ctx := context.Background()
 
 	cwd, _ := os.Getwd()
-	if input, err := engram.ParseHookInput(os.Stdin); err == nil && input.CWD != "" {
-		cwd = input.CWD
-	}
-
-	root, err := engram.FindProjectRoot(cwd)
-	if err != nil {
-		fmt.Println("{}")
-		return nil
-	}
-
-	if !engram.ProjectDBExists(root) {
-		fmt.Println("{}")
-		return nil
-	}
-
-	db, err := engram.OpenProjectDB(ctx, root)
-	if err != nil {
-		fmt.Println("{}")
-		return nil
-	}
-	defer db.Close()
-
-	projectResult, err := engram.Inject(ctx, db, injectSessions)
-	if err != nil {
-		fmt.Println("{}")
-		return nil
-	}
-
-	// Prune old sessions while the DB is already open. Errors are non-fatal.
-	if _, err := engram.Prune(ctx, db, injectKeep); err != nil {
-		fmt.Fprintf(os.Stderr, "engram prune: %v\n", err)
+	if fi, err := os.Stdin.Stat(); err == nil && fi.Mode()&os.ModeCharDevice == 0 {
+		if input, err := engram.ParseHookInput(os.Stdin); err == nil && input.CWD != "" {
+			cwd = input.CWD
+		}
 	}
 
 	// Read global memories (personality, preferences). Non-fatal if absent.
@@ -153,6 +127,25 @@ func runInject(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
+	// Read project memories. Non-fatal if no project root or DB exists.
+	var projectResult engram.InjectResult
+	if root, err := engram.FindProjectRoot(cwd); err == nil && engram.ProjectDBExists(root) {
+		if db, err := engram.OpenProjectDB(ctx, root); err == nil {
+			projectResult, _ = engram.Inject(ctx, db, injectSessions)
+			if _, err := engram.Prune(ctx, db, injectKeep); err != nil {
+				fmt.Fprintf(os.Stderr, "engram prune: %v\n", err)
+			}
+			db.Close()
+		}
+	}
+
+	if injectText {
+		text := engram.InjectContextText(globalResult, projectResult, injectSessions)
+		if text != "" {
+			fmt.Println(text)
+		}
+		return nil
+	}
 	fmt.Println(string(engram.FormatInjectOutput(globalResult, projectResult, injectSessions)))
 	return nil
 }
@@ -193,6 +186,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&rootCWD, "cwd", "d", "", "working directory for project root resolution (default: current directory)")
 	injectCmd.Flags().IntVar(&injectSessions, "sessions", engram.DefaultInjectSessions, "number of recent sessions to include")
 	injectCmd.Flags().IntVar(&injectKeep, "keep", engram.DefaultPruneSessions, "number of sessions to keep")
+	injectCmd.Flags().BoolVar(&injectText, "text", false, "output plain text instead of session-start hook JSON")
 	pruneCmd.Flags().IntVar(&pruneKeep, "keep", engram.DefaultPruneSessions, "number of sessions to keep")
 	rootCmd.AddCommand(recordCmd, injectCmd, pruneCmd, memCmd)
 }

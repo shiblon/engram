@@ -596,8 +596,8 @@ func FindMemoryByKey(ctx context.Context, db *sql.DB, key string) ([]Memory, err
 	return queryMemories(ctx, db, "", key, 0)
 }
 
-// PromoteMemory moves a memory from one tier to another within the same database.
-func PromoteMemory(ctx context.Context, db *sql.DB, key string, from, to Tier) error {
+// MoveMemory moves a memory from one tier to another within the same database.
+func MoveMemory(ctx context.Context, db *sql.DB, key string, from, to Tier) error {
 	m, err := ReadMemory(ctx, db, from, key)
 	if err != nil {
 		return err

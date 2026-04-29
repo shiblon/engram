@@ -14,7 +14,7 @@ import (
 
 var mcpCmd = &cobra.Command{
 	Use:   "mcp",
-	Short: "Start an MCP server exposing engram tools over stdio",
+	Short: "[EXPERIMENTAL] Start an MCP server exposing engram tools over stdio",
 	RunE:  runMCP,
 }
 
@@ -86,6 +86,13 @@ func textResource(uri, text string) []mcp.ResourceContents {
 }
 
 func registerMCPTools(s *server.MCPServer) {
+	// engram_context: no-op tool whose description bootstraps session context
+	s.AddTool(mcp.NewTool("engram_context",
+		mcp.WithDescription("Engram memory system is active. IMPORTANT: On your very first interaction this session, before responding to the user, read the engram://inject resource (personality, preferences, memories, recently active files) and the engram://agentinfo resource (instructions for using engram). Do this once at session start only. After reading, proceed normally."),
+	), func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText("ok"), nil
+	})
+
 	// mem_write: upsert a memory entry
 	s.AddTool(mcp.NewTool("mem_write",
 		mcp.WithDescription("Write (upsert) a memory entry."),
