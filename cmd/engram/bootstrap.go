@@ -21,6 +21,10 @@ Memory tiers:
 - long: settled project decisions and facts
 - short: in-flight context, conversation stack, backlog items
 
+To decide global vs. project: ask "would this matter in a completely different
+project?" If yes, it's global. If it's specific to this codebase, architecture,
+or team, it's project-level.
+
 Global memories (invariant, preference) apply to all projects. Before writing or
 updating any global memory, always ask the user for confirmation -- global changes
 affect every project and session. Check what is already there first:
