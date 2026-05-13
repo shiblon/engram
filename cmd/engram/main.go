@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/shiblon/engram/pkg/engram"
 	"github.com/spf13/cobra"
@@ -129,24 +130,55 @@ func runInject(cmd *cobra.Command, _ []string) error {
 
 	// Read project memories. Non-fatal if no project root or DB exists.
 	var projectResult engram.InjectResult
-	if root, err := engram.FindProjectRoot(cwd); err == nil && engram.ProjectDBExists(root) {
-		if db, err := engram.OpenProjectDB(ctx, root); err == nil {
-			projectResult, _ = engram.Inject(ctx, db, injectSessions)
-			if _, err := engram.Prune(ctx, db, injectKeep); err != nil {
-				fmt.Fprintf(os.Stderr, "engram prune: %v\n", err)
+	var bootstrapped int
+	if root, err := engram.FindProjectRoot(cwd); err == nil {
+		contextFile := filepath.Join(root, "context", "long.md")
+		_, contextFileErr := os.Stat(contextFile)
+		hasContextFile := contextFileErr == nil
+
+		if engram.ProjectDBExists(root) || hasContextFile {
+			if db, err := engram.OpenProjectDB(ctx, root); err == nil {
+				if hasContextFile {
+					existing, _ := engram.ListMemories(ctx, db, engram.TierLong)
+					shouldLoad := len(existing) == 0
+					if !shouldLoad {
+						maxTS := existing[0].TS
+						if fi, err := os.Stat(contextFile); err == nil {
+							shouldLoad = fi.ModTime().After(time.UnixMilli(maxTS))
+						}
+					}
+					if shouldLoad {
+						if data, err := os.ReadFile(contextFile); err == nil {
+							if memories, err := engram.ParseMemoryMD(engram.TierLong, string(data)); err == nil {
+								for _, m := range memories {
+									_ = engram.WriteMemory(ctx, db, m)
+								}
+								bootstrapped = len(memories)
+							}
+						}
+					}
+				}
+				projectResult, _ = engram.Inject(ctx, db, injectSessions)
+				if _, err := engram.Prune(ctx, db, injectKeep); err != nil {
+					fmt.Fprintf(os.Stderr, "engram prune: %v\n", err)
+				}
+				db.Close()
 			}
-			db.Close()
 		}
 	}
 
+	contextText := engram.InjectContextText(globalResult, projectResult, injectSessions)
+	if bootstrapped > 0 {
+		contextText = fmt.Sprintf("(loaded %d long-term memories from context/long.md)\n\n", bootstrapped) + contextText
+	}
+
 	if injectText {
-		text := engram.InjectContextText(globalResult, projectResult, injectSessions)
-		if text != "" {
-			fmt.Println(text)
+		if contextText != "" {
+			fmt.Println(contextText)
 		}
 		return nil
 	}
-	fmt.Println(string(engram.FormatInjectOutput(globalResult, projectResult, injectSessions)))
+	fmt.Println(string(engram.FormatInjectOutputText(contextText)))
 	return nil
 }
 

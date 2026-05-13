@@ -1,13 +1,10 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
-	"time"
 
 	"github.com/shiblon/engram/pkg/engram"
 	"github.com/spf13/cobra"
@@ -31,7 +28,7 @@ var memDumpCmd = &cobra.Command{
 			return err
 		}
 
-		tiers := []engram.Tier{engram.TierInvariant, engram.TierPreference, engram.TierLong, engram.TierShort}
+		tiers := []engram.Tier{engram.TierInvariant, engram.TierPreference, engram.TierLong, engram.TierShort, engram.TierCold}
 		if memTier != "" {
 			tiers = []engram.Tier{engram.Tier(memTier)}
 		}
@@ -45,16 +42,9 @@ var memDumpCmd = &cobra.Command{
 				continue
 			}
 			path := filepath.Join(dir, string(tier)+".md")
-			f, err := os.Create(path)
-			if err != nil {
+			if err := os.WriteFile(path, []byte(engram.FormatMemoryMD(tier, memories)), 0644); err != nil {
 				return err
 			}
-			t := string(tier)
-			fmt.Fprintf(f, "# %s%s\n\n", strings.ToUpper(t[:1]), t[1:])
-			for _, m := range memories {
-				fmt.Fprintf(f, "## %s\n%s\n\n", m.Key, m.Content)
-			}
-			f.Close()
 			fmt.Printf("wrote %s\n", path)
 		}
 		return nil
@@ -74,7 +64,7 @@ var memLoadCmd = &cobra.Command{
 
 		dir := resolveMemDir()
 
-		tiers := []engram.Tier{engram.TierInvariant, engram.TierPreference, engram.TierLong, engram.TierShort}
+		tiers := []engram.Tier{engram.TierInvariant, engram.TierPreference, engram.TierLong, engram.TierShort, engram.TierCold}
 		if memTier != "" {
 			tiers = []engram.Tier{engram.Tier(memTier)}
 		}
@@ -88,7 +78,7 @@ var memLoadCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			memories, err := parseMemoryMD(tier, string(data))
+			memories, err := engram.ParseMemoryMD(tier, string(data))
 			if err != nil {
 				return fmt.Errorf("parse %s: %w", path, err)
 			}
@@ -114,44 +104,9 @@ func resolveMemDir() string {
 	cwd := effectiveCWD()
 	root, err := engram.FindProjectRoot(cwd)
 	if err != nil {
-		return ".claude/memory"
+		return "context"
 	}
-	return filepath.Join(root, ".claude", "memory")
-}
-
-func parseMemoryMD(tier engram.Tier, data string) ([]engram.Memory, error) {
-	var out []engram.Memory
-	var key string
-	var contentLines []string
-
-	flush := func() {
-		if key == "" {
-			return
-		}
-		out = append(out, engram.Memory{
-			TS:      time.Now().UnixMilli(),
-			Tier:    tier,
-			Key:     key,
-			Content: strings.TrimSpace(strings.Join(contentLines, "\n")),
-		})
-		key = ""
-		contentLines = nil
-	}
-
-	scanner := bufio.NewScanner(strings.NewReader(data))
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "## ") {
-			flush()
-			key = strings.TrimPrefix(line, "## ")
-		} else if strings.HasPrefix(line, "# ") {
-			// tier header, skip
-		} else if key != "" {
-			contentLines = append(contentLines, line)
-		}
-	}
-	flush()
-	return out, scanner.Err()
+	return filepath.Join(root, "context")
 }
 
 func init() {

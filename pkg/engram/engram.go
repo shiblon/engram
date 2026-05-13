@@ -10,6 +10,7 @@
 package engram
 
 import (
+	"bufio"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -91,6 +92,7 @@ const (
 	TierPreference Tier = "preference"
 	TierLong       Tier = "long"
 	TierShort      Tier = "short"
+	TierCold       Tier = "cold"
 )
 
 // Memory holds a single intentional memory entry.
@@ -402,6 +404,7 @@ type InjectResult struct {
 	Preferences []Memory
 	LongTerm    []Memory
 	ShortTerm   []Memory
+	Cold        []Memory // keys+content injected as index only; content not expanded
 }
 
 // Inject returns files and bash searches from the last nSessions sessions,
@@ -454,6 +457,10 @@ func Inject(ctx context.Context, db *sql.DB, nSessions int) (InjectResult, error
 	if err != nil {
 		return InjectResult{}, fmt.Errorf("inject short-term: %w", err)
 	}
+	cold, err := ListMemories(ctx, db, TierCold)
+	if err != nil {
+		return InjectResult{}, fmt.Errorf("inject cold: %w", err)
+	}
 
 	return InjectResult{
 		Files:       files,
@@ -462,6 +469,7 @@ func Inject(ctx context.Context, db *sql.DB, nSessions int) (InjectResult, error
 		Preferences: preferences,
 		LongTerm:    longTerm,
 		ShortTerm:   shortTerm,
+		Cold:        cold,
 	}, nil
 }
 
@@ -750,6 +758,15 @@ func InjectContextText(global, project InjectResult, nSessions int) string {
 		parts = append(parts, "## Preferences\n"+strings.Join(lines, "\n"))
 	}
 
+	coldEntries := append(global.Cold, project.Cold...)
+	if len(coldEntries) > 0 {
+		lines := make([]string, len(coldEntries))
+		for i, m := range coldEntries {
+			lines[i] = fmt.Sprintf("- %s: %s", m.Key, firstLine(m.Content))
+		}
+		parts = append(parts, "## Cold storage (index only -- fetch with: engram mem --tier cold read <key>)\n"+strings.Join(lines, "\n"))
+	}
+
 	if len(project.LongTerm) > 0 {
 		lines := make([]string, len(project.LongTerm))
 		for i, m := range project.LongTerm {
@@ -788,13 +805,25 @@ func InjectContextText(global, project InjectResult, nSessions int) string {
 
 // FormatInjectOutput wraps InjectContextText in the SessionStart hook JSON envelope.
 func FormatInjectOutput(global, project InjectResult, nSessions int) []byte {
+	return FormatInjectOutputText(InjectContextText(global, project, nSessions))
+}
+
+// FormatInjectOutputText wraps pre-assembled context text in the SessionStart hook JSON envelope.
+func FormatInjectOutputText(text string) []byte {
 	out, _ := json.Marshal(injectOutput{
 		HookSpecificOutput: injectHookOutput{
 			HookEventName:     "SessionStart",
-			AdditionalContext: InjectContextText(global, project, nSessions),
+			AdditionalContext: text,
 		},
 	})
 	return out
+}
+
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
 
 func headLines(s string, n int) string {
@@ -803,4 +832,55 @@ func headLines(s string, n int) string {
 		lines = lines[:n]
 	}
 	return strings.Join(lines, "\n")
+}
+
+// FormatMemoryMD formats a slice of memories as a markdown document for the given tier.
+// The output is parseable by ParseMemoryMD.
+func FormatMemoryMD(tier Tier, memories []Memory) string {
+	t := string(tier)
+	var b strings.Builder
+	fmt.Fprintf(&b, "# %s%s\n\n", strings.ToUpper(t[:1]), t[1:])
+	for _, m := range memories {
+		fmt.Fprintf(&b, "## %s\n%s\n\n", m.Key, m.Content)
+	}
+	return b.String()
+}
+
+// ParseMemoryMD parses a markdown document produced by FormatMemoryMD into
+// Memory entries for the given tier.
+func ParseMemoryMD(tier Tier, data string) ([]Memory, error) {
+	var out []Memory
+	var key string
+	var contentLines []string
+	now := time.Now().UnixMilli()
+
+	flush := func() {
+		if key == "" {
+			return
+		}
+		out = append(out, Memory{
+			TS:      now,
+			Tier:    tier,
+			Key:     key,
+			Content: strings.TrimSpace(strings.Join(contentLines, "\n")),
+		})
+		key = ""
+		contentLines = nil
+	}
+
+	scanner := bufio.NewScanner(strings.NewReader(data))
+	for scanner.Scan() {
+		line := scanner.Text()
+		switch {
+		case strings.HasPrefix(line, "## "):
+			flush()
+			key = strings.TrimPrefix(line, "## ")
+		case strings.HasPrefix(line, "# "):
+			// tier header, skip
+		case key != "":
+			contentLines = append(contentLines, line)
+		}
+	}
+	flush()
+	return out, scanner.Err()
 }
