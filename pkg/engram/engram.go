@@ -301,11 +301,10 @@ func dbExists(paths ...string) bool {
 // back to legacy if canonical is absent. Creates canonical's directory when
 // opening canonical.
 func openWithFallback(ctx context.Context, canonical, legacy string) (*sql.DB, error) {
-	if _, err := os.Stat(canonical); os.IsNotExist(err) {
-		if legacy != "" {
-			if _, err := os.Stat(legacy); err == nil {
-				return Open(ctx, legacy)
-			}
+	_, canonErr := os.Stat(canonical)
+	if os.IsNotExist(canonErr) && legacy != "" {
+		if _, err := os.Stat(legacy); err == nil {
+			return Open(ctx, legacy)
 		}
 	}
 	dir := filepath.Dir(canonical)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -113,6 +114,32 @@ var injectCmd = &cobra.Command{
 	RunE:  runInject,
 }
 
+// loadContextFile syncs contextFile into db's long-term memories if the file
+// is newer than the DB. Returns the number of memories loaded, or 0 if the
+// file is absent or already up to date.
+func loadContextFile(ctx context.Context, db *sql.DB, contextFile string) int {
+	fi, err := os.Stat(contextFile)
+	if err != nil {
+		return 0
+	}
+	existing, _ := engram.ListMemories(ctx, db, engram.TierLong)
+	if len(existing) > 0 && !fi.ModTime().After(time.UnixMilli(existing[0].TS)) {
+		return 0
+	}
+	data, err := os.ReadFile(contextFile)
+	if err != nil {
+		return 0
+	}
+	memories, err := engram.ParseMemoryMD(engram.TierLong, string(data))
+	if err != nil {
+		return 0
+	}
+	for _, m := range memories {
+		_ = engram.WriteMemory(ctx, db, m)
+	}
+	return len(memories)
+}
+
 func runInject(cmd *cobra.Command, _ []string) error {
 	ctx := context.Background()
 
@@ -137,31 +164,10 @@ func runInject(cmd *cobra.Command, _ []string) error {
 	var bootstrapped int
 	if root, err := engram.FindProjectRoot(cwd); err == nil {
 		contextFile := filepath.Join(root, "context", "long.md")
-		_, contextFileErr := os.Stat(contextFile)
-		hasContextFile := contextFileErr == nil
-
-		if engram.ProjectDBExists(root) || hasContextFile {
+		_, contextErr := os.Stat(contextFile)
+		if engram.ProjectDBExists(root) || contextErr == nil {
 			if db, err := engram.OpenProjectDB(ctx, root); err == nil {
-				if hasContextFile {
-					existing, _ := engram.ListMemories(ctx, db, engram.TierLong)
-					shouldLoad := len(existing) == 0
-					if !shouldLoad {
-						maxTS := existing[0].TS
-						if fi, err := os.Stat(contextFile); err == nil {
-							shouldLoad = fi.ModTime().After(time.UnixMilli(maxTS))
-						}
-					}
-					if shouldLoad {
-						if data, err := os.ReadFile(contextFile); err == nil {
-							if memories, err := engram.ParseMemoryMD(engram.TierLong, string(data)); err == nil {
-								for _, m := range memories {
-									_ = engram.WriteMemory(ctx, db, m)
-								}
-								bootstrapped = len(memories)
-							}
-						}
-					}
-				}
+				bootstrapped = loadContextFile(ctx, db, contextFile)
 				projectResult, _ = engram.Inject(ctx, db, injectSessions)
 				if _, err := engram.Prune(ctx, db, injectKeep); err != nil {
 					fmt.Fprintf(os.Stderr, "engram prune: %v\n", err)
