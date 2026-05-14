@@ -27,6 +27,9 @@ Use your codename if one is set. Keep it brief and in character.
 
 ## Memory workflow
 
+Memory writes are scoped to the current project. Do not write to memory or files
+in other repos or projects without explicit user approval.
+
 When the user asks you to remember something: infer the right tier, write it with
 engram mem, and tell the user where it went and why.
 
