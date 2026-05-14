@@ -4,7 +4,7 @@
 
 Just want to install and get moving? [Jump to installation.](#installation)
 
-*NOTE 2: Claude Code has full hook support (session start + file tracking). Gemini CLI, AntiGravity, GitHub Copilot, and Cursor are supported via system prompt injection.*
+*NOTE 2: Claude Code has full hook support (session start + file tracking). Gemini CLI, AntiGravity, GitHub Copilot, Cursor, and Codex are supported via init file instructions. Any agent with a markdown init file can use `bootstrap initfile`.*
 
 Memory affects everything about people. It affects personality, the ability to hold a conversation, and the ability to get things done. This is also true for AI agents, but the story there is fragmented and memory does not always behave as we expect.
 
@@ -89,12 +89,15 @@ Install engram:
    Verify: <full-path>/engram --help
 
 4. Run one of:
-   <full-path>/engram bootstrap claude -g   # Claude Code (personal machine)
-   <full-path>/engram bootstrap claude      # Claude Code (project only)
-   <full-path>/engram bootstrap gemini      # Gemini CLI
-   <full-path>/engram bootstrap antigravity # AntiGravity
-   <full-path>/engram bootstrap copilot     # GitHub Copilot (run in project dir)
-   <full-path>/engram bootstrap cursor      # Cursor (run in project dir)
+   <full-path>/engram bootstrap claude -g        # Claude Code (personal machine)
+   <full-path>/engram bootstrap claude           # Claude Code (project only)
+   <full-path>/engram bootstrap gemini           # Gemini CLI
+   <full-path>/engram bootstrap antigravity      # AntiGravity
+   <full-path>/engram bootstrap copilot          # GitHub Copilot (run in project dir)
+   <full-path>/engram bootstrap cursor           # Cursor (run in project dir)
+   <full-path>/engram bootstrap codex            # Codex CLI (run in project dir)
+   <full-path>/engram bootstrap codex -g         # Codex CLI (global, ~/.codex/AGENTS.md)
+   <full-path>/engram bootstrap initfile <path>  # any agent with a markdown init file
 
 Open a new session when done -- the short-term stack will guide you from there.
 ```

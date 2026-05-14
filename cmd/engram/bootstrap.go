@@ -58,7 +58,9 @@ Subcommands:
   gemini       -- write ~/.gemini/GEMINI.md and SessionStart hook
   antigravity  -- write a Knowledge Item that instructs AntiGravity to call engram at session start
   copilot      -- write .github/copilot-instructions.md in the current project
-  cursor       -- write .cursorrules in the current project`,
+  cursor       -- write .cursorrules in the current project
+  codex        -- write AGENTS.md in the current project (or ~/.codex/AGENTS.md with -g)
+  initfile     -- append the engram protocol to any init file (generic escape hatch)`,
 }
 
 // bootstrapGlobalDB writes the shared global DB invariants used by all agents.
@@ -627,6 +629,137 @@ func runBootstrapCursor(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+func bootstrapAppendToFile(path, section string) (bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return false, err
+	}
+	if strings.Contains(string(data), "engram inject --text") {
+		fmt.Printf("skip (already present): engram section in %s\n", path)
+		return false, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return false, err
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return false, err
+	}
+	_, werr := f.WriteString(section + "\n")
+	f.Close()
+	if werr != nil {
+		return false, werr
+	}
+	fmt.Printf("wrote: engram section in %s\n", path)
+	return true, nil
+}
+
+// bootstrap initfile
+
+const initFileSection = `
+## Engram Session Protocol
+
+At the start of every new conversation, before taking any other action, run:
+
+  engram inject --text
+
+Treat the output as your session context (identity, preferences, project memory).
+Do not skip this step.`
+
+var bootstrapInitFileCmd = &cobra.Command{
+	Use:   "initfile <path>",
+	Short: "Append the engram session protocol to any agent init file",
+	Long: `Append the engram session protocol to the specified file.
+
+Use this for any AI agent that reads a markdown init file at session start,
+such as AGENTS.md (Codex), .windsurfrules, or any custom file.
+
+Safe to re-run: skips if the engram section is already present.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runBootstrapInitFile,
+}
+
+func runBootstrapInitFile(cmd *cobra.Command, args []string) error {
+	ctx := context.Background()
+
+	wrote, skipped, err := bootstrapGlobalDB(ctx)
+	if err != nil {
+		return err
+	}
+
+	ok, err := bootstrapAppendToFile(args[0], initFileSection)
+	if err != nil {
+		return err
+	}
+	if ok {
+		wrote++
+	} else {
+		skipped++
+	}
+
+	fmt.Printf("\n%d written, %d skipped\n", wrote, skipped)
+	if skipped > 0 {
+		fmt.Println("(use engram mem --global --tier invariant write <key> <content> to update existing entries)")
+	}
+	return nil
+}
+
+// bootstrap codex
+
+var bootstrapCodexGlobal bool
+
+var bootstrapCodexCmd = &cobra.Command{
+	Use:   "codex",
+	Short: "Write AGENTS.md to call engram at session start",
+	Long: `Bootstrap OpenAI Codex CLI by appending the engram session protocol to
+AGENTS.md in the current project root.
+
+Use -g to write to ~/.codex/AGENTS.md instead (global, applies to all projects).
+
+Safe to re-run: skips if the engram section is already present.`,
+	RunE: runBootstrapCodex,
+}
+
+func runBootstrapCodex(cmd *cobra.Command, _ []string) error {
+	ctx := context.Background()
+
+	wrote, skipped, err := bootstrapGlobalDB(ctx)
+	if err != nil {
+		return err
+	}
+
+	var path string
+	if bootstrapCodexGlobal {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return err
+		}
+		path = filepath.Join(home, ".codex", "AGENTS.md")
+	} else {
+		root, err := engram.FindProjectRoot(effectiveCWD())
+		if err != nil {
+			return fmt.Errorf("codex bootstrap requires a project root (or use -g for global): %w", err)
+		}
+		path = filepath.Join(root, "AGENTS.md")
+	}
+
+	ok, err := bootstrapAppendToFile(path, initFileSection)
+	if err != nil {
+		return err
+	}
+	if ok {
+		wrote++
+	} else {
+		skipped++
+	}
+
+	fmt.Printf("\n%d written, %d skipped\n", wrote, skipped)
+	if skipped > 0 {
+		fmt.Println("(use engram mem --global --tier invariant write <key> <content> to update existing entries)")
+	}
+	return nil
+}
+
 func readSettingsJSON(path string) (map[string]any, error) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -662,6 +795,7 @@ func asSlice(v any) []any {
 
 func init() {
 	bootstrapClaudeCmd.Flags().BoolVarP(&bootstrapClaudeGlobal, "global", "g", false, "write hooks to ~/.claude/settings.json instead of the project's .claude/settings.json")
-	bootstrapCmd.AddCommand(bootstrapClaudeCmd, bootstrapAntigravityCmd, bootstrapGeminiCmd, bootstrapCopilotCmd, bootstrapCursorCmd)
+	bootstrapCodexCmd.Flags().BoolVarP(&bootstrapCodexGlobal, "global", "g", false, "write to ~/.codex/AGENTS.md instead of the project's AGENTS.md")
+	bootstrapCmd.AddCommand(bootstrapClaudeCmd, bootstrapAntigravityCmd, bootstrapGeminiCmd, bootstrapCopilotCmd, bootstrapCursorCmd, bootstrapCodexCmd, bootstrapInitFileCmd)
 	rootCmd.AddCommand(bootstrapCmd)
 }

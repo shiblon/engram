@@ -93,7 +93,7 @@ Common commands:
 var agentInfoCmd = &cobra.Command{
 	Use:   "agentinfo",
 	Short: "Print instructions for AI agents on how to use engram",
-	Long:  `Prints the standard instructions meant to be embedded in system prompt files such as CLAUDE.md or .cursorrules. Run 'engram agentinfo >> CLAUDE.md' or pipe to any equivalent file for your platform.`,
+	Long:  `Prints the standard instructions meant to be embedded in system prompt files such as CLAUDE.md, .cursorrules, or AGENTS.md. Run 'engram agentinfo >> CLAUDE.md' or pipe to any equivalent file for your platform.`,
 	RunE:  runAgentInfo,
 }
 
