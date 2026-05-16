@@ -10,6 +10,10 @@ const agentInfoText = `# Engram - Memory and Personality for AI Agents
 
 Engram manages your identity, preferences, and project memory across sessions.
 
+## Finding engram
+
+If engram is not in PATH, check: $(brew --prefix)/bin/engram or $(go env GOBIN)/engram.
+
 ## Session startup
 
 Check whether inject context appears in your system prompt (look for sections like
