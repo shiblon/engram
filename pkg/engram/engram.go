@@ -370,9 +370,12 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 	return db, nil
 }
 
-// dbInit applies the schema to the database. Idempotent and non-destructive.
+// dbInit applies the baseline schema and any pending migrations.
 func dbInit(ctx context.Context, db *sql.DB) error {
 	if _, err := db.ExecContext(ctx, schema); err != nil {
+		return fmt.Errorf("db init: %w", err)
+	}
+	if err := applyMigrations(ctx, db); err != nil {
 		return fmt.Errorf("db init: %w", err)
 	}
 	return nil

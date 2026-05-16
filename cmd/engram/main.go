@@ -26,7 +26,12 @@ var rootCWD string
 
 var rootCmd = &cobra.Command{
 	Use:          "engram",
-	Short:        "Per-project tool-use memory for Claude Code",
+	Short:        "Per-session memory and personality for AI agents",
+	Long: `Per-session memory and personality for AI agents -- works with Claude Code,
+Cursor, GitHub Copilot, Codex, and any agent with a markdown init file.
+
+Get started:  engram bootstrap <platform>
+Or ask your agent to run: engram agentinfo`,
 	SilenceUsage: true,
 }
 
