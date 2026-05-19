@@ -15,6 +15,19 @@ archives:
 checksum:
   name_template: checksums.txt
 
+brews:
+  - name: engram
+    repository:
+      owner: shiblon
+      name: homebrew-engram
+    homepage: "https://github.com/shiblon/engram"
+    description: "Auto-memory system for AI coding agents"
+    license: "Apache-2.0"
+    install: |-
+      bin.install "engram"
+    test: |-
+      system bin/"engram", "--version"
+
 release:
   github:
     owner: shiblon
