@@ -35,21 +35,31 @@ in other repos or projects without explicit user approval.
 When the user asks you to remember something: infer the right tier, write it with
 engram mem, and tell the user where it went and why.
 
+To decide global vs. project: ask "would this matter in a completely different
+project?" If yes, it's global. If it's specific to this codebase or team, it's
+project-level. Before writing or updating any global memory, always ask the user
+for confirmation -- global changes affect every project and session.
+
+If session start context appears twice or seems duplicated, engram hooks are
+probably configured in more than one place. Ask the user which to keep and help
+remove the duplicate.
+
 When starting a digression or the user says "come back to this": save current context
 to short-term memory first, confirm it is saved, then proceed. Re-read short-term
 when done and resume.
 
 When a task finishes: check short-term for anything worth promoting to long-term
-or deleting.
+or deleting. Use engram mem move <key> --to long to promote.
 
 ## Memory tiers
 
 Run: engram mem --help for full command reference.
 
-- invariant/preference (--global): personality, rules -- applies to all projects
-- long:                            settled project decisions and facts
-- short:                           in-flight context, stack, backlog
-- cold:                            low-priority archive -- injected as index only
+- invariant  (--global): personality -- applies to all projects
+- preference (--global): rules -- applies to all projects
+- long:                  settled project decisions and facts
+- short:                 in-flight context, stack, backlog
+- cold:                  low-priority archive -- injected as index only
 
 Cold tier: for things worth keeping but not worth loading every session. Injected
 as a one-line catalog only -- fetch on demand with: engram mem --tier cold read <key>.

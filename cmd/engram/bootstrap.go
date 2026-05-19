@@ -13,40 +13,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const bootstrapWorkflow = `When asked to remember something: infer the right tier from context, write it with engram mem, and tell the user where it was stored (global or project, which tier) and why.
-
-Memory tiers:
-- invariant (--global): identity, codename, personality -- rarely changed
-- preference (--global): code and behavior rules -- add and remove over time
-- long: settled project decisions and facts
-- short: in-flight context, conversation stack, backlog items
-
-To decide global vs. project: ask "would this matter in a completely different
-project?" If yes, it's global. If it's specific to this codebase, architecture,
-or team, it's project-level.
-
-Global memories (invariant, preference) apply to all projects. Before writing or
-updating any global memory, always ask the user for confirmation -- global changes
-affect every project and session. Check what is already there first:
-engram mem --global --tier invariant list
-
-When starting a digression: save current context to short-term memory first, confirm it is there, then proceed. When done, re-read short-term and resume.
-
-When a task finishes: check short-term for anything worth promoting to long-term, and delete what is no longer relevant.
-
-To manage memory:
-  engram mem --help                          -- all subcommands
-  engram mem search <query>                  -- full-text search across all tiers
-  engram mem search --tier long <query>      -- search within a specific tier
-If engram is not in PATH, find the full path with: go env GOBIN
-
-If session start context appears twice or seems duplicated, engram hooks are
-probably configured in both ~/.claude/settings.json and .claude/settings.json.
-Ask the user which they prefer and help remove the duplicate set.`
-
-const bootstrapCanary = `If your identity or instructions feel unfamiliar, run:
-  engram mem --global --tier invariant list
-That is the signal to re-bootstrap from the inject context at session start.`
 
 var bootstrapCmd = &cobra.Command{
 	Use:   "bootstrap",
@@ -73,31 +39,6 @@ func bootstrapGlobalDB(ctx context.Context) (int, int, error) {
 	defer db.Close()
 
 	wrote, skipped := 0, 0
-
-	invariants := map[string]string{
-		"engram-workflow": bootstrapWorkflow,
-		"engram-canary":   bootstrapCanary,
-	}
-	for key, content := range invariants {
-		existing, err := engram.ReadMemory(ctx, db, engram.TierInvariant, key)
-		if err != nil {
-			return wrote, skipped, err
-		}
-		if existing != nil {
-			fmt.Printf("skip (exists): invariant/%s\n", key)
-			skipped++
-			continue
-		}
-		if err := engram.WriteMemory(ctx, db, engram.Memory{
-			Tier:    engram.TierInvariant,
-			Key:     key,
-			Content: content,
-		}); err != nil {
-			return wrote, skipped, err
-		}
-		fmt.Printf("wrote: invariant/%s\n", key)
-		wrote++
-	}
 
 	personality, err := engram.ReadMemory(ctx, db, engram.TierInvariant, "personality")
 	if err != nil {
@@ -154,8 +95,8 @@ var bootstrapClaudeGlobal bool
 
 var bootstrapClaudeCmd = &cobra.Command{
 	Use:   "claude",
-	Short: "Set up Claude Code hooks, CLAUDE.md, and global DB invariants",
-	Long: `Bootstrap Claude Code by writing global DB invariants, patching ~/.claude/CLAUDE.md,
+	Short: "Set up Claude Code hooks and CLAUDE.md",
+	Long: `Bootstrap Claude Code by patching ~/.claude/CLAUDE.md
 and adding engram hooks to settings.json.
 
 By default hooks are written to the project's .claude/settings.json.

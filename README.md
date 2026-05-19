@@ -123,8 +123,8 @@ when done and your agent will know what to do.
 ### Commit your personality to git (optional but recommended)
 
 ```sh
-engram mem --global dump   # exports to ~/.engram/memory/*.md
-engram mem dump            # exports project memories to .engram/memory/*.md
+engram mem --global dump   # exports to ~/.claude/memory/*.md
+engram mem dump            # exports project memories to context/*.md
 ```
 
 On a new machine, `engram mem load` restores everything. Your agent's identity

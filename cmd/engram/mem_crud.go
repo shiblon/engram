@@ -84,7 +84,7 @@ var memListJSON bool
 
 var memListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List memories. Omit --tier to list all tiers.",
+	Short: "List memories. Omit --tier to list all tiers (cold excluded; use --tier cold).",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
 		h, err := openMemDB(ctx)
@@ -176,7 +176,7 @@ var memMoveCmd = &cobra.Command{
 The source tier is inferred automatically unless --from is specified.
 Use --to to specify the destination tier (required).
 
-Tiers: invariant, preference, long, short`,
+Tiers: invariant, preference, long, short, cold`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()

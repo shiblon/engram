@@ -62,6 +62,6 @@ func openMemDB(ctx context.Context) (*engram.DBHandle, error) {
 }
 
 func init() {
-	memCmd.PersistentFlags().BoolVarP(&memGlobal, "global", "g", false, "use global (~/.claude) database")
+	memCmd.PersistentFlags().BoolVarP(&memGlobal, "global", "g", false, "use global (~/.engram) database")
 	memCmd.PersistentFlags().StringVarP(&memTier, "tier", "t", string(engram.TierShort), "memory tier (invariant, preference, long, short, cold)")
 }
