@@ -79,16 +79,22 @@ Paste this into a new session:
 ```
 Install engram:
 
-1. Make sure Go is installed: run "go version". If it's missing, install it
-   with your system package manager (e.g. "brew install go" on Mac) or
-   download it from https://go.dev/dl -- it's a standard installer.
+1. Install the binary using whichever method fits:
 
-2. Run: go install github.com/shiblon/engram/cmd/engram@latest
+   Homebrew (Mac/Linux, no Go required):
+     brew tap shiblon/engram && brew install engram
 
-3. Find the full path: run go env GOBIN (or go env GOPATH, binary at $GOPATH/bin/engram)
-   Verify: <full-path>/engram --help
+   Go install:
+     go install github.com/shiblon/engram/cmd/engram@latest
+     Find the full path: go env GOBIN (binary at $GOBIN/engram)
 
-4. Run one of:
+   Pre-built binary:
+     Download from https://github.com/shiblon/engram/releases/latest,
+     extract, and place engram somewhere in your PATH.
+
+   Verify: engram --help (or <full-path>/engram --help if not yet in PATH)
+
+2. Run one of:
    <full-path>/engram bootstrap claude -g        # Claude Code (personal machine)
    <full-path>/engram bootstrap claude           # Claude Code (project only)
    <full-path>/engram bootstrap gemini           # Gemini CLI
@@ -105,15 +111,16 @@ Open a new session when done -- the short-term stack will guide you from there.
 ### Manual setup
 
 ```sh
-# Install Go if needed: use your package manager (such as `brew install go` on Mac)
-# or the official package site https://go.dev/dl
+# Homebrew (Mac/Linux, recommended):
+brew tap shiblon/engram && brew install engram
+
+# Or with Go:
 go install github.com/shiblon/engram/cmd/engram@latest
+
+# Or download a pre-built binary from https://github.com/shiblon/engram/releases/latest
+
 engram bootstrap claude -g   # or without -g for project-only hooks
 ```
-
-Prefer not to install Go? Download a pre-built binary from
-[github.com/shiblon/engram/releases/latest](https://github.com/shiblon/engram/releases/latest),
-extract it, and place `engram` somewhere in your PATH.
 
 Bootstrap writes workflow instructions into global memory, sets up
 session-start injection, and queues a personality setup todo for your first
