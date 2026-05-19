@@ -110,8 +110,8 @@ func resolveMemDir() string {
 }
 
 func init() {
-	memDumpCmd.Flags().StringVar(&dumpDir, "dir", "", "output directory (default: .claude/memory or ~/.claude/memory)")
-	memLoadCmd.Flags().StringVar(&dumpDir, "dir", "", "input directory (default: .claude/memory or ~/.claude/memory)")
+	memDumpCmd.Flags().StringVar(&dumpDir, "dir", "", "output directory (default: context/ for project, ~/.claude/memory with --global)")
+	memLoadCmd.Flags().StringVar(&dumpDir, "dir", "", "input directory (default: context/ for project, ~/.claude/memory with --global)")
 
 	memCmd.AddCommand(memDumpCmd, memLoadCmd)
 }

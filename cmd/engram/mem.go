@@ -9,8 +9,8 @@ import (
 
 var memCmd = &cobra.Command{
 	Use:   "mem",
-	Short: "Manage agent memory (invariants, preferences, long-term, short-term)",
-	Long: `Manage engram memories across four tiers:
+	Short: "Manage agent memory (invariants, preferences, long-term, short-term, cold)",
+	Long: `Manage engram memories across five tiers:
 
   invariant  (-g, --global)  Identity, codename, personality. Rarely changed.
                              Applies to all projects.
@@ -18,11 +18,12 @@ var memCmd = &cobra.Command{
                              Applies to all projects.
   long                       Settled project decisions and facts.
   short                      In-flight context, conversation stack, backlog.
+  cold                       Low-priority archive. Injected as index only.
 
-Global memories (invariant, preference) are stored in ~/.claude/engram.db and
+Global memories (invariant, preference) are stored in ~/.engram/mem.db and
 injected at the start of every session across all projects.
 
-Project memories (long, short) are stored in .claude/engram.db at the project
+Project memories (long, short, cold) are stored in .engram/mem.db at the project
 root and injected only for that project.
 
 Common operations:
@@ -62,5 +63,5 @@ func openMemDB(ctx context.Context) (*engram.DBHandle, error) {
 
 func init() {
 	memCmd.PersistentFlags().BoolVarP(&memGlobal, "global", "g", false, "use global (~/.claude) database")
-	memCmd.PersistentFlags().StringVarP(&memTier, "tier", "t", string(engram.TierShort), "memory tier (invariant, preference, long, short)")
+	memCmd.PersistentFlags().StringVarP(&memTier, "tier", "t", string(engram.TierShort), "memory tier (invariant, preference, long, short, cold)")
 }
