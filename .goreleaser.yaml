@@ -20,6 +20,7 @@ brews:
     repository:
       owner: shiblon
       name: homebrew-engram
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: "https://github.com/shiblon/engram"
     description: "Auto-memory system for AI coding agents"
     license: "Apache-2.0"
