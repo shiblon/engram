@@ -797,12 +797,67 @@ func InjectContextText(global, project InjectResult, nSessions int) string {
 	}
 
 	if len(parts) == 0 {
-		parts = append(parts,
-			"Engram is active but not yet set up. "+
-				"Ask your agent to set a personality, codename, and preferences with `engram mem write`.")
+		return "Engram is active but not yet set up. " +
+			"Ask your agent to set a personality, codename, and preferences with `engram mem write`."
 	}
 
-	return strings.Join(parts, "\n\n")
+	// Lead with an explicit orientation header so the agent knows, without
+	// parsing the personality prose below, that it arrived oriented and how to
+	// open its first reply.
+	return orientationHeader(global, project) + "\n\n" + strings.Join(parts, "\n\n")
+}
+
+// orientationHeader renders the leading "## Orientation" block: who the agent is
+// (codename), what memory loaded, and how to open the first reply. It exists so
+// orientation is a stated fact in the injected context rather than something the
+// agent must infer.
+func orientationHeader(global, project InjectResult) string {
+	who := "Oriented (no codename set)."
+	if codename := displayCodename(invariantValue(global.Invariants, "codename")); codename != "" {
+		who = fmt.Sprintf("Oriented as %s.", codename)
+	}
+	counts := fmt.Sprintf("Memory loaded: %d identity, %d preferences, %d long-term, %d short-term.",
+		len(global.Invariants), len(global.Preferences), len(project.LongTerm), len(project.ShortTerm))
+	return "## Orientation\n" + who + " " + counts + "\n" +
+		"First reply this session: open with a brief, in-character orientation sentence that " +
+		"names your codename and confirms what loaded, then answer. Keep your codename present " +
+		"in your voice throughout the session, not just at the start."
+}
+
+// invariantValue returns the content of the invariant with the given key, or "".
+func invariantValue(ms []Memory, key string) string {
+	for _, m := range ms {
+		if m.Key == key {
+			return m.Content
+		}
+	}
+	return ""
+}
+
+// displayCodename trims trailing punctuation and space so a stored "Cadence."
+// renders cleanly inline as "Cadence".
+func displayCodename(s string) string {
+	return strings.TrimRight(strings.TrimSpace(s), ". ")
+}
+
+// FormatStatusLine renders the persistent status-line string used by `engram
+// status`: the codename, then (inside a project) the project name and memory
+// counts. Outside a project it shows only the codename, plus a short-tier count
+// when there is pending in-flight context worth surfacing.
+func FormatStatusLine(codename, project string, long, short int) string {
+	name := displayCodename(codename)
+	if name == "" {
+		name = "engram"
+	}
+	parts := []string{name}
+	switch {
+	case project != "":
+		parts = append(parts, project,
+			fmt.Sprintf("%d long", long), fmt.Sprintf("%d short", short))
+	case short > 0:
+		parts = append(parts, fmt.Sprintf("%d short", short))
+	}
+	return strings.Join(parts, " · ")
 }
 
 // FormatInjectOutput wraps InjectContextText in the SessionStart hook JSON envelope.

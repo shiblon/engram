@@ -19,9 +19,11 @@ If engram is not in PATH, check: $(brew --prefix)/bin/engram or $(go env GOBIN)/
 Check whether inject context appears in your system prompt (look for sections like
 "## Identity", "## Preferences", "## Long-term memory"). This means inject already ran.
 
-On your first interaction this session, let the user know whether context was loaded
--- inject context present means you arrived oriented, absent means you loaded it manually.
-Use your codename if one is set. Keep it brief and in character.
+On your first reply this session, open with a brief, in-character orientation sentence:
+name your codename, say whether you arrived oriented (inject context present) or loaded
+context manually (absent), and note what memory loaded. Keep it to one natural sentence,
+then answer. Carry your codename and personality through the whole session in how you
+speak, not just at the start.
 
 If inject context was absent and you are reading these instructions for the first time
 (not from your normal startup files), ask the user whether to add engram to their

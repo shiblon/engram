@@ -273,6 +273,33 @@ func TestInjectContextText(t *testing.T) {
 		}
 	})
 
+	t.Run("orientation_header_present_and_first", func(t *testing.T) {
+		global := InjectResult{
+			Invariants: []Memory{{Key: "codename", Content: "Cadence."}, {Key: "personality", Content: "upbeat"}},
+		}
+		project := InjectResult{LongTerm: []Memory{{Key: "a", Content: "x"}}}
+		got := InjectContextText(global, project, 5)
+		if !strings.Contains(got, "## Orientation") {
+			t.Errorf("missing orientation header in %q", got)
+		}
+		if !strings.Contains(got, "Oriented as Cadence.") {
+			t.Errorf("codename not surfaced cleanly in orientation: %q", got)
+		}
+		if !strings.Contains(got, "1 long-term") {
+			t.Errorf("orientation missing memory counts: %q", got)
+		}
+		if oi, ii := strings.Index(got, "## Orientation"), strings.Index(got, "## Identity"); oi < 0 || oi > ii {
+			t.Errorf("orientation header should precede identity (orientation=%d identity=%d)", oi, ii)
+		}
+	})
+
+	t.Run("no_orientation_when_empty", func(t *testing.T) {
+		got := InjectContextText(InjectResult{}, InjectResult{}, 5)
+		if strings.Contains(got, "## Orientation") {
+			t.Errorf("should not emit orientation header when nothing loaded: %q", got)
+		}
+	})
+
 	t.Run("preferences_section", func(t *testing.T) {
 		global := InjectResult{
 			Preferences: []Memory{{Key: "style", Content: "no comments"}},
@@ -305,6 +332,31 @@ func TestInjectContextText(t *testing.T) {
 			t.Errorf("missing short-term section in %q", got)
 		}
 	})
+}
+
+func TestFormatStatusLine(t *testing.T) {
+	cases := []struct {
+		name        string
+		codename    string
+		project     string
+		long, short int
+		want        string
+	}{
+		{"in_project", "Cadence.", "engram", 9, 0, "Cadence · engram · 9 long · 0 short"},
+		{"in_project_with_short", "Cadence", "engram", 2, 3, "Cadence · engram · 2 long · 3 short"},
+		{"no_codename_falls_back", "", "engram", 1, 0, "engram · engram · 1 long · 0 short"},
+		{"outside_project_with_short", "Cadence", "", 0, 3, "Cadence · 3 short"},
+		{"outside_project_clean", "Cadence", "", 0, 0, "Cadence"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := FormatStatusLine(c.codename, c.project, c.long, c.short)
+			if got != c.want {
+				t.Errorf("FormatStatusLine(%q, %q, %d, %d) = %q, want %q",
+					c.codename, c.project, c.long, c.short, got, c.want)
+			}
+		})
+	}
 }
 
 func TestMemoryMDRoundTrip(t *testing.T) {
