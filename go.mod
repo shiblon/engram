@@ -1,6 +1,6 @@
 module github.com/shiblon/engram
 
-go 1.26.1
+go 1.25.5
 
 require (
 	github.com/mark3labs/mcp-go v0.49.0
