@@ -335,7 +335,7 @@ func TestInjectContextText(t *testing.T) {
 
 	t.Run("agent_tools_section", func(t *testing.T) {
 		global := InjectResult{AgentTools: []ToolDesc{
-			{Name: "g.sh", Desc: "global tool", Run: "bash", Path: "/home/u/.local/agenttools/g.sh"},
+			{Name: "g.sh", Desc: "global tool", Run: "bash", Path: "/home/u/.engram/agenttools/g.sh"},
 		}}
 		project := InjectResult{AgentTools: []ToolDesc{
 			{Name: "render.sh", Desc: "Render it.", Run: "bash", Path: "context/agenttools/render.sh"},
@@ -347,7 +347,7 @@ func TestInjectContextText(t *testing.T) {
 		if !strings.Contains(got, "- bash context/agenttools/render.sh: Render it.") {
 			t.Errorf("missing project tool command in %q", got)
 		}
-		if !strings.Contains(got, "- bash /home/u/.local/agenttools/g.sh: global tool") {
+		if !strings.Contains(got, "- bash /home/u/.engram/agenttools/g.sh: global tool") {
 			t.Errorf("missing global tool command in %q", got)
 		}
 	})

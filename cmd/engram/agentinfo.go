@@ -87,7 +87,7 @@ tools", each shown as the exact command to run it (e.g. bash
 context/agenttools/foo.sh). Invoke a listed tool with that command; read the
 script's header for usage detail. Two scopes are scanned: project-local
 (context/agenttools/, committed and shared with the repo) and global
-(~/.local/agenttools/, your personal tools). A project tool shadows a global one
+($HOME/.engram/agenttools/, your personal tools). A project tool shadows a global one
 of the same name. Tools run through a runner (bash foo.sh), never directly, so the
 executable bit does not matter.
 
@@ -108,9 +108,9 @@ Promote a candidate when EITHER signal fires:
 Never auto-promote. Before promoting, ASK the user about the tool's shape:
 abstraction level (how general?), language, and name. You are creating something
 that will live a long time, so do not guess. Then "engram tool promote <name>
---to project" (committed, shared with the repo) or "--to global" (~/.local/
-agenttools, your personal tools). Project -> global is a COPY: the committed
-project copy stays. Not worth keeping? "engram tool discard <name>". Engram
+--to project" (committed, shared with the repo) or "--to global"
+($HOME/.engram/agenttools, your personal tools). Project -> global is a COPY: the committed
+project copy stays in place. Not worth keeping? "engram tool discard <name>". Engram
 removes nothing on its own.
 
 Tool scripts are self-describing via a header (the single source of truth for the

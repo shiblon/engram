@@ -32,14 +32,15 @@ func (t ToolDesc) Command() string {
 }
 
 // GlobalAgentToolsDir returns the personal, cross-project tool directory under
-// ~/.local. It lives outside engram's own directory on purpose: engram
-// references tools, it does not own them.
+// $HOME/.engram, alongside the global memory DB. Keeping all global engram state
+// under one root lets it move as a unit -- backup, sync to a new machine, and a
+// future dump/reload-all.
 func GlobalAgentToolsDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("global agenttools dir: %w", err)
 	}
-	return filepath.Join(home, ".local", "agenttools"), nil
+	return filepath.Join(home, ".engram", "agenttools"), nil
 }
 
 // ProjectAgentToolsDir returns the committed, project-local tool directory. It

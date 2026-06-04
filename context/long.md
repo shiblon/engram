@@ -3,74 +3,17 @@
 # Long
 
 ## bin-tool-library-inject-feature
-Design package: a personal command-pattern library plus a deterministic startup inject for engram. Turns recurring inline shell patterns into named, allowlistable, self-describing scripts. IMPLEMENTATION 2026-06-04: Phase 0 (scanner/parser/paths) + Phase 1 (inject the catalog + surface staged candidates annotated with AGE) landed in pkg/engram/agenttools.go, engram.go, cmd/engram/main.go, all tested + smoke-verified. NOTE: an earlier evict-to-trash design was REPLACED by an age-based, no-eviction model for portability -- see CANDIDATE LIFECYCLE.
+AGENT TOOL CATALOG -- SHIPPED v0.5.0 (global tools dir moved $HOME/.local/agenttools -> $HOME/.engram/agenttools in v0.5.1, tag PENDING). CODE is the source of truth now; design detail + rationale live in code comments + git history, not here.
 
-PROBLEM: compound echo-bundled shell commands never match Claude Code permission allowlists, so they force manual approval every time and cannot be bulk-approved. Recurring multi-command patterns should graduate into named scripts instead of being re-typed inline.
+WHAT: at session start inject scans global ($HOME/.engram/agenttools) + project (context/agenttools) script dirs and injects a one-line runnable-command catalog (pkg/engram/agenttools.go, engram.go InjectContextText). Recurring inline shell patterns graduate via `engram tool stage|promote|discard|list` (cmd/engram/tool.go) through .engram/toolcandidates; staged candidates are surfaced ANNOTATED BY AGE and the agent judges promotion (second-use or matured). promote project->global is a COPY (project copy stays). Scripts self-describe via a # engram-desc/usage/run header and run through a runner (bash foo.sh), never the exec bit. Agent guidance in agentinfo.go "## Agent tools". Allowlist: bootstrap adds Bash(engram tool:*). Portability is the load-bearing principle: [[engram-design-portability]].
 
-THREE COMPONENTS OF THE FEATURE:
-1. INJECT (mechanism): at session start, deterministically scan BOTH agenttools dirs and inject a one-line catalog (the exact run command + desc) per script. Same spirit as the cold-tier index: catalog surfaced, scripts run on demand. CODE SEAM: InjectContextText (pkg/engram/engram.go) renders sections; add AgentTools field to InjectResult, populate in runInject, render a section mirroring the cold block.
-2. GRADUATION-STRATEGY INSTRUCTIONS (to the model): how to detect candidates, stage them, and promote them across scopes. CODE SEAM: agentInfoText in cmd/engram/agentinfo.go.
-3. PREFERENCE-ELICITATION INSTRUCTIONS (to the model): when creating/promoting a script, ask the user about abstraction level, language, naming, etc. -- do not guess the shape of a tool that will live forever.
+STILL OPEN (not in code):
+- project-local -> global escalation signal (v1: user-initiated).
+- managing the project+global duplicate after a copy-promotion (sync/drift).
 
-SCRIPT STORAGE -- three locations, each earning its place by ownership + durability (settled 2026-06-04):
-- .engram/toolcandidates/  : staging scratch. Candidates PERSIST here with their mtimes (no auto-eviction). Machine-local, uncommitted (FREEBIE: .engram/.gitignore already = * via openWithFallback). NO trash dir (dropped with the eviction redesign; explicit discard just deletes).
-- context/agenttools/      : promoted project-local. COMMITTED, survives fresh clone, shared with teammates and their agents.
-- $HOME/.local/agenttools/ : promoted global. Personal, all projects. Under ~/.local (user-installed-resource convention) so it is the USERs tool, not engrams.
-NAMING RATIONALE: promoted dirs are deliberately NOT named bin/. Regular tools earn a conventional repo disposition (bin/, cmd/, scripts/, packaging); these are agent-authored convenience scripts, a distinct species, so they get their own namespace (agenttools). Same agenttools leaf in both promoted scopes so inject scanner + mental model are uniform. Promoted scripts live OUTSIDE engrams own dir on purpose -- reinforces that engram REFERENCES scripts and never OWNS them; only scratch lives under .engram/.
-Inject scans both promoted dirs; project-local LAYERS OVER (shadows) global by name.
+NEXT THREAD -- DUMP/RELOAD-ALL: one command to export/import ALL engram state as a unit (memory tiers + global agent tools). The v0.5.1 move of global tools under $HOME/.engram (one root for global state) is the enabling first step. Design TBD with Chris.
 
-INVOCATION (settled 2026-06-04): tools are NEVER run directly -- no reliance on the executable bit (fragile across clones/zips/filesystems, and ./name is not allowlist-friendly). Always invoked through a runner command, e.g. "bash context/agenttools/foo.sh", which gives a predictable allowlistable shape (bash context/agenttools/*). The catalog displays the EXACT command. RUNNER RESOLUTION ORDER: (1) explicit "engram-run:" header wins; (2) known extension (.sh/.bash->bash, .py->python3, .js/.mjs->node, .rb->ruby, .pl->perl); (3) shebang interpreter (env-aware); (4) else skip with a warning so a misconfigured tool is visible, not silently dropped.
-
-HEADER FORMAT (settled 2026-06-04): ONE namespaced line-comment convention, same in every language, single scan.
-  # engram-desc: <one-line description>   (REQUIRED; absence = not a tool, skipped)
-  # engram-usage: <invocation example>    (OPTIONAL; read at invocation time)
-  # engram-run: <runner command>          (OPTIONAL; overrides extension/shebang)
-Parser: scan file, strip a leading run of comment punctuation (chars in " \t#/-") then match engram-desc:/usage:/run:, first hit per key wins. Comment-token-agnostic (covers bash #, // , sql -- with no per-language table). Shebang lines are naturally ignored (start with #! -> "!..." after strip, no key match). DROPPED module-docstring parsing: one format, one parser.
-
-GRADUATION LADDER (settled): two distinct graduations mirroring the memory-tier promotion model.
-- Inline pattern (re-typed, forces approval each time)
-  -> Project-local script (context/agenttools/), earned by repeated usefulness in THIS repo
-  -> Global script ($HOME/.local/agenttools/), a deliberate "is this repo-specific, or do I want it in every project?" step. Same test as global-vs-project memory, applied to capabilities.
-PROJECT -> GLOBAL IS A COPY, NOT A MOVE (settled 2026-06-04): project scope is durable/committed like long.md, so moving would rob the repo + teammates of a tool they depend on. Copy up to ~/.local/agenttools/, leave the committed project copy in place. The resulting same-tool-in-both-scopes is INTENDED and handled by the shadow rule (project layers over global), so a repo can pin its own version after globalizing. DEFERRED: the management mechanic for the two copies (keeping in sync / noticing drift).
-
-DETECTION (settled): any multi-command echo-wrapped script is a CANDIDATE. When about to run one, the model asks itself: (a) what am I trying to accomplish at a high level? (forces abstraction past the literal command); (b) will I need to accomplish this again? (the reuse test).
-
-STAGING + SIGNAL (settled): do NOT interrupt the user twice (execute, then decide graduation). A .engram/toolcandidates/ dir is written FREQUENTLY and WITHOUT consent -- free capture, like a write-ahead log. MUST be pre-allowlisted for writes, else staging reintroduces the prompt we are dodging. TWO portable promotion signals, both AGENT-judged (no engram session-boundary logic): (1) SECOND INVOCATION -- about to repeat a pattern and a candidate already exists for it -> ask now. No longer limited to within-session, so cross-session recurrence finally counts. (2) AGE -- a candidate that has lingered N days -> surface for a keep-or-toss call. Stage on first sight; ASK on second use or once matured.
-
-CANDIDATE LIFECYCLE (settled 2026-06-04, REPLACES the earlier wipe/evict-to-trash designs for PORTABILITY -- see [[engram-design-portability]]): engram does NOT auto-evict. WHY: session-boundary detection is Claude-Code-only (its SessionStart hook carries a source: startup/resume/clear/compact); Gemini/Cursor/Copilot/AntiGravity/Codex run "inject --text" manually "after first interaction" with no source and possibly per-interaction, so any eviction keyed on session start is non-portable and would shred candidates. INSTEAD: candidates persist with mtimes; at inject engram READS the staging dir and surfaces each candidate ANNOTATED WITH AGE ("fuzzy-find.sh (staged 5 days ago)") under "## Staged tool candidates". DIVISION OF LABOR: engram reports INFO (names + age); the agent owns JUDGMENT (the "how old is too old" threshold lives in the Phase 2 instruction, soft + tunable, NOT baked into a release). Cleanup = the user promote-or-discard decision (discard = plain delete, honest not silent); no automatic deletion, so nothing is ever lost behind the user's back. CODE: ListToolCandidates(root) + FormatToolCandidate(c, now) in agenttools.go; runInject formats with time.Now() into InjectResult.ToolCandidates (pre-formatted strings keep InjectContextText free of the clock).
-
-KEY DECISION (settled): NOT a new memory tier. Tiers hold MEMORIES (facts/rules to recall); a tool catalog is CAPABILITIES to invoke -- different abstraction. Scripts are source of truth; engram references/surfaces them, never contains them.
-
-RESOLVED-BY-REDESIGN (was "MUST FIX: eviction fires on compact"): the original eviction-on-inject ran on every SessionStart source (the bootstrap hook has no matcher) including compact/resume, which would have wiped same-session candidates. The portable CANDIDATE LIFECYCLE above makes this MOOT -- there is no eviction to mis-fire. The underlying lesson (do not key behavior on the Claude-Code-only hook source) is captured in [[engram-design-portability]]. Re-orienting context injection still fires on all sources, which is desirable and harmless.
-
-BUILD PLAN (phases): 0 paths+scanner [DONE, agenttools.go]; 1 inject catalog + surface candidates with age, no eviction [DONE, engram.go InjectResult.AgentTools/ToolCandidates + ListToolCandidates/FormatToolCandidate + runInject]; 2 graduation+elicitation instructions incl. the age-threshold judgment for surfacing candidates [DONE, agentInfoText "## Agent tools" section in agentinfo.go]; 3 allowlist-friendly helper command [DONE, cmd/engram/tool.go: engram tool stage(stdin)/promote(--to project|global)/discard/list, promote project->global is a COPY; bootstrap adds Bash(engram tool:*) to permissions.allow via addAllowedTool; tool_test.go covers it]. ALL PHASES DONE 2026-06-04; feature is functionally complete.
-
-STAGING ALLOWLIST NOTE: staging goes through "engram tool stage <name>" (reads script from stdin), NOT a raw file Write, so the single allowlist entry Bash(engram tool:*) covers stage/promote/discard with no per-write prompt. This is portable (a bash command on every platform) and supersedes the earlier "pre-allowlist .engram/toolcandidates writes" idea.
-
-RELEASE FOLLOW-UPS (not code; do before/with tagging): (1) bootstrap only adds the allowlist on FRESH installs -- the hooks step short-circuits if "engram record" already present, so EXISTING installs (incl. Chris) will not get Bash(engram tool:*) auto-added; add manually or re-bootstrap. (2) Installed init files (~/.claude/engram.md, bootstrapped CLAUDE.md/GEMINI.md/etc.) predate the "## Agent tools" section; re-run bootstrap or re-append engram agentinfo to pick it up. (3) stale global preference bash-command-granularity UPDATED 2026-06-04 to the new engram-tool graduation path (was $HOME/.engram/bin/).
-
-OPEN QUESTIONS (implementation-grain; architecture is settled):
-- How the injected catalog dovetails with allowlisting so each promoted script is trivially approved (Phase 3 helper command is the answer).
-- What signal escalates project-local -> global (count across repos? always user-initiated? -- v1: user-initiated).
-- Management mechanic for the project+global duplicate after a copy-promotion (sync/drift).
-
-RELATED: global engram preference bash-command-granularity encodes the no-bundling rule + graduation path. THIS feature is the discoverable, self-documenting mechanism behind it.
-
-ORIGIN: discussed 2026-06-04 while building the ENG-8 data-flow diagram in abundantplatform; same doc-vs-code single-source-of-truth principle.
-
-## cmd-engram-test-gap
-cmd/engram historically had NO test files. PARTIAL PAYDOWN 2026-06-04: cmd/engram/tool_test.go added, covering the new "engram tool" command logic -- validToolName (path-traversal safety), promote project=move vs global=copy semantics, candidate->global move, discard, copyFile mode preservation -- via temp-root + temp-HOME fixtures driving the RunE funcs directly (rootCWD global pointed at the temp root; no stdin/stdout plumbing needed).
-
-REMAINING GAP: runInject assembly (scan order, path relativization, candidate age formatting wiring) is still only smoke-tested. PROPOSED APPROACH for that: extract a testable core (e.g. assembleInjectText(ctx, cwd) string) that runInject wraps, then table-test it with temp project + temp HOME. House style: stdlib-only, table-driven, fixture helpers, no testify.
-
-WHY recorded: noticed during agenttools review; cmd-level glue bugs (like the original eviction-on-compact) are exactly what these tests catch.
-
-## engram-design-portability
-When designing engram features, portability across ALL supported agent platforms is a first-class constraint -- not just Claude Code. Claude Code uses a SessionStart hook (with a "source" field: startup/resume/clear/compact). But Gemini, Cursor, Copilot, AntiGravity, and Codex run "engram inject --text" manually "after first interaction" -- NO hook source, no reliable session-boundary signal, and inject may run per-interaction. 
-
-RULE: do not build mechanics on Claude-Code-only signals (e.g. hook source). Prefer portable signals: file mtime/age, file presence, and AGENT-driven judgment via injected instructions. 
-
-Origin: 2026-06-04 -- while fixing the agenttools candidate-eviction bug I proposed gating eviction on the SessionStart "source" field; that is Claude-Code-only and would break the other platforms. The portable redesign moves candidate maturation to age + second-invocation, surfaced for the agent to act on. See [[bin-tool-library-inject-feature]].
+PENDING RELEASE: tag v0.5.1 (global-path move; scoped changelog-filter fix already committed).
 
 ## context-memory
 Project memory in version control: context/long.md is the canonical committed location for long-term project memories. engram inject auto-loads it when the file is newer than the DB (or DB has no long-term entries). At natural commit points, offer to run: engram mem dump --tier long -- user reviews and includes in commit. This covers fresh clones, new machines, and teammate sharing. Short-term, events, and cold are never committed.
@@ -104,4 +47,18 @@ MCP server for engram must be stateless per-call: every tool takes cwd, resolves
 
 ## bash-events
 Bash events: file_path = normalized command string (rtk prefix stripped), snippet = stdout head-N. Only grep and find recorded. Failed commands filtered.
+
+## cmd-engram-test-gap
+cmd/engram historically had NO test files. PARTIAL PAYDOWN 2026-06-04: cmd/engram/tool_test.go added, covering the new "engram tool" command logic -- validToolName (path-traversal safety), promote project=move vs global=copy semantics, candidate->global move, discard, copyFile mode preservation -- via temp-root + temp-HOME fixtures driving the RunE funcs directly (rootCWD global pointed at the temp root; no stdin/stdout plumbing needed).
+
+REMAINING GAP: runInject assembly (scan order, path relativization, candidate age formatting wiring) is still only smoke-tested. PROPOSED APPROACH for that: extract a testable core (e.g. assembleInjectText(ctx, cwd) string) that runInject wraps, then table-test it with temp project + temp HOME. House style: stdlib-only, table-driven, fixture helpers, no testify.
+
+WHY recorded: noticed during agenttools review; cmd-level glue bugs (like the original eviction-on-compact) are exactly what these tests catch.
+
+## engram-design-portability
+When designing engram features, portability across ALL supported agent platforms is a first-class constraint -- not just Claude Code. Claude Code uses a SessionStart hook (with a "source" field: startup/resume/clear/compact). But Gemini, Cursor, Copilot, AntiGravity, and Codex run "engram inject --text" manually "after first interaction" -- NO hook source, no reliable session-boundary signal, and inject may run per-interaction. 
+
+RULE: do not build mechanics on Claude-Code-only signals (e.g. hook source). Prefer portable signals: file mtime/age, file presence, and AGENT-driven judgment via injected instructions. 
+
+Origin: 2026-06-04 -- while fixing the agenttools candidate-eviction bug I proposed gating eviction on the SessionStart "source" field; that is Claude-Code-only and would break the other platforms. The portable redesign moves candidate maturation to age + second-invocation, surfaced for the agent to act on. See [[bin-tool-library-inject-feature]].
 
