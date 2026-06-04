@@ -43,10 +43,10 @@ changelog:
       order: 999
   filters:
     exclude:
-      - '^docs:'
-      - '^test:'
-      - '^chore:'
-      - '^ci:'
+      - '^docs(\(.+\))?:'
+      - '^test(\(.+\))?:'
+      - '^chore(\(.+\))?:'
+      - '^ci(\(.+\))?:'
       - '(?i)^update.*(long term )?mem'
       - '(?i)^updated plan'
 
