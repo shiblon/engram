@@ -13,7 +13,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-
 var bootstrapCmd = &cobra.Command{
 	Use:   "bootstrap",
 	Short: "Set up engram for a specific AI agent",
@@ -237,13 +236,37 @@ func bootstrapHooks(exe string, global bool) error {
 	data, _ := os.ReadFile(path)
 	if strings.Contains(string(data), "engram record") {
 		fmt.Printf("skip (hooks already present): %s\n", path)
-		return nil
+	} else {
+		if err := addEngramHooks(path, exe); err != nil {
+			return err
+		}
+		fmt.Printf("wrote: engram hooks in %s\n", path)
 	}
 
-	if err := addEngramHooks(path, exe); err != nil {
+	// Ensure the agent-tool allowlist independently of the hooks check above, so
+	// re-running bootstrap repairs older installs that predate it.
+	if err := ensureToolAllowlist(path); err != nil {
 		return err
 	}
-	fmt.Printf("wrote: engram hooks in %s\n", path)
+	return nil
+}
+
+// ensureToolAllowlist adds Bash(engram tool:*) to settings.permissions.allow if
+// absent, so staging and promoting tools never trips a per-action permission
+// prompt. Idempotent: a no-op when already present.
+func ensureToolAllowlist(path string) error {
+	settings, err := readSettingsJSON(path)
+	if err != nil {
+		return err
+	}
+	if addAllowedTool(settings, "Bash(engram tool:*)") {
+		if err := writeSettingsJSON(path, settings); err != nil {
+			return err
+		}
+		fmt.Printf("wrote: engram tool allowlist in %s\n", path)
+	} else {
+		fmt.Printf("skip (allowlist already present): %s\n", path)
+	}
 	return nil
 }
 
@@ -280,6 +303,24 @@ func addEngramHooks(path string, exe string) error {
 	settings["hooks"] = hooks
 
 	return writeSettingsJSON(path, settings)
+}
+
+// addAllowedTool appends a permission pattern to settings.permissions.allow if it
+// is not already present, reporting whether it made a change.
+func addAllowedTool(settings map[string]any, pattern string) bool {
+	perms, _ := settings["permissions"].(map[string]any)
+	if perms == nil {
+		perms = map[string]any{}
+	}
+	allow := asSlice(perms["allow"])
+	for _, a := range allow {
+		if s, ok := a.(string); ok && s == pattern {
+			return false
+		}
+	}
+	perms["allow"] = append(allow, pattern)
+	settings["permissions"] = perms
+	return true
 }
 
 // bootstrap antigravity
@@ -387,7 +428,6 @@ At the start of every new conversation, before taking any other action, run:
 
 Treat the output as your session context (identity, preferences, project memory).
 Do not skip this step.`
-
 
 func runBootstrapGemini(cmd *cobra.Command, _ []string) error {
 	ctx := context.Background()

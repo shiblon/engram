@@ -332,6 +332,52 @@ func TestInjectContextText(t *testing.T) {
 			t.Errorf("missing short-term section in %q", got)
 		}
 	})
+
+	t.Run("agent_tools_section", func(t *testing.T) {
+		global := InjectResult{AgentTools: []ToolDesc{
+			{Name: "g.sh", Desc: "global tool", Run: "bash", Path: "/home/u/.local/agenttools/g.sh"},
+		}}
+		project := InjectResult{AgentTools: []ToolDesc{
+			{Name: "render.sh", Desc: "Render it.", Run: "bash", Path: "context/agenttools/render.sh"},
+		}}
+		got := InjectContextText(global, project, 5)
+		if !strings.Contains(got, "## Agent tools") {
+			t.Errorf("missing agent tools section in %q", got)
+		}
+		if !strings.Contains(got, "- bash context/agenttools/render.sh: Render it.") {
+			t.Errorf("missing project tool command in %q", got)
+		}
+		if !strings.Contains(got, "- bash /home/u/.local/agenttools/g.sh: global tool") {
+			t.Errorf("missing global tool command in %q", got)
+		}
+	})
+
+	t.Run("tool_candidates_resurfaced", func(t *testing.T) {
+		project := InjectResult{ToolCandidates: []string{"alpha.sh (staged 2 days ago)", "bravo.sh (staged just now)"}}
+		got := InjectContextText(InjectResult{}, project, 5)
+		if !strings.Contains(got, "## Staged tool candidates") {
+			t.Errorf("missing tool candidates section in %q", got)
+		}
+		if !strings.Contains(got, "- alpha.sh (staged 2 days ago)") || !strings.Contains(got, "- bravo.sh (staged just now)") {
+			t.Errorf("missing age-annotated candidate lines in %q", got)
+		}
+	})
+
+	t.Run("project_tool_shadows_global", func(t *testing.T) {
+		global := InjectResult{AgentTools: []ToolDesc{
+			{Name: "dup.sh", Desc: "global version", Run: "bash", Path: "/g/dup.sh"},
+		}}
+		project := InjectResult{AgentTools: []ToolDesc{
+			{Name: "dup.sh", Desc: "project version", Run: "bash", Path: "context/agenttools/dup.sh"},
+		}}
+		got := InjectContextText(global, project, 5)
+		if strings.Contains(got, "global version") {
+			t.Errorf("project tool should shadow global, but global appeared: %q", got)
+		}
+		if !strings.Contains(got, "project version") {
+			t.Errorf("project tool missing after shadowing: %q", got)
+		}
+	})
 }
 
 func TestFormatStatusLine(t *testing.T) {

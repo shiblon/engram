@@ -25,8 +25,8 @@ func main() {
 var rootCWD string
 
 var rootCmd = &cobra.Command{
-	Use:          "engram",
-	Short:        "Per-session memory and personality for AI agents",
+	Use:   "engram",
+	Short: "Per-session memory and personality for AI agents",
 	Long: `Per-session memory and personality for AI agents -- works with Claude Code,
 Cursor, GitHub Copilot, Codex, and any agent with a markdown init file.
 
@@ -163,6 +163,12 @@ func runInject(cmd *cobra.Command, _ []string) error {
 			gdb.Close()
 		}
 	}
+	// Global agent tools live on the filesystem, independent of the global DB.
+	if gdir, err := engram.GlobalAgentToolsDir(); err == nil {
+		var warnings []string
+		globalResult.AgentTools, warnings = engram.ScanAgentTools(gdir)
+		reportToolWarnings(warnings)
+	}
 
 	// Read project memories. Non-fatal if no project root or DB exists.
 	var projectResult engram.InjectResult
@@ -180,6 +186,19 @@ func runInject(cmd *cobra.Command, _ []string) error {
 				db.Close()
 			}
 		}
+		// Agent tools and staged candidates are independent of the project DB.
+		projectResult.AgentTools = scanProjectTools(root)
+		// Surface staged candidates annotated with age. Candidates persist (no
+		// auto-eviction); the agent judges maturity from age, a portable signal
+		// across every platform, unlike a Claude-Code-only session-start source.
+		if cands, err := engram.ListToolCandidates(root); err != nil {
+			fmt.Fprintf(os.Stderr, "engram agenttools: %v\n", err)
+		} else {
+			now := time.Now()
+			for _, c := range cands {
+				projectResult.ToolCandidates = append(projectResult.ToolCandidates, engram.FormatToolCandidate(c, now))
+			}
+		}
 	}
 
 	contextText := engram.InjectContextText(globalResult, projectResult, injectSessions)
@@ -195,6 +214,29 @@ func runInject(cmd *cobra.Command, _ []string) error {
 	}
 	fmt.Println(string(engram.FormatInjectOutputText(contextText)))
 	return nil
+}
+
+// scanProjectTools scans the project's committed agenttools dir and rewrites each
+// tool's path to be relative to root, so the injected command reads as
+// "bash context/agenttools/foo.sh" (what the agent types from the repo root)
+// rather than an absolute path. Global tools keep their absolute paths.
+func scanProjectTools(root string) []engram.ToolDesc {
+	tools, warnings := engram.ScanAgentTools(engram.ProjectAgentToolsDir(root))
+	reportToolWarnings(warnings)
+	for i := range tools {
+		if rel, err := filepath.Rel(root, tools[i].Path); err == nil {
+			tools[i].Path = rel
+		}
+	}
+	return tools
+}
+
+// reportToolWarnings surfaces misconfigured-tool warnings on stderr so they do
+// not pollute the injected context but remain visible to the user.
+func reportToolWarnings(warnings []string) {
+	for _, w := range warnings {
+		fmt.Fprintf(os.Stderr, "engram agenttools: %s\n", w)
+	}
 }
 
 // prune

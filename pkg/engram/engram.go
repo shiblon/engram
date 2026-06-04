@@ -407,6 +407,13 @@ type InjectResult struct {
 	LongTerm    []Memory
 	ShortTerm   []Memory
 	Cold        []Memory // keys+content injected as index only; content not expanded
+	// From the filesystem (agenttools dirs), not the DB. Populated by the caller
+	// after Inject, since scanning is I/O outside the memory database.
+	AgentTools []ToolDesc
+	// ToolCandidates holds pre-formatted, age-annotated staged tool candidates
+	// surfaced for a promote-or-discard decision. Populated by the caller (which
+	// owns the clock); the renderer stays free of time.
+	ToolCandidates []string
 }
 
 // Inject returns files and bash searches from the last nSessions sessions,
@@ -767,6 +774,22 @@ func InjectContextText(global, project InjectResult, nSessions int) string {
 			lines[i] = fmt.Sprintf("- %s: %s", m.Key, firstLine(m.Content))
 		}
 		parts = append(parts, "## Cold storage (index only -- fetch with: engram mem --tier cold read <key>)\n"+strings.Join(lines, "\n"))
+	}
+
+	if tools := mergeAgentTools(global.AgentTools, project.AgentTools); len(tools) > 0 {
+		lines := make([]string, len(tools))
+		for i, t := range tools {
+			lines[i] = fmt.Sprintf("- %s: %s", t.Command(), t.Desc)
+		}
+		parts = append(parts, "## Agent tools (invoke with the command shown; details in the script header)\n"+strings.Join(lines, "\n"))
+	}
+
+	if len(project.ToolCandidates) > 0 {
+		lines := make([]string, len(project.ToolCandidates))
+		for i, name := range project.ToolCandidates {
+			lines[i] = "- " + name
+		}
+		parts = append(parts, "## Staged tool candidates (review by age: bring matured ones to the user to promote into context/agenttools/, or discard)\n"+strings.Join(lines, "\n"))
 	}
 
 	if len(project.LongTerm) > 0 {
