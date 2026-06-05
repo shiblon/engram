@@ -124,6 +124,42 @@ any language:
   # engram-desc: <one-line description>   (REQUIRED -- without it the file is not a tool)
   # engram-usage: <invocation example>    (optional)
   # engram-run: <runner command>          (optional; else inferred from extension or shebang)
+
+## Staged restores
+
+When inject output contains a "## Staged restores" section, one or more project
+snapshots from a previous machine are waiting to be placed into working trees on
+this one. Engram reports them; YOU decide whether and where to apply them.
+
+Each entry shows: identity (the cross-machine key, usually a git remote URL),
+original path (where it lived on the source machine), stage path (where the
+snapshot sits locally now), and a [MATCHES CURRENT REPO] flag when the identity
+matches this working tree exactly.
+
+Your responsibilities:
+
+EXACT MATCH ([MATCHES CURRENT REPO] flag set):
+  Tell the user a snapshot for this project was found and offer to apply it:
+    engram restore --apply <identity>
+  Run this from inside the project root. If the target already has curated
+  memories, engram re-stages the snapshot under a new slot rather than
+  overwriting -- it will report "conflict" and the user can decide later.
+
+NEAR-MISS (no exact match, but a pending entry looks like this project):
+  Engram is deterministic; it cannot guess. YOU notice when the basename of
+  the current directory matches the basename of a pending entry's original path
+  (e.g. you are in ~/work/engram and there is a pending entry for ~/code/engram).
+  Ask the user: "This looks like the same project -- want me to apply the
+  snapshot?" If yes: run engram restore --apply <identity> from this directory.
+  The identity will be re-keyed to the current repo on apply.
+
+UNRELATED entries: leave them alone. Do not apply or discard without asking.
+
+CHECK STATUS AT ANY TIME: engram restore --status
+DISCARD an unwanted entry: engram restore --discard <identity>
+
+Never apply or discard a staged restore without the user's explicit consent.
+Engram never auto-applies; that judgment is yours.
 `
 
 var agentInfoCmd = &cobra.Command{
