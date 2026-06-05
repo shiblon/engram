@@ -160,6 +160,14 @@ func runInject(cmd *cobra.Command, _ []string) error {
 	if engram.GlobalDBExists() {
 		if gdb, err := engram.OpenGlobalDB(ctx); err == nil {
 			globalResult, _ = engram.Inject(ctx, gdb, injectSessions)
+			// Surface pending restores; mark any that match the current repo.
+			if pending, err := engram.ListPendingRestores(ctx, gdb); err == nil && len(pending) > 0 {
+				currentIdentity := engram.ProjectIdentity(cwd)
+				for i := range pending {
+					pending[i].MatchesCurrent = pending[i].Identity == currentIdentity
+				}
+				globalResult.PendingRestores = pending
+			}
 			gdb.Close()
 		}
 	}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -159,5 +160,7 @@ func registerSelf(ctx context.Context, root string) {
 		return
 	}
 	defer gdb.Close()
-	_ = RegisterProject(ctx, gdb, root)
+	if err := RegisterProject(ctx, gdb, root); err != nil {
+		log.Printf("engram: register project %s: %v", root, err)
+	}
 }

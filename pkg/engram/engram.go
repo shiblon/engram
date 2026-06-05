@@ -427,6 +427,10 @@ type InjectResult struct {
 	// surfaced for a promote-or-discard decision. Populated by the caller (which
 	// owns the clock); the renderer stays free of time.
 	ToolCandidates []string
+	// PendingRestores is the list of staged project snapshots awaiting placement.
+	// Populated by the caller from the global DB after Inject. The renderer
+	// surfaces these so the agent can decide whether to run --apply.
+	PendingRestores []PendingRestore
 }
 
 // Inject returns files and bash searches from the last nSessions sessions,
@@ -795,6 +799,18 @@ func InjectContextText(global, project InjectResult, nSessions int) string {
 			lines[i] = fmt.Sprintf("- %s: %s", t.Command(), t.Desc)
 		}
 		parts = append(parts, "## Agent tools (invoke with the command shown; details in the script header)\n"+strings.Join(lines, "\n"))
+	}
+
+	if len(global.PendingRestores) > 0 {
+		lines := make([]string, len(global.PendingRestores))
+		for i, p := range global.PendingRestores {
+			line := fmt.Sprintf("- identity: %s | original: %s | stage: %s", p.Identity, p.OriginalPath, p.StagePath)
+			if p.MatchesCurrent {
+				line += " [MATCHES CURRENT REPO -- consider: engram restore --apply " + p.Identity + "]"
+			}
+			lines[i] = line
+		}
+		parts = append(parts, "## Staged restores (pending project snapshots -- agent: check for identity or near-miss match with current repo, prompt user to apply or discard)\n"+strings.Join(lines, "\n"))
 	}
 
 	if len(project.ToolCandidates) > 0 {
