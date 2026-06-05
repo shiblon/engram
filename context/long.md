@@ -2,8 +2,65 @@
 
 # Long
 
-## dev-tooling-as-staged-tools
-For engram dev tooling (build/vet/test gates, repo helpers), prefer a staged engram tool-candidate over a Makefile or ad-hoc script. Write the script with engram-desc/engram-usage headers, stage via `engram tool stage <name>` (body on stdin) into .engram/toolcandidates/, run it to prove it, and DECIDE graduation later (`engram tool promote`) once it has earned its keep. Rationale (Chris, 2026-06-05): dogfood the v0.5.0 staged-candidate catalog instead of decreeing convention up front with a committed Makefile. First instance: check.sh (go build+vet+test pre-commit gate), staged 2026-06-05.
+## context-memory
+Project memory in version control: context/long.md is the canonical committed location for long-term project memories. engram inject auto-loads it when the file is newer than the DB (or DB has no long-term entries). At natural commit points, offer to run: engram mem dump --tier long -- user reviews and includes in commit. This covers fresh clones, new machines, and teammate sharing. Short-term, events, and cold are never committed.
+
+## cold-tier
+Cold tier: semantic convention for low-priority long-term storage. Injected at session start as a one-line catalog (first line of content only) -- full content never auto-loaded. Use for project ideas, reference material, or anything bulky and rarely needed. Write with first line as summary, details on subsequent lines. Do not read cold entries unprompted; fetch on demand with: engram mem --tier cold read <key>
+
+## platform-strategy
+Platform strategy (settled as of v0.2.0):
+
+Claude Code: full hook support -- SessionStart (inject) + PostToolUse (record). bootstrap claude [-g] writes to project or global settings.json.
+
+All other platforms (Gemini CLI, AntiGravity, Copilot, etc.): system-prompt-file only. No hooks, no settings.json manipulation. Bootstrap writes a platform-specific file (GEMINI.md, copilot-instructions.md, KI metadata.json) with an instruction to run 'engram inject --text' on first interaction. No record support on these platforms.
+
+Exception: if a platform later gains reliable hook support, we add it. Gemini CLI SessionStart hook exists in docs but not confirmed working in 0.37.1 -- keep the GEMINI.md approach as primary.
+
+## db-design
+Per-project DB at .engram/mem.db, paths relative to project root. Global DB at ~/.engram/mem.db. Single events table + FTS5, session-count pruning (keep 100). Prune runs at session start alongside inject. Legacy path .claude/engram.db supported via read fallback; migrate --cleanup to move.
+
+## global-db
+Global memories (invariants, preferences) in ~/.engram/mem.db. Project memories (long, short) + events in .engram/mem.db (relative to project root). Legacy paths (.claude/engram.db) supported via read fallback. Inject reads both global and project DBs.
+
+## status-line-questions
+Status line behavior is hit-or-miss across platforms (doesn't show in VS Code, works in CLI terminal only). Codename removed as separate invariant -- now embedded in personality text. Status command still exists but codename source is gone. Open questions: should status read from personality text? Should it show something else? Revisit when platform story is clearer.
+
+## mcp-resource-architecture
+MCP v2 architecture: (1) engram://inject and engram://agentinfo BOTH as context URIs -- auto-included at session start by the client. inject provides dynamic data (personality, memories, recent files); agentinfo provides static instructions. Both read once per session, not on demand. (2) engram://mem as single tool with subcommand parameter (write/read/list/search/delete) -- replaces 5 separate tools. dump/load/promote/pop are CLI-only. For platforms supporting MCP context URIs: no CLAUDE.md or hooks needed, fully self-contained. Hook path remains for non-MCP platforms.
+
+## mcp-design
+MCP server for engram must be stateless per-call: every tool takes cwd, resolves project root dynamically via FindProjectRoot, never caches project state at server level. The multi-repo problem is not an MCP limitation -- it is a bad implementation pattern. A2A rejected for engram: its statefulness is for long-running agent task lifecycle, not for knowing which project you are in. MCP + stateless design is correct. Cursor is the first target: .cursorrules handles injection (per-project by definition), MCP server handles recording and mem operations.
+
+## bash-events
+Bash events: file_path = normalized command string (rtk prefix stripped), snippet = stdout head-N. Only grep and find recorded. Failed commands filtered.
+
+## bin-tool-library-inject-feature
+AGENT TOOL CATALOG -- SHIPPED v0.5.0 (global tools dir moved $HOME/.local/agenttools -> $HOME/.engram/agenttools in v0.5.1, tag PENDING). CODE is the source of truth now; design detail + rationale live in code comments + git history, not here.
+
+WHAT: at session start inject scans global ($HOME/.engram/agenttools) + project (context/agenttools) script dirs and injects a one-line runnable-command catalog (pkg/engram/agenttools.go, engram.go InjectContextText). Recurring inline shell patterns graduate via `engram tool stage|promote|discard|list` (cmd/engram/tool.go) through .engram/toolcandidates; staged candidates are surfaced ANNOTATED BY AGE and the agent judges promotion (second-use or matured). promote project->global is a COPY (project copy stays). Scripts self-describe via a # engram-desc/usage/run header and run through a runner (bash foo.sh), never the exec bit. Agent guidance in agentinfo.go "## Agent tools". Allowlist: bootstrap adds Bash(engram tool:*). Portability is the load-bearing principle: [[engram-design-portability]].
+
+STILL OPEN (not in code):
+- project-local -> global escalation signal (v1: user-initiated).
+- managing the project+global duplicate after a copy-promotion (sync/drift).
+
+NEXT THREAD -- DUMP/RELOAD-ALL: one command to export/import ALL engram state as a unit (memory tiers + global agent tools). The v0.5.1 move of global tools under $HOME/.engram (one root for global state) is the enabling first step. Design DRAFTED 2026-06-04 -> see [[dump-restore-all-design]].
+
+PENDING RELEASE: tag v0.5.1 (global-path move; scoped changelog-filter fix already committed).
+
+## cmd-engram-test-gap
+cmd/engram historically had NO test files. PARTIAL PAYDOWN 2026-06-04: cmd/engram/tool_test.go added, covering the new "engram tool" command logic -- validToolName (path-traversal safety), promote project=move vs global=copy semantics, candidate->global move, discard, copyFile mode preservation -- via temp-root + temp-HOME fixtures driving the RunE funcs directly (rootCWD global pointed at the temp root; no stdin/stdout plumbing needed).
+
+REMAINING GAP: runInject assembly (scan order, path relativization, candidate age formatting wiring) is still only smoke-tested. PROPOSED APPROACH for that: extract a testable core (e.g. assembleInjectText(ctx, cwd) string) that runInject wraps, then table-test it with temp project + temp HOME. House style: stdlib-only, table-driven, fixture helpers, no testify.
+
+WHY recorded: noticed during agenttools review; cmd-level glue bugs (like the original eviction-on-compact) are exactly what these tests catch.
+
+## engram-design-portability
+When designing engram features, portability across ALL supported agent platforms is a first-class constraint -- not just Claude Code. Claude Code uses a SessionStart hook (with a "source" field: startup/resume/clear/compact). But Gemini, Cursor, Copilot, AntiGravity, and Codex run "engram inject --text" manually "after first interaction" -- NO hook source, no reliable session-boundary signal, and inject may run per-interaction. 
+
+RULE: do not build mechanics on Claude-Code-only signals (e.g. hook source). Prefer portable signals: file mtime/age, file presence, and AGENT-driven judgment via injected instructions. 
+
+Origin: 2026-06-04 -- while fixing the agenttools candidate-eviction bug I proposed gating eviction on the SessionStart "source" field; that is Claude-Code-only and would break the other platforms. The portable redesign moves candidate maturation to age + second-invocation, surfaced for the agent to act on. See [[bin-tool-library-inject-feature]].
 
 ## dump-restore-all-design
 DUMP/RESTORE-ALL design (drafted 2026-06-04 with Chris; UNBUILT). Goal: `engram save` -> one tgz on box A; move it; `engram restore` on box B -> all engram state back. One save, one restore. Replaces hand-copying mem.db files. Related: [[bin-tool-library-inject-feature]], [[engram-design-portability]], [[engram-architecture-invariants]].
@@ -54,63 +111,6 @@ ENGRAM ARCHITECTURE INVARIANTS (hold these; established 2026-06-05). Engram is a
 
 Corollary in the dump/restore design: inject SURFACES a staged project that matches the current repo; the agent then runs `engram restore --apply <id>` explicitly (and accepts the prompt). inject does NOT auto-heal. Same shape as agenttools: engram surfaces candidates annotated by age, the agent judges promotion. Related: [[dump-restore-all-design]], [[engram-design-portability]].
 
-## bin-tool-library-inject-feature
-AGENT TOOL CATALOG -- SHIPPED v0.5.0 (global tools dir moved $HOME/.local/agenttools -> $HOME/.engram/agenttools in v0.5.1, tag PENDING). CODE is the source of truth now; design detail + rationale live in code comments + git history, not here.
-
-WHAT: at session start inject scans global ($HOME/.engram/agenttools) + project (context/agenttools) script dirs and injects a one-line runnable-command catalog (pkg/engram/agenttools.go, engram.go InjectContextText). Recurring inline shell patterns graduate via `engram tool stage|promote|discard|list` (cmd/engram/tool.go) through .engram/toolcandidates; staged candidates are surfaced ANNOTATED BY AGE and the agent judges promotion (second-use or matured). promote project->global is a COPY (project copy stays). Scripts self-describe via a # engram-desc/usage/run header and run through a runner (bash foo.sh), never the exec bit. Agent guidance in agentinfo.go "## Agent tools". Allowlist: bootstrap adds Bash(engram tool:*). Portability is the load-bearing principle: [[engram-design-portability]].
-
-STILL OPEN (not in code):
-- project-local -> global escalation signal (v1: user-initiated).
-- managing the project+global duplicate after a copy-promotion (sync/drift).
-
-NEXT THREAD -- DUMP/RELOAD-ALL: one command to export/import ALL engram state as a unit (memory tiers + global agent tools). The v0.5.1 move of global tools under $HOME/.engram (one root for global state) is the enabling first step. Design DRAFTED 2026-06-04 -> see [[dump-restore-all-design]].
-
-PENDING RELEASE: tag v0.5.1 (global-path move; scoped changelog-filter fix already committed).
-
-## context-memory
-Project memory in version control: context/long.md is the canonical committed location for long-term project memories. engram inject auto-loads it when the file is newer than the DB (or DB has no long-term entries). At natural commit points, offer to run: engram mem dump --tier long -- user reviews and includes in commit. This covers fresh clones, new machines, and teammate sharing. Short-term, events, and cold are never committed.
-
-## cold-tier
-Cold tier: semantic convention for low-priority long-term storage. Injected at session start as a one-line catalog (first line of content only) -- full content never auto-loaded. Use for project ideas, reference material, or anything bulky and rarely needed. Write with first line as summary, details on subsequent lines. Do not read cold entries unprompted; fetch on demand with: engram mem --tier cold read <key>
-
-## platform-strategy
-Platform strategy (settled as of v0.2.0):
-
-Claude Code: full hook support -- SessionStart (inject) + PostToolUse (record). bootstrap claude [-g] writes to project or global settings.json.
-
-All other platforms (Gemini CLI, AntiGravity, Copilot, etc.): system-prompt-file only. No hooks, no settings.json manipulation. Bootstrap writes a platform-specific file (GEMINI.md, copilot-instructions.md, KI metadata.json) with an instruction to run 'engram inject --text' on first interaction. No record support on these platforms.
-
-Exception: if a platform later gains reliable hook support, we add it. Gemini CLI SessionStart hook exists in docs but not confirmed working in 0.37.1 -- keep the GEMINI.md approach as primary.
-
-## db-design
-Per-project DB at .engram/mem.db, paths relative to project root. Global DB at ~/.engram/mem.db. Single events table + FTS5, session-count pruning (keep 100). Prune runs at session start alongside inject. Legacy path .claude/engram.db supported via read fallback; migrate --cleanup to move.
-
-## global-db
-Global memories (invariants, preferences) in ~/.engram/mem.db. Project memories (long, short) + events in .engram/mem.db (relative to project root). Legacy paths (.claude/engram.db) supported via read fallback. Inject reads both global and project DBs.
-
-## status-line-questions
-Status line behavior is hit-or-miss across platforms (doesn't show in VS Code, works in CLI terminal only). Codename removed as separate invariant -- now embedded in personality text. Status command still exists but codename source is gone. Open questions: should status read from personality text? Should it show something else? Revisit when platform story is clearer.
-
-## mcp-resource-architecture
-MCP v2 architecture: (1) engram://inject and engram://agentinfo BOTH as context URIs -- auto-included at session start by the client. inject provides dynamic data (personality, memories, recent files); agentinfo provides static instructions. Both read once per session, not on demand. (2) engram://mem as single tool with subcommand parameter (write/read/list/search/delete) -- replaces 5 separate tools. dump/load/promote/pop are CLI-only. For platforms supporting MCP context URIs: no CLAUDE.md or hooks needed, fully self-contained. Hook path remains for non-MCP platforms.
-
-## mcp-design
-MCP server for engram must be stateless per-call: every tool takes cwd, resolves project root dynamically via FindProjectRoot, never caches project state at server level. The multi-repo problem is not an MCP limitation -- it is a bad implementation pattern. A2A rejected for engram: its statefulness is for long-running agent task lifecycle, not for knowing which project you are in. MCP + stateless design is correct. Cursor is the first target: .cursorrules handles injection (per-project by definition), MCP server handles recording and mem operations.
-
-## bash-events
-Bash events: file_path = normalized command string (rtk prefix stripped), snippet = stdout head-N. Only grep and find recorded. Failed commands filtered.
-
-## cmd-engram-test-gap
-cmd/engram historically had NO test files. PARTIAL PAYDOWN 2026-06-04: cmd/engram/tool_test.go added, covering the new "engram tool" command logic -- validToolName (path-traversal safety), promote project=move vs global=copy semantics, candidate->global move, discard, copyFile mode preservation -- via temp-root + temp-HOME fixtures driving the RunE funcs directly (rootCWD global pointed at the temp root; no stdin/stdout plumbing needed).
-
-REMAINING GAP: runInject assembly (scan order, path relativization, candidate age formatting wiring) is still only smoke-tested. PROPOSED APPROACH for that: extract a testable core (e.g. assembleInjectText(ctx, cwd) string) that runInject wraps, then table-test it with temp project + temp HOME. House style: stdlib-only, table-driven, fixture helpers, no testify.
-
-WHY recorded: noticed during agenttools review; cmd-level glue bugs (like the original eviction-on-compact) are exactly what these tests catch.
-
-## engram-design-portability
-When designing engram features, portability across ALL supported agent platforms is a first-class constraint -- not just Claude Code. Claude Code uses a SessionStart hook (with a "source" field: startup/resume/clear/compact). But Gemini, Cursor, Copilot, AntiGravity, and Codex run "engram inject --text" manually "after first interaction" -- NO hook source, no reliable session-boundary signal, and inject may run per-interaction. 
-
-RULE: do not build mechanics on Claude-Code-only signals (e.g. hook source). Prefer portable signals: file mtime/age, file presence, and AGENT-driven judgment via injected instructions. 
-
-Origin: 2026-06-04 -- while fixing the agenttools candidate-eviction bug I proposed gating eviction on the SessionStart "source" field; that is Claude-Code-only and would break the other platforms. The portable redesign moves candidate maturation to age + second-invocation, surfaced for the agent to act on. See [[bin-tool-library-inject-feature]].
+## dev-tooling-as-staged-tools
+For engram dev tooling (build/vet/test gates, repo helpers), prefer a staged engram tool-candidate over a Makefile or ad-hoc script. Write the script with engram-desc/engram-usage headers, stage via `engram tool stage <name>` (body on stdin) into .engram/toolcandidates/, run it to prove it, and DECIDE graduation later (`engram tool promote`) once it has earned its keep. Rationale (Chris, 2026-06-05): dogfood the v0.5.0 staged-candidate catalog instead of decreeing convention up front with a committed Makefile. First instance: check.sh (go build+vet+test pre-commit gate), staged 2026-06-05.
 
