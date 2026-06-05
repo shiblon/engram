@@ -80,7 +80,8 @@ CREATE TABLE IF NOT EXISTS projects (
     id         INTEGER PRIMARY KEY,
     identity   TEXT    NOT NULL,
     path       TEXT    NOT NULL,
-    last_seen  INTEGER NOT NULL
+    last_seen  INTEGER NOT NULL,
+    status     TEXT    NOT NULL DEFAULT 'live'
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_identity ON projects (identity);
