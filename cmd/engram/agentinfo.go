@@ -59,9 +59,14 @@ Run: engram mem --help for full command reference.
 
 - invariant  (--global): personality -- applies to all projects
 - preference (--global): rules -- applies to all projects
-- long:                  settled project decisions and facts
-- short:                 in-flight context, stack, backlog
+- long:                  settled decisions, facts, and durable backlog
+- short:                 truly transient working state, the live stack
 - cold:                  low-priority archive -- injected as index only
+
+Choose the tier by LONGEVITY, not by whether the work is finished: backlog or
+context that must persist across sessions belongs in long (it is a durable fact
+about the work, even if unfinished). Reserve short for transient working state you
+would be fine losing when the session ends.
 
 Cold tier: for things worth keeping but not worth loading every session. Injected
 as a one-line catalog only -- fetch on demand with: engram mem --tier cold read <key>.

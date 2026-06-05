@@ -2,6 +2,55 @@
 
 # Long
 
+## dump-restore-all-design
+DUMP/RESTORE-ALL design (drafted 2026-06-04 with Chris; UNBUILT). Goal: `engram save` -> one tgz on box A; move it; `engram restore` on box B -> all engram state back. One save, one restore. Replaces hand-copying mem.db files. Related: [[bin-tool-library-inject-feature]], [[engram-design-portability]], [[engram-architecture-invariants]].
+
+SCOPE: all machine-local engram state. Global = $HOME/.engram (DB + agenttools + manifest). Each project = <root>/.engram (DB + toolcandidates). context/ (long.md + agenttools; version-controlled) EXCLUDED by default; opt-in via --include-context, and save WARNS if context exists but the flag is absent. Hooks/settings NOT saved (rebootstrap on the new box is acceptable).
+
+FIDELITY: high-fidelity bytes, never reconstruction. Snapshot SQLite via VACUUM INTO (WAL-safe consistent copy), not raw cp. NO row-level DB merge ever (that is reconstruction).
+
+ENUMERATION via MANIFEST = a projects table in the GLOBAL DB with {identity, path, last-seen}. REGISTERED once, at PROJECT-DB-CREATION -- the single chokepoint in the db open/create logic (OpenProjectDB / openWithFallback): whatever command first creates a project .engram/mem.db writes the manifest row in the same breath. A one-time STRUCTURAL footprint (index row born with the data), NOT a per-command or per-inject recurring side-effect, so it stays cheap even when record triggers it. This subsumes the other paths: restore --apply creates the DB -> registered; a cloned repo whose DB is bootstrapped from context/long.md on first inject -> registered. Catches every project that gets a DB. Consistent with [[engram-architecture-invariants]]: inject still does NO heavy mutation; a one-time manifest row at DB birth is benign bookkeeping. Identity = git remote (read from .git/config, a FILE READ, no subprocess) preferred, else $HOME-RELATIVE path (absolute if outside $HOME); path fallback when config is unreadable. RE-KEY the entry when a repo later gains or changes a remote. save walks the manifest and prunes entries whose .engram no longer exists. Enumeration is lazy by design -- no filesystem search; the manifest is the index.
+
+RESTORE is AGENT-DRIVEN (inject SURFACES, the agent APPLIES -- inject never auto-heals; see [[engram-architecture-invariants]]), two phases:
+- Eager (engram restore <tgz>): apply GLOBAL now (only if target empty), unpack each project snapshot into the stage + register a pending entry in the manifest. Projects are NOT placed yet.
+- On contact: inject SURFACES staged projects + flags a current-repo identity match (read-only, no mutation). The agent then runs `engram restore --apply <id>` -- the explicit verb that does "found it, pulled it, lay .engram into THIS root, delete the pending entry". inject itself applies nothing.
+
+CONFLICTS = RE-ID, never silent overwrite or forced discard (the download "foo (1)" model):
+- empty target -> apply + clear pending + report "restored". EMPTY = no curated memories/tools, NOT no-DB-file (see RESTORING INTO AN EXISTING DB).
+- populated target -> re-id the incoming to a new stage slot (foo, foo (1), ...), keep it parked, never touch live state, report. A later `engram restore --apply <id>` is an explicit, consented overwrite. v1 = whole-DB apply only.
+
+NEAR-MISS matching = the AGENTs job (agentinfo instruction); engram stays deterministic. Engram surfaces pending entries; the agent notices basename similarity (you are in ~/projects/foo, pending entry is ~/work/foo) and prompts "same project?". If yes, `engram restore --apply <id>` from INSIDE the project lays the staged .engram into THIS root and re-keys identity to the current one.
+
+STAGE: $HOME/.engram/project-stage/ (machine-local). INCLUDED in save -- pending snapshots must propagate across hops (A->B->C: a project unvisited on B must still reach C). Self-clearing: apply clears the pending entry, so the stage only ever holds genuinely-unresolved items (no metastasis). This REVERSES an earlier "exclude stage from save" note. `engram restore --status` lists pending/conflicted entries for visibility.
+
+RESTORING INTO AN EXISTING DB (cases; raised 2026-06-05): define EMPTY by CURATED CONTENT (memories/tools), NOT by DB-file existence -- because normal session activity auto-creates + auto-registers the project DB (incidental events) BEFORE the agent runs restore --apply, so a file-existence test would almost always see "populated" (the same session that surfaced the pending restore made the DB) and wrongly degrade to re-id.
+- A: fresh clone, DB not yet created -> apply lays it down.
+- B: fresh clone, THIS session already made the DB (events only, no memories) -> treat as EMPTY -> apply. OPEN sub-question: preserve the incidental events or drop them? Lean DROP (transient session noise; the restored history is the point).
+- C: genuine prior curated state here (memories built independently) + incoming snapshot -> TRUE conflict -> re-id, keep both.
+- D: re-apply of the same archive -> idempotent-ish / re-id (edge).
+So restore --apply empty-check = "no curated memories/tools", ignoring incidental events.
+
+DEFERRED (think about later): a FORK of the same project on the SAME machine -- two clones share one git remote, so they collide on identity (the unique manifest key) and a pending entry is ambiguous about which working copy to restore into. Out of scope for v1; revisit (e.g. path-disambiguation layered on remote identity, or a per-clone id).
+
+FORMAT: tgz = meta.json (engram version, save host+date, project list with identity + $HOME-rel path) + global/ snapshot + projects/<n>/ snapshots + project-stage/ (pending carried forward).
+
+PHASE PLAN: (1) manifest table + identity (remote via .git/config file-read / $HOME-rel) + re-key fix-up + REGISTER at the project-DB-creation chokepoint (OpenProjectDB); (2) save (walk manifest, VACUUM INTO snapshots, tgz; --include-context opt-in + warn); (3) restore eager-global (non-destructive) + unpack pending into stage + manifest; (4) restore --apply (match pending -> lay .engram into root [auto-registers via the creation chokepoint] -> clear entry; re-id when target has CURATED content) + --discard/--status; inject only SURFACES matches; (5) agentinfo instructions for surfaced matches + near-miss.
+
+## engram-architecture-invariants
+ENGRAM ARCHITECTURE INVARIANTS (hold these; established 2026-06-05). Engram is a TOOL FOR THE AGENT, not an autonomous actor.
+
+1. BOX OF VERBS: engram provides explicit subcommands the agent invokes; the agent holds the judgment. Minimize implicit run-as-side-effect magic.
+
+2. INJECT IS A READ-OUT + LIGHT-BOOKKEEPING CHANNEL ONLY. It MAY do benign housekeeping (it already prunes old events and loads context/long.md; also fine: note project presence in the manifest, surface staged/known projects and current-repo matches). It MUST NEVER do heavy state mutation -- it does not apply, place, or overwrite project memory or tools.
+
+3. HEAVY LIFTING LIVES IN EXPLICIT SUBCOMMANDS. Anything that consequentially mutates memory/tool/project state (save, restore application, tool promotion, discard) is a verb the agent calls deliberately -- NEVER a hidden side-effect of inject or record.
+
+4. DIVISION OF LABOR: engram reports INFO deterministically; the AGENT exercises JUDGMENT (near-miss project matching, deciding to promote a tool or apply a restore). The judgment instructions live in engram.md (agentInfoText).
+
+5. ALLOWLIST POLICY: bootstrap pre-approves ONLY the routine, high-frequency curation verbs the agent drives -- Bash(engram mem:*) and Bash(engram tool:*) (cmd/engram/bootstrap.go engramAllowlist). Frictionless is for what you do constantly. Infrequent, heavy verbs (save, restore) are PRESENT but deliberately NOT allowlisted -- a permission prompt on a rare, consequential op is appropriate, not friction to remove (restore especially). Config-mutating or destructive verbs (bootstrap, uninstall, migrate, prune) stay human-gated. Hooks (record/inject/status) run via the harness and need no allowlisting.
+
+Corollary in the dump/restore design: inject SURFACES a staged project that matches the current repo; the agent then runs `engram restore --apply <id>` explicitly (and accepts the prompt). inject does NOT auto-heal. Same shape as agenttools: engram surfaces candidates annotated by age, the agent judges promotion. Related: [[dump-restore-all-design]], [[engram-design-portability]].
+
 ## bin-tool-library-inject-feature
 AGENT TOOL CATALOG -- SHIPPED v0.5.0 (global tools dir moved $HOME/.local/agenttools -> $HOME/.engram/agenttools in v0.5.1, tag PENDING). CODE is the source of truth now; design detail + rationale live in code comments + git history, not here.
 
@@ -11,7 +60,7 @@ STILL OPEN (not in code):
 - project-local -> global escalation signal (v1: user-initiated).
 - managing the project+global duplicate after a copy-promotion (sync/drift).
 
-NEXT THREAD -- DUMP/RELOAD-ALL: one command to export/import ALL engram state as a unit (memory tiers + global agent tools). The v0.5.1 move of global tools under $HOME/.engram (one root for global state) is the enabling first step. Design TBD with Chris.
+NEXT THREAD -- DUMP/RELOAD-ALL: one command to export/import ALL engram state as a unit (memory tiers + global agent tools). The v0.5.1 move of global tools under $HOME/.engram (one root for global state) is the enabling first step. Design DRAFTED 2026-06-04 -> see [[dump-restore-all-design]].
 
 PENDING RELEASE: tag v0.5.1 (global-path move; scoped changelog-filter fix already committed).
 

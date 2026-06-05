@@ -243,27 +243,42 @@ func bootstrapHooks(exe string, global bool) error {
 		fmt.Printf("wrote: engram hooks in %s\n", path)
 	}
 
-	// Ensure the agent-tool allowlist independently of the hooks check above, so
+	// Ensure the engram allowlist independently of the hooks check above, so
 	// re-running bootstrap repairs older installs that predate it.
-	if err := ensureToolAllowlist(path); err != nil {
+	if err := ensureEngramAllowlist(path); err != nil {
 		return err
 	}
 	return nil
 }
 
-// ensureToolAllowlist adds Bash(engram tool:*) to settings.permissions.allow if
-// absent, so staging and promoting tools never trips a per-action permission
-// prompt. Idempotent: a no-op when already present.
-func ensureToolAllowlist(path string) error {
+// engramAllowlist is the set of engram command families an agent invokes
+// directly. bootstrap pre-approves exactly these so the memory and tool
+// workflows never trip a per-call permission prompt. Hooks (record/inject/
+// status) run via the harness and need no allowlisting; uninstall/bootstrap are
+// deliberately NOT auto-granted.
+var engramAllowlist = []string{
+	"Bash(engram mem:*)",
+	"Bash(engram tool:*)",
+}
+
+// ensureEngramAllowlist adds the engramAllowlist patterns to
+// settings.permissions.allow if absent. Idempotent: a no-op when all present.
+func ensureEngramAllowlist(path string) error {
 	settings, err := readSettingsJSON(path)
 	if err != nil {
 		return err
 	}
-	if addAllowedTool(settings, "Bash(engram tool:*)") {
+	changed := false
+	for _, pattern := range engramAllowlist {
+		if addAllowedTool(settings, pattern) {
+			changed = true
+		}
+	}
+	if changed {
 		if err := writeSettingsJSON(path, settings); err != nil {
 			return err
 		}
-		fmt.Printf("wrote: engram tool allowlist in %s\n", path)
+		fmt.Printf("wrote: engram allowlist in %s\n", path)
 	} else {
 		fmt.Printf("skip (allowlist already present): %s\n", path)
 	}
