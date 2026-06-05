@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -167,6 +168,16 @@ func runInject(cmd *cobra.Command, _ []string) error {
 					pending[i].MatchesCurrent = pending[i].Identity == currentIdentity
 				}
 				globalResult.PendingRestores = pending
+			}
+			// Register the current project if it isn't already in the manifest.
+			// One-time write per project; becomes a no-op once registered.
+			if root, err := engram.FindProjectRoot(cwd); err == nil {
+				identity := engram.ProjectIdentity(root)
+				if !engram.IsProjectRegistered(ctx, gdb, identity) {
+					if err := engram.RegisterProject(ctx, gdb, root); err != nil {
+						log.Printf("engram: inject register %s: %v", root, err)
+					}
+				}
 			}
 			gdb.Close()
 		}

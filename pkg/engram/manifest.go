@@ -151,6 +151,17 @@ func RegisterProject(ctx context.Context, globalDB *sql.DB, root string) error {
 	return nil
 }
 
+// IsProjectRegistered reports whether a project is already recorded as live in
+// the global manifest. It is used by inject to skip the registration side-effect
+// for projects that are already known.
+func IsProjectRegistered(ctx context.Context, globalDB *sql.DB, identity string) bool {
+	var n int
+	_ = globalDB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM projects WHERE identity = ? AND status = 'live'`,
+		identity).Scan(&n)
+	return n > 0
+}
+
 // registerSelf records root in the global manifest, best-effort. It opens a
 // short-lived global handle so it never contends with the project handle, and
 // swallows all errors so manifest bookkeeping never fails a project DB open.
