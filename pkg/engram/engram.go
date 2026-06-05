@@ -332,8 +332,21 @@ func GlobalDBExists() bool {
 
 // OpenProjectDB opens the project database, falling back to the legacy path if
 // the canonical path does not yet exist.
+//
+// When this call brings a project DB into existence for the first time (neither
+// the canonical nor the legacy path existed), it registers the project in the
+// global manifest -- a one-time structural footprint at DB birth, never a
+// per-open side effect. Registration is best-effort and never blocks the open.
 func OpenProjectDB(ctx context.Context, root string) (*sql.DB, error) {
-	return openWithFallback(ctx, DBPath(root), LegacyDBPath(root))
+	creating := !dbExists(DBPath(root), LegacyDBPath(root))
+	db, err := openWithFallback(ctx, DBPath(root), LegacyDBPath(root))
+	if err != nil {
+		return nil, err
+	}
+	if creating {
+		registerSelf(ctx, root)
+	}
+	return db, nil
 }
 
 // OpenGlobalDB opens the global database, falling back to the legacy path if

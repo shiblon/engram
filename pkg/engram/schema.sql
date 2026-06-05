@@ -69,3 +69,18 @@ CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
     INSERT INTO memories_fts(rowid, key, content)
     VALUES (new.id, new.key, new.content);
 END;
+
+-- projects is the dump/restore manifest, populated only in the global DB. It is
+-- the lazy index of every project that has a local engram DB, written once when
+-- a project DB is born (see RegisterProject). identity is the cross-machine key
+-- (git remote, else $HOME-relative path); path is where the .engram lives on
+-- this machine ($HOME-relative, absolute if outside $HOME). The table exists in
+-- every DB for schema uniformity but stays empty in project DBs.
+CREATE TABLE IF NOT EXISTS projects (
+    id         INTEGER PRIMARY KEY,
+    identity   TEXT    NOT NULL,
+    path       TEXT    NOT NULL,
+    last_seen  INTEGER NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_identity ON projects (identity);

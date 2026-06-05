@@ -2,6 +2,9 @@
 
 # Long
 
+## dev-tooling-as-staged-tools
+For engram dev tooling (build/vet/test gates, repo helpers), prefer a staged engram tool-candidate over a Makefile or ad-hoc script. Write the script with engram-desc/engram-usage headers, stage via `engram tool stage <name>` (body on stdin) into .engram/toolcandidates/, run it to prove it, and DECIDE graduation later (`engram tool promote`) once it has earned its keep. Rationale (Chris, 2026-06-05): dogfood the v0.5.0 staged-candidate catalog instead of decreeing convention up front with a committed Makefile. First instance: check.sh (go build+vet+test pre-commit gate), staged 2026-06-05.
+
 ## dump-restore-all-design
 DUMP/RESTORE-ALL design (drafted 2026-06-04 with Chris; UNBUILT). Goal: `engram save` -> one tgz on box A; move it; `engram restore` on box B -> all engram state back. One save, one restore. Replaces hand-copying mem.db files. Related: [[bin-tool-library-inject-feature]], [[engram-design-portability]], [[engram-architecture-invariants]].
 
