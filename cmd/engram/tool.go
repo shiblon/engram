@@ -43,6 +43,8 @@ var toolPromoteCmd = &cobra.Command{
 	RunE:  runToolPromote,
 }
 
+var toolPromoteAs string
+
 var toolDiscardCmd = &cobra.Command{
 	Use:   "discard <name>",
 	Short: "Delete a staged tool candidate",
@@ -100,6 +102,13 @@ func runToolPromote(_ *cobra.Command, args []string) error {
 	if err := validToolName(name); err != nil {
 		return err
 	}
+	destName := name
+	if toolPromoteAs != "" {
+		if err := validToolName(toolPromoteAs); err != nil {
+			return fmt.Errorf("--as: %w", err)
+		}
+		destName = toolPromoteAs
+	}
 	root, err := toolRoot()
 	if err != nil {
 		return err
@@ -115,10 +124,11 @@ func runToolPromote(_ *cobra.Command, args []string) error {
 		if err := os.MkdirAll(engram.ProjectAgentToolsDir(root), 0o755); err != nil {
 			return err
 		}
-		if err := moveFile(candidate, projectTool); err != nil {
+		dest := filepath.Join(engram.ProjectAgentToolsDir(root), destName)
+		if err := moveFile(candidate, dest); err != nil {
 			return err
 		}
-		fmt.Printf("promoted %s -> context/agenttools/ (commit it to share with the repo)\n", name)
+		fmt.Printf("promoted %s -> context/agenttools/%s (commit it to share with the repo)\n", name, destName)
 		return nil
 
 	case "global":
@@ -129,7 +139,7 @@ func runToolPromote(_ *cobra.Command, args []string) error {
 		if err := os.MkdirAll(gdir, 0o755); err != nil {
 			return err
 		}
-		dest := filepath.Join(gdir, name)
+		dest := filepath.Join(gdir, destName)
 		switch {
 		case fileExists(projectTool):
 			// Project -> global is a COPY: the committed project copy stays so the
@@ -137,12 +147,12 @@ func runToolPromote(_ *cobra.Command, args []string) error {
 			if err := copyFile(projectTool, dest); err != nil {
 				return err
 			}
-			fmt.Printf("copied %s -> $HOME/.engram/agenttools/ (project copy left in place)\n", name)
+			fmt.Printf("copied %s -> $HOME/.engram/agenttools/%s (project copy left in place)\n", name, destName)
 		case fileExists(candidate):
 			if err := moveFile(candidate, dest); err != nil {
 				return err
 			}
-			fmt.Printf("promoted %s -> $HOME/.engram/agenttools/\n", name)
+			fmt.Printf("promoted %s -> $HOME/.engram/agenttools/%s\n", name, destName)
 		default:
 			return fmt.Errorf("no candidate or project tool named %q to promote", name)
 		}
@@ -248,6 +258,7 @@ func copyFile(src, dst string) error {
 
 func init() {
 	toolPromoteCmd.Flags().StringVar(&toolPromoteTo, "to", "project", "promotion target: 'project' (context/agenttools) or 'global' ($HOME/.engram/agenttools)")
+	toolPromoteCmd.Flags().StringVar(&toolPromoteAs, "as", "", "rename the tool at its destination (default: keep original name)")
 	toolCmd.AddCommand(toolListCmd, toolStageCmd, toolPromoteCmd, toolDiscardCmd)
 	rootCmd.AddCommand(toolCmd)
 }
