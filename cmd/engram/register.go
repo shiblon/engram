@@ -13,6 +13,7 @@ import (
 )
 
 var registerScanDir string
+var registerList bool
 
 var registerCmd = &cobra.Command{
 	Use:   "register",
@@ -20,11 +21,10 @@ var registerCmd = &cobra.Command{
 	Long: `Register adds projects to the global manifest so they are included in future
 'engram save' archives.
 
-Without --scan, registers the project rooted at the current directory (or --cwd).
+Without flags, registers the project rooted at the current directory (or --cwd).
 
-With --scan <dir>, walks the directory tree under <dir>, finds every project
-that has an .engram/mem.db, and registers them all. Useful for bulk-registering
-existing projects on a new machine without opening an agent session in each one.
+  --list          Print all projects currently in the manifest.
+  --scan <dir>    Walk <dir>, find every .engram/mem.db, and register them all.
 
 Projects are registered automatically when their engram database is first
 created. Use this command for projects that predate v0.6.0 or whose identity
@@ -40,6 +40,10 @@ func runRegister(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("register: open global db: %w", err)
 	}
 	defer gdb.Close()
+
+	if registerList {
+		return runRegisterList(ctx, gdb)
+	}
 
 	if registerScanDir != "" {
 		return runRegisterScan(ctx, gdb, registerScanDir)
@@ -120,7 +124,31 @@ func runRegisterScan(ctx context.Context, gdb *sql.DB, scanRoot string) error {
 	return nil
 }
 
+func runRegisterList(ctx context.Context, gdb *sql.DB) error {
+	rows, err := gdb.QueryContext(ctx,
+		`SELECT identity, path, status FROM projects ORDER BY status, last_seen DESC`)
+	if err != nil {
+		return fmt.Errorf("register --list: %w", err)
+	}
+	defer rows.Close()
+
+	var n int
+	for rows.Next() {
+		var identity, path, status string
+		if err := rows.Scan(&identity, &path, &status); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stdout, "%-8s  %-40s  %s\n", status, path, identity)
+		n++
+	}
+	if n == 0 {
+		fmt.Fprintln(os.Stderr, "no projects registered")
+	}
+	return rows.Err()
+}
+
 func init() {
+	registerCmd.Flags().BoolVar(&registerList, "list", false, "list all projects in the manifest")
 	registerCmd.Flags().StringVar(&registerScanDir, "scan", "", "scan this directory tree and register all projects found")
 	rootCmd.AddCommand(registerCmd)
 }
