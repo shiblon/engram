@@ -120,7 +120,7 @@ func runBootstrapClaude(cmd *cobra.Command, _ []string) error {
 	if err := bootstrapEngramMd(); err != nil {
 		return err
 	}
-	if err := bootstrapInvariantsMd(ctx); err != nil {
+	if err := bootstrapStandingMd(ctx); err != nil {
 		return err
 	}
 	if err := bootstrapClaudeMd(); err != nil {
@@ -133,10 +133,7 @@ func runBootstrapClaude(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	fmt.Printf("\n%d written, %d skipped\n", wrote, skipped)
-	if skipped > 0 {
-		fmt.Println("(use engram mem --global --tier invariant write <key> <content> to update existing entries)")
-	}
+	printBootstrapSummary(wrote, skipped)
 	return nil
 }
 
@@ -153,22 +150,24 @@ func bootstrapEngramMd() error {
 	return nil
 }
 
-// bootstrapInvariantsMd renders the initial engram-invariants.md from the global
-// invariant tier (the file CLAUDE.md @-imports). It must run after
-// bootstrapEngramMd, since SyncInvariantFiles treats the presence of engram.md as
-// the signal that this platform is bootstrapped. On a fresh install with no
-// invariants yet it writes a placeholder; render-on-write fills it in later.
-func bootstrapInvariantsMd(ctx context.Context) error {
+// bootstrapStandingMd renders the initial standing-memory files (invariants and
+// preferences) the CLAUDE.md imports. It must run after bootstrapEngramMd, since
+// SyncStandingMemory treats the presence of engram.md as the signal that this
+// platform is bootstrapped. On a fresh install with empty tiers it writes
+// placeholders; render-on-write fills them in later.
+func bootstrapStandingMd(ctx context.Context) error {
 	gdb, err := engram.OpenGlobalDB(ctx)
 	if err != nil {
 		return err
 	}
 	defer gdb.Close()
-	if err := engram.SyncInvariantFiles(ctx, gdb); err != nil {
+	if err := engram.SyncStandingMemory(ctx, gdb); err != nil {
 		return err
 	}
 	home, _ := os.UserHomeDir()
-	fmt.Printf("wrote: %s\n", filepath.Join(home, ".claude", "engram-invariants.md"))
+	for _, base := range engram.StandingFileBases() {
+		fmt.Printf("wrote: %s\n", filepath.Join(home, ".claude", base))
+	}
 	return nil
 }
 
@@ -191,11 +190,16 @@ func bootstrapClaudeMd() error {
 		return nil
 	}
 
-	// Import both the static instructions (@engram.md) and the dynamic invariant
-	// tier (@engram-invariants.md). Each is added independently so an existing
-	// install that predates the invariants import still gains it on re-bootstrap.
+	// Import the static instructions (@engram.md) and the dynamic standing-memory
+	// files (@engram-invariants.md, @engram-preferences.md). Each is added
+	// independently so an existing install that predates a given import gains it
+	// on re-bootstrap.
+	includes := []string{"@engram.md"}
+	for _, base := range engram.StandingFileBases() {
+		includes = append(includes, "@"+base)
+	}
 	var toAdd []string
-	for _, inc := range []string{"@engram.md", "@engram-invariants.md"} {
+	for _, inc := range includes {
 		if strings.Contains(content, inc) {
 			fmt.Printf("skip (already present): %s in %s\n", inc, path)
 			continue
@@ -454,10 +458,7 @@ func runBootstrapAntigravity(cmd *cobra.Command, _ []string) error {
 		wrote++
 	}
 
-	fmt.Printf("\n%d written, %d skipped\n", wrote, skipped)
-	if skipped > 0 {
-		fmt.Println("(use engram mem --global --tier invariant write <key> <content> to update existing entries)")
-	}
+	printBootstrapSummary(wrote, skipped)
 	return nil
 }
 
@@ -473,7 +474,12 @@ Safe to re-run: skips if the engram section is already present.`,
 	RunE: runBootstrapGemini,
 }
 
-const geminiMdSection = `
+// engramProtocolSection is the session-protocol block appended to every markdown
+// init file (Gemini, Copilot, Cursor, AGENTS.md/Codex, custom initfiles). It is
+// the single source of truth for that block; uninstall's engramSectionRE removes
+// exactly this (a test asserts the two stay in sync). AntiGravity uses a distinct
+// single-# variant -- see antigravityInstructions.
+const engramProtocolSection = `
 ## Engram Session Protocol
 
 At the start of every new conversation, before taking any other action, run:
@@ -495,10 +501,7 @@ func runBootstrapGemini(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	fmt.Printf("\n%d written, %d skipped\n", wrote, skipped)
-	if skipped > 0 {
-		fmt.Println("(use engram mem --global --tier invariant write <key> <content> to update existing entries)")
-	}
+	printBootstrapSummary(wrote, skipped)
 	return nil
 }
 
@@ -508,29 +511,8 @@ func bootstrapGeminiMd() error {
 		return err
 	}
 	path := filepath.Join(home, ".gemini", "GEMINI.md")
-
-	data, err := os.ReadFile(path)
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	if strings.Contains(string(data), "engram inject --text") {
-		fmt.Printf("skip (already present): engram section in %s\n", path)
-		return nil
-	}
-
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	if _, err := f.WriteString(geminiMdSection + "\n"); err != nil {
-		return err
-	}
-	fmt.Printf("wrote: engram section in %s\n", path)
-	return nil
+	_, err = bootstrapAppendToFile(path, engramProtocolSection)
+	return err
 }
 
 // bootstrap copilot
@@ -544,16 +526,6 @@ var bootstrapCopilotCmd = &cobra.Command{
 Safe to re-run: skips if the engram section is already present.`,
 	RunE: runBootstrapCopilot,
 }
-
-const copilotInstructions = `
-## Engram Session Protocol
-
-At the start of every new conversation, before taking any other action, run:
-
-  engram inject --text
-
-Treat the output as your session context (identity, preferences, project memory).
-Do not skip this step.`
 
 func runBootstrapCopilot(cmd *cobra.Command, _ []string) error {
 	ctx := context.Background()
@@ -569,34 +541,13 @@ func runBootstrapCopilot(cmd *cobra.Command, _ []string) error {
 	}
 	path := filepath.Join(root, ".github", "copilot-instructions.md")
 
-	data, err := os.ReadFile(path)
-	if err != nil && !os.IsNotExist(err) {
+	ok, err := bootstrapAppendToFile(path, engramProtocolSection)
+	if err != nil {
 		return err
 	}
-	if strings.Contains(string(data), "engram inject --text") {
-		fmt.Printf("skip (already present): engram section in %s\n", path)
-		skipped++
-	} else {
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-			return err
-		}
-		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if err != nil {
-			return err
-		}
-		_, werr := f.WriteString(copilotInstructions + "\n")
-		f.Close()
-		if werr != nil {
-			return werr
-		}
-		fmt.Printf("wrote: engram section in %s\n", path)
-		wrote++
-	}
+	countWroteSkipped(ok, &wrote, &skipped)
 
-	fmt.Printf("\n%d written, %d skipped\n", wrote, skipped)
-	if skipped > 0 {
-		fmt.Println("(use engram mem --global --tier invariant write <key> <content> to update existing entries)")
-	}
+	printBootstrapSummary(wrote, skipped)
 	return nil
 }
 
@@ -612,16 +563,6 @@ Safe to re-run: skips if the engram section is already present.`,
 	RunE: runBootstrapCursor,
 }
 
-const cursorRulesSection = `
-## Engram Session Protocol
-
-At the start of every new conversation, before taking any other action, run:
-
-  engram inject --text
-
-Treat the output as your session context (identity, preferences, project memory).
-Do not skip this step.`
-
 func runBootstrapCursor(cmd *cobra.Command, _ []string) error {
 	ctx := context.Background()
 
@@ -636,32 +577,32 @@ func runBootstrapCursor(cmd *cobra.Command, _ []string) error {
 	}
 	path := filepath.Join(root, ".cursorrules")
 
-	data, err := os.ReadFile(path)
-	if err != nil && !os.IsNotExist(err) {
+	ok, err := bootstrapAppendToFile(path, engramProtocolSection)
+	if err != nil {
 		return err
 	}
-	if strings.Contains(string(data), "engram inject --text") {
-		fmt.Printf("skip (already present): engram section in %s\n", path)
-		skipped++
-	} else {
-		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if err != nil {
-			return err
-		}
-		_, werr := f.WriteString(cursorRulesSection + "\n")
-		f.Close()
-		if werr != nil {
-			return werr
-		}
-		fmt.Printf("wrote: engram section in %s\n", path)
-		wrote++
-	}
+	countWroteSkipped(ok, &wrote, &skipped)
 
+	printBootstrapSummary(wrote, skipped)
+	return nil
+}
+
+// countWroteSkipped bumps wrote or skipped based on whether an append happened.
+func countWroteSkipped(appended bool, wrote, skipped *int) {
+	if appended {
+		*wrote++
+	} else {
+		*skipped++
+	}
+}
+
+// printBootstrapSummary prints the shared "N written, M skipped" footer plus the
+// hint about updating existing global entries.
+func printBootstrapSummary(wrote, skipped int) {
 	fmt.Printf("\n%d written, %d skipped\n", wrote, skipped)
 	if skipped > 0 {
 		fmt.Println("(use engram mem --global --tier invariant write <key> <content> to update existing entries)")
 	}
-	return nil
 }
 
 func bootstrapAppendToFile(path, section string) (bool, error) {
@@ -691,16 +632,6 @@ func bootstrapAppendToFile(path, section string) (bool, error) {
 
 // bootstrap initfile
 
-const initFileSection = `
-## Engram Session Protocol
-
-At the start of every new conversation, before taking any other action, run:
-
-  engram inject --text
-
-Treat the output as your session context (identity, preferences, project memory).
-Do not skip this step.`
-
 var bootstrapInitFileCmd = &cobra.Command{
 	Use:   "initfile <path>",
 	Short: "Append the engram session protocol to any agent init file",
@@ -722,7 +653,7 @@ func runBootstrapInitFile(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ok, err := bootstrapAppendToFile(args[0], initFileSection)
+	ok, err := bootstrapAppendToFile(args[0], engramProtocolSection)
 	if err != nil {
 		return err
 	}
@@ -732,10 +663,7 @@ func runBootstrapInitFile(cmd *cobra.Command, args []string) error {
 		skipped++
 	}
 
-	fmt.Printf("\n%d written, %d skipped\n", wrote, skipped)
-	if skipped > 0 {
-		fmt.Println("(use engram mem --global --tier invariant write <key> <content> to update existing entries)")
-	}
+	printBootstrapSummary(wrote, skipped)
 	return nil
 }
 
@@ -778,7 +706,7 @@ func runBootstrapCodex(cmd *cobra.Command, _ []string) error {
 		path = filepath.Join(root, "AGENTS.md")
 	}
 
-	ok, err := bootstrapAppendToFile(path, initFileSection)
+	ok, err := bootstrapAppendToFile(path, engramProtocolSection)
 	if err != nil {
 		return err
 	}
@@ -788,10 +716,7 @@ func runBootstrapCodex(cmd *cobra.Command, _ []string) error {
 		skipped++
 	}
 
-	fmt.Printf("\n%d written, %d skipped\n", wrote, skipped)
-	if skipped > 0 {
-		fmt.Println("(use engram mem --global --tier invariant write <key> <content> to update existing entries)")
-	}
+	printBootstrapSummary(wrote, skipped)
 	return nil
 }
 
