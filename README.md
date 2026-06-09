@@ -38,7 +38,7 @@ Whether agents store memory in .md files or just in session context is not neces
 
 Or, the agent can write a markdown file with info in it, but the format is all over the map, and that can make the agent confused. "What do you mean by 'backlog', exactly?" is a question I got once, and we had to go the rounds figuring out that it meant something like long-term memory, and that it should be checked and updated every time we finished a task. This is simply not built in, and it can burn a pile of tokens just figuring it out together.
 
-Engram makes memory explicit, editable, and searchable. It imposes a pretty flexible structure on the idea of remembering things. It's important that it be flexible, and it's also important that it be structured. There is a difference between long-term and short-term memory, there is a difference between global invariants and project invariants. And you can specify your own.
+Engram makes memory explicit, editable, and searchable. It imposes a pretty flexible structure on the idea of remembering things. It's important that it be flexible, and it's also important that it be structured. There is a difference between long-term and short-term memory; between global invariants (identity, which applies everywhere) and global preferences (rules, which also apply everywhere but yield to what you ask for in the moment); and project-scoped memory tied to the working directory. And you can specify your own.
 
 The agent can also describe to you how its memory works. You can ask it what it can do, and it can tell you how it treats memory.
 
@@ -127,15 +127,36 @@ session-start injection, and queues a personality setup todo for your first
 session. For Claude Code it also adds file tracking hooks. Open a new session
 when done and your agent will know what to do.
 
-### Commit your personality to git (optional but recommended)
+### Commit your memory to git (optional but recommended)
+
+Export memory to markdown so it can live in version control:
 
 ```sh
-engram mem --global dump   # exports to ~/.claude/memory/*.md
-engram mem dump            # exports project memories to context/*.md
+engram mem --global dump        # global identity + preferences -> ~/.claude/memory/*.md
+engram mem dump --tier long     # settled project memory -> context/long.md
 ```
 
-On a new machine, `engram mem load` restores everything. Your agent's identity
-travels with you.
+Use `--tier long` for the project export: long-term is the "wiki of settled
+knowledge" worth committing, whereas the short-term stack is transient working
+state you don't want in version control. `engram mem load` re-imports these
+markdown files (per scope) on another checkout.
+
+### Moving to another machine
+
+To carry *all* machine-local engram state — global memory, every registered
+project's memory, agent tools, and any pending transfers — in one archive:
+
+```sh
+engram save -o engram.tgz       # on the old machine
+engram restore engram.tgz       # on the new machine
+```
+
+`restore` installs the global memory if the new machine has none, then stages
+each project snapshot. Your agent surfaces the staged projects, and you place
+each into its working tree with `engram restore --apply <identity>` (run from
+inside that project). Projects are tracked in a manifest — `engram register
+--list` shows it, and a project is registered automatically the first time its
+database is created.
 
 ## Day-to-day Usage
 
