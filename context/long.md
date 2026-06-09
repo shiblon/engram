@@ -2,58 +2,14 @@
 
 # Long
 
-## mcp-resource-architecture
-MCP v2 architecture (design settled; UNBUILT). For platforms supporting MCP context URIs: no CLAUDE.md or hooks needed, fully self-contained. Hook path remains for non-MCP platforms.
+## manifest-multi-copy
+MULTIPLE WORKING COPIES OF ONE REPO (SHIPPED, commit 1ec3a96). The projects manifest now keys on (identity, path), not identity alone, so a repo checked out several times on one machine (separate clones or git worktrees on parallel branches) keeps one manifest row PER COPY. Before: UNIQUE(identity) made a second copy overwrite the first row and silently drop it from save/restore.
 
-CONTEXT URIS (auto-included at session start by the client, read once):
-- engram://inject -- dynamic data: personality, memories, recent files
-- engram://agentinfo -- static agent instructions (same text as `engram agentinfo`)
+DESIGN CHOICE (rejected the alternative): we did NOT move project memory into the global DB keyed by identity. That would force parallel branches to SHARE short-term/events -- destroying the branch isolation that is the whole point of parallel work -- and is blind to per-copy local go.mod replace-directive wiring (repo1 -> ../repo0). Copies stay fully independent; long-term still syncs across them only via committed context/long.md at git granularity.
 
-MCP TOOLS (agent-invoked, stateless per-call, each takes cwd):
-- engram://mem -- subcommand param: write/read/list/search/delete. Replaces 5 separate tools.
-- engram://tool -- subcommand param: stage/promote/discard/list. Agent manages tool catalog.
-- engram://restore -- subcommand param: apply/discard/status. Agent places staged project snapshots.
-- engram://register -- registers current project in manifest (one-time, replaces inject side-effect on MCP platforms).
+MOVE vs COPY resolved deterministically at registration, NO --force flag, NO prompt (RegisterProject runs non-interactively from DB-open and hooks). relocateMovedProject: when a new (identity, path) arrives and the identity has EXACTLY ONE existing row whose .engram is gone from disk -> it moved, relocate that row in place. A surviving old .engram (genuine 2nd copy) or multiple existing rows (ambiguous) -> plain insert. Stat error != NotExist is treated as present (relocate only on confirmed absence). Backstop: save-time dead-row prune (manifestEntries) reaps stale rows, now scoped to (identity, path).
 
-CLI-ONLY (human-driven, no MCP surface needed):
-- save / restore <file> -- run at terminal before/after moving machines
-- register --scan / --list -- bulk human operations
-- bootstrap / migrate / uninstall / agentinfo -- setup, maintenance, info
-
-SCOPE NOTE: MCP design was originally drafted covering only mem; tool + restore verbs added post-v0.6.0 and need MCP surfaces before build. Map all four tools above before implementing. Cursor is the first target: .cursorrules handles injection (per-project by definition), MCP server handles recording and mem+tool+restore operations. Related: [[mcp-design]], [[engram-architecture-invariants]].
-
-## dump-restore-all-design
-DUMP/RESTORE-ALL design (drafted 2026-06-04 with Chris; SHIPPED v0.6.0-v0.6.3). Goal: `engram save` -> one tgz on box A; move it; `engram restore` on box B -> all engram state back. One save, one restore. Replaces hand-copying mem.db files. Related: [[bin-tool-library-inject-feature]], [[engram-design-portability]], [[engram-architecture-invariants]].
-
-SCOPE: all machine-local engram state. Global = $HOME/.engram (DB + agenttools + manifest). Each project = <root>/.engram (DB + toolcandidates). context/ (long.md + agenttools; version-controlled) EXCLUDED by default; opt-in via --include-context, and save WARNS if context exists but the flag is absent. Hooks/settings NOT saved (rebootstrap on the new box is acceptable).
-
-FIDELITY: high-fidelity bytes, never reconstruction. Snapshot SQLite via VACUUM INTO (WAL-safe consistent copy), not raw cp. NO row-level DB merge ever (that is reconstruction).
-
-ENUMERATION via MANIFEST = a projects table in the GLOBAL DB with {identity, path, last-seen, status}. REGISTERED once, at PROJECT-DB-CREATION -- the single chokepoint in the db open/create logic (OpenProjectDB); also fires on inject (one-time, no-op once registered) and via `engram register` / `engram register --scan`. Identity = git remote (read from .git/config, FILE READ, no subprocess) preferred, else $HOME-RELATIVE path. RE-KEY the entry when a repo later gains or changes a remote. save walks the manifest and prunes entries whose .engram no longer exists.
-
-RESTORE is AGENT-DRIVEN (inject SURFACES, the agent APPLIES -- inject never auto-heals; see [[engram-architecture-invariants]]), two phases:
-- Eager (engram restore <tgz>): apply GLOBAL now (only if target empty), unpack each project snapshot into the stage + register a pending entry in the manifest. Projects are NOT placed yet.
-- On contact: inject SURFACES staged projects + flags a current-repo identity match (read-only, no mutation). The agent then runs `engram restore --apply <id>` -- the explicit verb that places .engram into THIS root and clears the pending entry. inject itself applies nothing.
-
-CONFLICTS = RE-ID, never silent overwrite or forced discard (the download "foo (1)" model):
-- empty target -> apply + clear pending. EMPTY = no curated memories/tools, NOT no-DB-file.
-- populated target -> re-id to a new stage slot, keep it parked.
-
-NEAR-MISS matching = the AGENTs job; engram stays deterministic. Engram surfaces pending entries; the agent notices basename similarity and prompts user. `engram restore --apply <id>` from INSIDE the project re-keys identity to the current one.
-
-STAGE: $HOME/.engram/project-stage/ (machine-local). INCLUDED in save so pending snapshots propagate across hops (A->B->C). Self-clearing on apply.
-
-RESTORING INTO AN EXISTING DB: EMPTY = no curated memories/tools (not no-DB-file). Fresh clone that already has a DB from session events = treat as empty, apply. Genuine prior curated state = conflict, re-id.
-
-FORMAT: tgz = meta.json (engram version, save host+date, project list) + global/ snapshot + projects/<n>/ snapshots + project-stage/.
-
-PHASE PLAN: ALL 5 PHASES SHIPPED. v0.6.0: phases 1-5 (manifest, save, restore, apply, agentinfo). v0.6.1: engram register + inject self-registration. v0.6.2: engram register --scan. v0.6.3: engram register --list. v0.6.4: engram tool promote --as.
-
-## fork-same-machine
-DECISION (2026-06-05): same-machine fork problem (two clones, same git remote, manifest collision) is explicitly DEFERRED with no plan to fix. Rationale: engram naturally pushes users toward a single working copy because memories persist there. The fork case is rare enough that a user complaint is better signal than preemptive complexity. If it surfaces, revisit; until then, last-registered-wins is acceptable behavior.
-
-## dev-tooling-as-staged-tools
-For engram dev tooling (build/vet/test gates, repo helpers), prefer a staged engram tool-candidate over a Makefile or ad-hoc script. Write the script with engram-desc/engram-usage headers, stage via `engram tool stage <name>` (body on stdin) into .engram/toolcandidates/, run it to prove it, and DECIDE graduation later (`engram tool promote`) once it has earned its keep. Rationale (Chris, 2026-06-05): dogfood the v0.5.0 staged-candidate catalog instead of decreeing convention up front with a committed Makefile. First instance: check-go.sh (go build+vet+test pre-commit gate) -- GRADUATED to global ($HOME/.engram/agenttools/check-go.sh) 2026-06-05.
+RESTORE/REHYDRATE: each saved copy is staged separately; apply/discard disambiguate with --slot <name> or --from <original-path>; ambiguous --apply lists candidates and stops. The per-copy summary is AGENT-composed (inject surfaces identity/slot/original-path/stage/last_seen as raw materials; the agent reads the staged mem.db and narrates) -- engram never hands back a canned summary string. Schema migration 1->2 drops UNIQUE(identity), adds UNIQUE(identity, path); safe because v1 guaranteed no duplicate identities. See [[dump-restore-all-design]], [[engram-architecture-invariants]], [[engram-design-portability]].
 
 ## context-memory
 Project memory in version control: context/long.md is the canonical committed location for long-term project memories. engram inject auto-loads it when the file is newer than the DB (or DB has no long-term entries). At natural commit points, offer to run: engram mem dump --tier long -- user reviews and includes in commit. This covers fresh clones, new machines, and teammate sharing. Short-term, events, and cold are never committed.
@@ -75,6 +31,26 @@ Per-project DB at .engram/mem.db, paths relative to project root. Global DB at ~
 
 ## global-db
 Global memories (invariants, preferences) in ~/.engram/mem.db. Project memories (long, short) + events in .engram/mem.db (relative to project root). Legacy paths (.claude/engram.db) supported via read fallback. Inject reads both global and project DBs.
+
+## mcp-resource-architecture
+MCP v2 architecture (design settled; UNBUILT). For platforms supporting MCP context URIs: no CLAUDE.md or hooks needed, fully self-contained. Hook path remains for non-MCP platforms.
+
+CONTEXT URIS (auto-included at session start by the client, read once):
+- engram://inject -- dynamic data: personality, memories, recent files
+- engram://agentinfo -- static agent instructions (same text as `engram agentinfo`)
+
+MCP TOOLS (agent-invoked, stateless per-call, each takes cwd):
+- engram://mem -- subcommand param: write/read/list/search/delete. Replaces 5 separate tools.
+- engram://tool -- subcommand param: stage/promote/discard/list. Agent manages tool catalog.
+- engram://restore -- subcommand param: apply/discard/status. Agent places staged project snapshots.
+- engram://register -- registers current project in manifest (one-time, replaces inject side-effect on MCP platforms).
+
+CLI-ONLY (human-driven, no MCP surface needed):
+- save / restore <file> -- run at terminal before/after moving machines
+- register --scan / --list -- bulk human operations
+- bootstrap / migrate / uninstall / agentinfo -- setup, maintenance, info
+
+SCOPE NOTE: MCP design was originally drafted covering only mem; tool + restore verbs added post-v0.6.0 and need MCP surfaces before build. Map all four tools above before implementing. Cursor is the first target: .cursorrules handles injection (per-project by definition), MCP server handles recording and mem+tool+restore operations. Related: [[mcp-design]], [[engram-architecture-invariants]].
 
 ## mcp-design
 MCP server for engram must be stateless per-call: every tool takes cwd, resolves project root dynamically via FindProjectRoot, never caches project state at server level. The multi-repo problem is not an MCP limitation -- it is a bad implementation pattern. A2A rejected for engram: its statefulness is for long-running agent task lifecycle, not for knowing which project you are in. MCP + stateless design is correct. Cursor is the first target: .cursorrules handles injection (per-project by definition), MCP server handles recording and mem operations.
@@ -109,6 +85,33 @@ RULE: do not build mechanics on Claude-Code-only signals (e.g. hook source). Pre
 
 Origin: 2026-06-04 -- while fixing the agenttools candidate-eviction bug I proposed gating eviction on the SessionStart "source" field; that is Claude-Code-only and would break the other platforms. The portable redesign moves candidate maturation to age + second-invocation, surfaced for the agent to act on. See [[bin-tool-library-inject-feature]].
 
+## dump-restore-all-design
+DUMP/RESTORE-ALL design (drafted 2026-06-04 with Chris; SHIPPED v0.6.0-v0.6.3). Goal: `engram save` -> one tgz on box A; move it; `engram restore` on box B -> all engram state back. One save, one restore. Replaces hand-copying mem.db files. Related: [[bin-tool-library-inject-feature]], [[engram-design-portability]], [[engram-architecture-invariants]].
+
+SCOPE: all machine-local engram state. Global = $HOME/.engram (DB + agenttools + manifest). Each project = <root>/.engram (DB + toolcandidates). context/ (long.md + agenttools; version-controlled) EXCLUDED by default; opt-in via --include-context, and save WARNS if context exists but the flag is absent. Hooks/settings NOT saved (rebootstrap on the new box is acceptable).
+
+FIDELITY: high-fidelity bytes, never reconstruction. Snapshot SQLite via VACUUM INTO (WAL-safe consistent copy), not raw cp. NO row-level DB merge ever (that is reconstruction).
+
+ENUMERATION via MANIFEST = a projects table in the GLOBAL DB with {identity, path, last-seen, status}. REGISTERED once, at PROJECT-DB-CREATION -- the single chokepoint in the db open/create logic (OpenProjectDB); also fires on inject (one-time, no-op once registered) and via `engram register` / `engram register --scan`. Identity = git remote (read from .git/config, FILE READ, no subprocess) preferred, else $HOME-RELATIVE path. RE-KEY the entry when a repo later gains or changes a remote. save walks the manifest and prunes entries whose .engram no longer exists.
+
+RESTORE is AGENT-DRIVEN (inject SURFACES, the agent APPLIES -- inject never auto-heals; see [[engram-architecture-invariants]]), two phases:
+- Eager (engram restore <tgz>): apply GLOBAL now (only if target empty), unpack each project snapshot into the stage + register a pending entry in the manifest. Projects are NOT placed yet.
+- On contact: inject SURFACES staged projects + flags a current-repo identity match (read-only, no mutation). The agent then runs `engram restore --apply <id>` -- the explicit verb that places .engram into THIS root and clears the pending entry. inject itself applies nothing.
+
+CONFLICTS = RE-ID, never silent overwrite or forced discard (the download "foo (1)" model):
+- empty target -> apply + clear pending. EMPTY = no curated memories/tools, NOT no-DB-file.
+- populated target -> re-id to a new stage slot, keep it parked.
+
+NEAR-MISS matching = the AGENTs job; engram stays deterministic. Engram surfaces pending entries; the agent notices basename similarity and prompts user. `engram restore --apply <id>` from INSIDE the project re-keys identity to the current one.
+
+STAGE: $HOME/.engram/project-stage/ (machine-local). INCLUDED in save so pending snapshots propagate across hops (A->B->C). Self-clearing on apply.
+
+RESTORING INTO AN EXISTING DB: EMPTY = no curated memories/tools (not no-DB-file). Fresh clone that already has a DB from session events = treat as empty, apply. Genuine prior curated state = conflict, re-id.
+
+FORMAT: tgz = meta.json (engram version, save host+date, project list) + global/ snapshot + projects/<n>/ snapshots + project-stage/.
+
+PHASE PLAN: ALL 5 PHASES SHIPPED. v0.6.0: phases 1-5 (manifest, save, restore, apply, agentinfo). v0.6.1: engram register + inject self-registration. v0.6.2: engram register --scan. v0.6.3: engram register --list. v0.6.4: engram tool promote --as.
+
 ## engram-architecture-invariants
 ENGRAM ARCHITECTURE INVARIANTS (hold these; established 2026-06-05). Engram is a TOOL FOR THE AGENT, not an autonomous actor.
 
@@ -123,4 +126,10 @@ ENGRAM ARCHITECTURE INVARIANTS (hold these; established 2026-06-05). Engram is a
 5. ALLOWLIST POLICY: bootstrap pre-approves ONLY the routine, high-frequency curation verbs the agent drives -- Bash(engram mem:*) and Bash(engram tool:*) (cmd/engram/bootstrap.go engramAllowlist). Frictionless is for what you do constantly. Infrequent, heavy verbs (save, restore) are PRESENT but deliberately NOT allowlisted -- a permission prompt on a rare, consequential op is appropriate, not friction to remove (restore especially). Config-mutating or destructive verbs (bootstrap, uninstall, migrate, prune) stay human-gated. Hooks (record/inject/status) run via the harness and need no allowlisting.
 
 Corollary in the dump/restore design: inject SURFACES a staged project that matches the current repo; the agent then runs `engram restore --apply <id>` explicitly (and accepts the prompt). inject does NOT auto-heal. Same shape as agenttools: engram surfaces candidates annotated by age, the agent judges promotion. Related: [[dump-restore-all-design]], [[engram-design-portability]].
+
+## dev-tooling-as-staged-tools
+For engram dev tooling (build/vet/test gates, repo helpers), prefer a staged engram tool-candidate over a Makefile or ad-hoc script. Write the script with engram-desc/engram-usage headers, stage via `engram tool stage <name>` (body on stdin) into .engram/toolcandidates/, run it to prove it, and DECIDE graduation later (`engram tool promote`) once it has earned its keep. Rationale (Chris, 2026-06-05): dogfood the v0.5.0 staged-candidate catalog instead of decreeing convention up front with a committed Makefile. First instance: check-go.sh (go build+vet+test pre-commit gate) -- GRADUATED to global ($HOME/.engram/agenttools/check-go.sh) 2026-06-05.
+
+## fork-same-machine
+DECISION (2026-06-05): same-machine fork problem (two clones, same git remote, manifest collision) is explicitly DEFERRED with no plan to fix. Rationale: engram naturally pushes users toward a single working copy because memories persist there. The fork case is rare enough that a user complaint is better signal than preemptive complexity. If it surfaces, revisit; until then, last-registered-wins is acceptable behavior.
 
