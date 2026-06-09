@@ -309,6 +309,11 @@ func addEngramHooks(path string, exe string) error {
 	hooks["SessionStart"] = append(
 		asSlice(hooks["SessionStart"]),
 		map[string]any{
+			// Explicit matcher (vs. omitting it) so the hook unambiguously fires on
+			// "compact" -- re-injecting memory/personality after compaction, the
+			// case most prone to silently losing context. The other sources are
+			// listed to preserve matcher-less behavior (fire on every source).
+			"matcher": "startup|resume|clear|compact",
 			"hooks": []any{map[string]any{
 				"type":    "command",
 				"command": exe + " inject",
