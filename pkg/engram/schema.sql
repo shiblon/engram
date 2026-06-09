@@ -76,6 +76,11 @@ END;
 -- (git remote, else $HOME-relative path); path is where the .engram lives on
 -- this machine ($HOME-relative, absolute if outside $HOME). The table exists in
 -- every DB for schema uniformity but stays empty in project DBs.
+--
+-- The key is (identity, path), NOT identity alone: a single repo can have
+-- several working copies on one machine (separate clones or git worktrees on
+-- parallel branches), all sharing one identity but living at different paths.
+-- Each gets its own row so none silently evicts the others from the manifest.
 CREATE TABLE IF NOT EXISTS projects (
     id         INTEGER PRIMARY KEY,
     identity   TEXT    NOT NULL,
@@ -84,4 +89,4 @@ CREATE TABLE IF NOT EXISTS projects (
     status     TEXT    NOT NULL DEFAULT 'live'
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_identity ON projects (identity);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_identity_path ON projects (identity, path);

@@ -155,13 +155,18 @@ func TestRegisterProject(t *testing.T) {
 		}
 	})
 
-	t.Run("moved_path_under_stable_identity", func(t *testing.T) {
+	t.Run("multiple_copies_share_identity", func(t *testing.T) {
+		// Two working copies of one repo (same remote, different paths) -- e.g.
+		// parallel branches in separate clones/worktrees -- must each get a row,
+		// keyed by (identity, path), so neither evicts the other.
 		db := testDB(t)
-		shared := "git@github.com:me/moved.git"
+		shared := "git@github.com:me/parallel.git"
 		rootA := filepath.Join(home, "code", "loc-a")
 		rootB := filepath.Join(home, "code", "loc-b")
 		for _, r := range []string{rootA, rootB} {
-			if err := os.MkdirAll(r, 0o755); err != nil {
+			// Both copies are live on disk (each has its own .engram), so the
+			// second registration is a genuine copy, not a move.
+			if err := os.MkdirAll(filepath.Join(r, ".engram"), 0o755); err != nil {
 				t.Fatal(err)
 			}
 			writeGitRemote(t, r, [][2]string{{"origin", shared}})
@@ -172,15 +177,74 @@ func TestRegisterProject(t *testing.T) {
 		if err := RegisterProject(ctx, db, rootB); err != nil {
 			t.Fatal(err)
 		}
-		if n := countProjects(t, db); n != 1 {
-			t.Fatalf("project count = %d, want 1 (same identity)", n)
+		if n := countProjects(t, db); n != 2 {
+			t.Fatalf("project count = %d, want 2 (one row per copy)", n)
 		}
-		var path string
-		if err := db.QueryRow(`SELECT path FROM projects`).Scan(&path); err != nil {
+		// Re-registering an existing copy is idempotent: no third row.
+		if err := RegisterProject(ctx, db, rootA); err != nil {
 			t.Fatal(err)
 		}
-		if path != filepath.Join("code", "loc-b") {
-			t.Errorf("path = %q, want refreshed to latest location", path)
+		if n := countProjects(t, db); n != 2 {
+			t.Fatalf("project count after re-register = %d, want 2 (idempotent)", n)
+		}
+		paths := map[string]bool{}
+		rows, err := db.Query(`SELECT path FROM projects WHERE identity = ?`, shared)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var p string
+			if err := rows.Scan(&p); err != nil {
+				t.Fatal(err)
+			}
+			paths[p] = true
+		}
+		if !paths[filepath.Join("code", "loc-a")] || !paths[filepath.Join("code", "loc-b")] {
+			t.Errorf("paths = %v, want both loc-a and loc-b", paths)
+		}
+	})
+
+	t.Run("moved_repo_relocates_row", func(t *testing.T) {
+		// A single checkout that moves on disk (old .engram gone) relocates its
+		// row in place rather than leaving a stale one for prune to reap.
+		db := testDB(t)
+		shared := "git@github.com:me/moved.git"
+		oldRoot := filepath.Join(home, "old", "proj")
+		newRoot := filepath.Join(home, "new", "proj")
+
+		if err := os.MkdirAll(filepath.Join(oldRoot, ".engram"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeGitRemote(t, oldRoot, [][2]string{{"origin", shared}})
+		if err := RegisterProject(ctx, db, oldRoot); err != nil {
+			t.Fatal(err)
+		}
+		if n := countProjects(t, db); n != 1 {
+			t.Fatalf("project count after first register = %d, want 1", n)
+		}
+
+		// Simulate the move: the old location is gone, the new one is live.
+		if err := os.RemoveAll(oldRoot); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(newRoot, ".engram"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeGitRemote(t, newRoot, [][2]string{{"origin", shared}})
+		if err := RegisterProject(ctx, db, newRoot); err != nil {
+			t.Fatal(err)
+		}
+
+		if n := countProjects(t, db); n != 1 {
+			t.Fatalf("project count after move = %d, want 1 (relocated, not duplicated)", n)
+		}
+		var path string
+		if err := db.QueryRow(`SELECT path FROM projects WHERE identity = ?`, shared).Scan(&path); err != nil {
+			t.Fatal(err)
+		}
+		if path != filepath.Join("new", "proj") {
+			t.Errorf("path = %q, want relocated to new/proj", path)
 		}
 	})
 }

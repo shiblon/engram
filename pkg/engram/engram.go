@@ -804,7 +804,7 @@ func InjectContextText(global, project InjectResult, nSessions int) string {
 	if len(global.PendingRestores) > 0 {
 		lines := make([]string, len(global.PendingRestores))
 		for i, p := range global.PendingRestores {
-			line := fmt.Sprintf("- identity: %s | original: %s | stage: %s", p.Identity, p.OriginalPath, p.StagePath)
+			line := fmt.Sprintf("- identity: %s | slot: %s | original: %s | stage: %s", p.Identity, p.Slot, p.OriginalPath, p.StagePath)
 			if p.MatchesCurrent {
 				line += " [MATCHES CURRENT REPO -- consider: engram restore --apply " + p.Identity + "]"
 			}

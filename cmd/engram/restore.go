@@ -12,6 +12,8 @@ import (
 var restoreApply string
 var restoreDiscard string
 var restoreStatus bool
+var restoreFrom string
+var restoreSlot string
 
 var restoreCmd = &cobra.Command{
 	Use:   "restore [file]",
@@ -26,13 +28,18 @@ pending staged projects.
   engram restore --status
       List all pending staged projects.
 
-  engram restore --apply <identity>
+  engram restore --apply <identity> [--slot <name> | --from <path>]
       Place the staged snapshot matching <identity> into the current working
       tree. Runs from inside the project directory. If the target already has
       curated memories the snapshot is re-staged under a new slot name.
 
-  engram restore --discard <identity>
-      Drop a staged snapshot without applying it.`,
+      A repo can have several saved copies (separate clones or worktrees) under
+      one identity. When it does, --apply lists them and exits; pick one with
+      --slot <name> (the slot from --status) or --from <original-path>.
+
+  engram restore --discard <identity> [--slot <name> | --from <path>]
+      Drop a staged snapshot without applying it. Same disambiguation as
+      --apply when an identity has several staged copies.`,
 	RunE: runRestore,
 }
 
@@ -55,8 +62,8 @@ func runRestore(_ *cobra.Command, args []string) error {
 			return nil
 		}
 		for _, p := range pending {
-			fmt.Fprintf(os.Stderr, "  identity: %s\n  original: %s\n  stage:    %s\n\n",
-				p.Identity, p.OriginalPath, p.StagePath)
+			fmt.Fprintf(os.Stderr, "  identity: %s\n  slot:     %s\n  original: %s\n  stage:    %s\n\n",
+				p.Identity, p.Slot, p.OriginalPath, p.StagePath)
 		}
 		return nil
 	}
@@ -68,7 +75,8 @@ func runRestore(_ *cobra.Command, args []string) error {
 			return err
 		}
 		defer gdb.Close()
-		if err := engram.DiscardRestore(ctx, gdb, restoreDiscard); err != nil {
+		sel := engram.RestoreSelector{Slot: restoreSlot, OriginalPath: restoreFrom}
+		if err := engram.DiscardRestore(ctx, gdb, restoreDiscard, sel); err != nil {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "discarded: %s\n", restoreDiscard)
@@ -86,7 +94,8 @@ func runRestore(_ *cobra.Command, args []string) error {
 			return err
 		}
 		defer gdb.Close()
-		result, err := engram.ApplyRestore(ctx, gdb, restoreApply, root)
+		sel := engram.RestoreSelector{Slot: restoreSlot, OriginalPath: restoreFrom}
+		result, err := engram.ApplyRestore(ctx, gdb, restoreApply, sel, root)
 		if err != nil {
 			return err
 		}
@@ -131,5 +140,7 @@ func init() {
 	restoreCmd.Flags().StringVar(&restoreApply, "apply", "", "place the staged snapshot with this identity into the current project")
 	restoreCmd.Flags().StringVar(&restoreDiscard, "discard", "", "drop the staged snapshot with this identity")
 	restoreCmd.Flags().BoolVar(&restoreStatus, "status", false, "list all pending staged projects")
+	restoreCmd.Flags().StringVar(&restoreSlot, "slot", "", "when an identity has several staged copies, the slot name to apply/discard")
+	restoreCmd.Flags().StringVar(&restoreFrom, "from", "", "when an identity has several staged copies, select by original source path")
 	rootCmd.AddCommand(restoreCmd)
 }

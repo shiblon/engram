@@ -8,21 +8,37 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
-// PendingRestore describes a staged project snapshot awaiting placement.
+// PendingRestore describes a staged project snapshot awaiting placement. When a
+// repo has several saved working copies they share an Identity but differ in
+// Slot (their unique stage-slot name) and OriginalPath -- the two handles a
+// caller uses to choose which copy to apply.
 type PendingRestore struct {
 	Identity       string // cross-machine key (git remote or $HOME-rel path)
+	Slot           string // unique stage-slot name; disambiguates copies of one identity
 	OriginalPath   string // where it lived on the source machine
 	StagePath      string // local stage slot path ($HOME-relative)
+	LastSeen       int64  // unix millis, for recency ordering
 	MatchesCurrent bool   // true when identity matches the current repo's identity
 }
+
+// RestoreSelector picks one staged copy when an identity has several. Either
+// field (or neither, when the identity is unambiguous) may be set; Slot is the
+// exact stage-slot name, OriginalPath the copy's path on the source machine.
+type RestoreSelector struct {
+	Slot         string
+	OriginalPath string
+}
+
+func (s RestoreSelector) empty() bool { return s.Slot == "" && s.OriginalPath == "" }
 
 // ListPendingRestores returns all pending restore entries from the global manifest.
 func ListPendingRestores(ctx context.Context, globalDB *sql.DB) ([]PendingRestore, error) {
 	rows, err := globalDB.QueryContext(ctx,
-		`SELECT identity, path FROM projects WHERE status = 'pending' ORDER BY last_seen DESC`)
+		`SELECT identity, path, last_seen FROM projects WHERE status = 'pending' ORDER BY last_seen DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("list pending: %w", err)
 	}
@@ -33,13 +49,14 @@ func ListPendingRestores(ctx context.Context, globalDB *sql.DB) ([]PendingRestor
 	for rows.Next() {
 		var p PendingRestore
 		var stagePath string
-		if err := rows.Scan(&p.Identity, &stagePath); err != nil {
+		if err := rows.Scan(&p.Identity, &stagePath, &p.LastSeen); err != nil {
 			return nil, err
 		}
 		// The stage path in the manifest is $HOME-relative; resolve to absolute
 		// so we can read the project.json sidecar for the original path.
 		absStage := absProjectRoot(stagePath, home)
 		p.StagePath = stagePath
+		p.Slot = filepath.Base(stagePath)
 
 		// Read original path from the sidecar if present.
 		if data, err := os.ReadFile(filepath.Join(absStage, "project.json")); err == nil {
@@ -53,6 +70,47 @@ func ListPendingRestores(ctx context.Context, globalDB *sql.DB) ([]PendingRestor
 	return out, rows.Err()
 }
 
+// resolvePending finds the single pending stage path for identity, narrowed by
+// sel. It returns a descriptive error when nothing matches, or when the identity
+// has multiple copies and sel does not single one out -- the error lists the
+// candidates (slot + original path) so the caller can re-issue with a selector.
+func resolvePending(ctx context.Context, globalDB *sql.DB, identity string, sel RestoreSelector) (stagePath string, err error) {
+	all, err := ListPendingRestores(ctx, globalDB)
+	if err != nil {
+		return "", err
+	}
+	var matches []PendingRestore
+	for _, p := range all {
+		if p.Identity != identity {
+			continue
+		}
+		if sel.Slot != "" && p.Slot != sel.Slot {
+			continue
+		}
+		if sel.OriginalPath != "" && p.OriginalPath != sel.OriginalPath {
+			continue
+		}
+		matches = append(matches, p)
+	}
+
+	switch len(matches) {
+	case 0:
+		if sel.empty() {
+			return "", fmt.Errorf("apply: no pending entry for identity %q", identity)
+		}
+		return "", fmt.Errorf("apply: no pending entry for identity %q matching the given selector", identity)
+	case 1:
+		return matches[0].StagePath, nil
+	default:
+		var b strings.Builder
+		fmt.Fprintf(&b, "apply: identity %q has %d staged copies; select one with --slot or --from:", identity, len(matches))
+		for _, m := range matches {
+			fmt.Fprintf(&b, "\n  --slot %s   (--from %s)", m.Slot, m.OriginalPath)
+		}
+		return "", fmt.Errorf("%s", b.String())
+	}
+}
+
 // ApplyRestore places the staged project snapshot identified by identity into
 // root (the target working tree).
 //
@@ -64,22 +122,16 @@ func ListPendingRestores(ctx context.Context, globalDB *sql.DB) ([]PendingRestor
 // ApplyResult.Conflicted.
 //
 // In both cases the staged slot directory on disk is cleaned up on success.
-func ApplyRestore(ctx context.Context, globalDB *sql.DB, identity, root string) (ApplyResult, error) {
+func ApplyRestore(ctx context.Context, globalDB *sql.DB, identity string, sel RestoreSelector, root string) (ApplyResult, error) {
 	var res ApplyResult
 
 	home, _ := os.UserHomeDir()
 	stageDir := globalStageDir(home)
 
-	// Find the pending entry.
-	var stagePath string
-	err := globalDB.QueryRowContext(ctx,
-		`SELECT path FROM projects WHERE identity = ? AND status = 'pending'`,
-		identity).Scan(&stagePath)
-	if err == sql.ErrNoRows {
-		return res, fmt.Errorf("apply: no pending entry for identity %q", identity)
-	}
+	// Find the pending entry, narrowed by sel when the identity has several copies.
+	stagePath, err := resolvePending(ctx, globalDB, identity, sel)
 	if err != nil {
-		return res, fmt.Errorf("apply: look up pending entry: %w", err)
+		return res, err
 	}
 	absStage := absProjectRoot(stagePath, home)
 	stagedMemDB := filepath.Join(absStage, "mem.db")
@@ -115,8 +167,8 @@ func ApplyRestore(ctx context.Context, globalDB *sql.DB, identity, root string) 
 		}
 		newPath := homeRelPath(newSlot)
 		_, err := globalDB.ExecContext(ctx,
-			`UPDATE projects SET path = ?, last_seen = ? WHERE identity = ?`,
-			newPath, time.Now().UnixMilli(), identity)
+			`UPDATE projects SET path = ?, last_seen = ? WHERE identity = ? AND path = ?`,
+			newPath, time.Now().UnixMilli(), identity, stagePath)
 		if err != nil {
 			return res, fmt.Errorf("apply: update re-id path: %w", err)
 		}
@@ -152,8 +204,8 @@ func ApplyRestore(ctx context.Context, globalDB *sql.DB, identity, root string) 
 	livePath := homeRelPath(absRoot)
 	_, err = globalDB.ExecContext(ctx,
 		`UPDATE projects SET identity = ?, path = ?, last_seen = ?, status = 'live'
-		 WHERE identity = ?`,
-		liveIdentity, livePath, time.Now().UnixMilli(), identity)
+		 WHERE identity = ? AND path = ?`,
+		liveIdentity, livePath, time.Now().UnixMilli(), identity, stagePath)
 	if err != nil {
 		return res, fmt.Errorf("apply: update manifest: %w", err)
 	}
@@ -175,19 +227,19 @@ type ApplyResult struct {
 }
 
 // DiscardRestore removes the staged snapshot for identity and deletes its
-// manifest row. It is a no-op (no error) when no pending entry exists.
-func DiscardRestore(ctx context.Context, globalDB *sql.DB, identity string) error {
+// manifest row, narrowed by sel when the identity has several staged copies. It
+// is a no-op (no error) when no pending entry matches; it errors (listing the
+// candidates) when sel fails to single one out among multiple.
+func DiscardRestore(ctx context.Context, globalDB *sql.DB, identity string, sel RestoreSelector) error {
 	home, _ := os.UserHomeDir()
 
-	var stagePath string
-	err := globalDB.QueryRowContext(ctx,
-		`SELECT path FROM projects WHERE identity = ? AND status = 'pending'`,
-		identity).Scan(&stagePath)
-	if err == sql.ErrNoRows {
-		return nil
-	}
+	stagePath, err := resolvePending(ctx, globalDB, identity, sel)
 	if err != nil {
-		return fmt.Errorf("discard: look up entry: %w", err)
+		// No match at all is a no-op; ambiguity (and other errors) propagate.
+		if sel.empty() && strings.Contains(err.Error(), "no pending entry") {
+			return nil
+		}
+		return err
 	}
 
 	absStage := absProjectRoot(stagePath, home)
@@ -196,7 +248,7 @@ func DiscardRestore(ctx context.Context, globalDB *sql.DB, identity string) erro
 	}
 
 	_, err = globalDB.ExecContext(ctx,
-		`DELETE FROM projects WHERE identity = ? AND status = 'pending'`, identity)
+		`DELETE FROM projects WHERE identity = ? AND path = ? AND status = 'pending'`, identity, stagePath)
 	return err
 }
 

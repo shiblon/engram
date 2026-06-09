@@ -172,8 +172,7 @@ func runInject(cmd *cobra.Command, _ []string) error {
 			// Register the current project if it isn't already in the manifest.
 			// One-time write per project; becomes a no-op once registered.
 			if root, err := engram.FindProjectRoot(cwd); err == nil {
-				identity := engram.ProjectIdentity(root)
-				if !engram.IsProjectRegistered(ctx, gdb, identity) {
+				if !engram.IsProjectRegistered(ctx, gdb, root) {
 					if err := engram.RegisterProject(ctx, gdb, root); err != nil {
 						log.Printf("engram: inject register %s: %v", root, err)
 					}

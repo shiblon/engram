@@ -223,8 +223,7 @@ func manifestEntries(ctx context.Context, globalDB *sql.DB) ([]manifestEntry, in
 	}
 	defer rows.Close()
 
-	var live []manifestEntry
-	var dead []string
+	var live, dead []manifestEntry
 	for rows.Next() {
 		var e manifestEntry
 		if err := rows.Scan(&e.identity, &e.path); err != nil {
@@ -232,7 +231,7 @@ func manifestEntries(ctx context.Context, globalDB *sql.DB) ([]manifestEntry, in
 		}
 		absRoot := absProjectRoot(e.path, home)
 		if _, err := os.Stat(filepath.Join(absRoot, ".engram")); os.IsNotExist(err) {
-			dead = append(dead, e.identity)
+			dead = append(dead, e)
 		} else {
 			live = append(live, e)
 		}
@@ -241,10 +240,12 @@ func manifestEntries(ctx context.Context, globalDB *sql.DB) ([]manifestEntry, in
 		return nil, 0, err
 	}
 
-	for _, id := range dead {
+	// Prune by (identity, path): a repo may have several copies sharing one
+	// identity, so deleting by identity alone would evict live siblings too.
+	for _, e := range dead {
 		if _, err := globalDB.ExecContext(ctx,
-			`DELETE FROM projects WHERE identity = ?`, id); err != nil {
-			log.Printf("engram: prune dead manifest entry %q: %v", id, err)
+			`DELETE FROM projects WHERE identity = ? AND path = ?`, e.identity, e.path); err != nil {
+			log.Printf("engram: prune dead manifest entry %q (%s): %v", e.identity, e.path, err)
 		}
 	}
 	return live, len(dead), nil

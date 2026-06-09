@@ -117,11 +117,17 @@ func remoteSubsection(line string) string {
 // It is the single write behind dump/restore enumeration: a one-time structural
 // footprint born with the project DB, never a per-command side effect.
 //
-// The write is idempotent and self-healing. When a row already exists for this
-// path under a stale identity -- the repo gained or changed a git remote since
-// it was first registered -- the entry is re-keyed in place. Otherwise it is
-// upserted on identity (the manifest key), refreshing path and last_seen so a
-// project that moved on disk under a stable identity stays correct.
+// The write is idempotent and self-healing, resolving three cases without any
+// human in the loop (it runs from DB-open and hooks):
+//   - Re-key: a row exists for this path under a stale identity (the repo gained
+//     or changed a git remote). The identity is updated in place.
+//   - Move: this (identity, path) is new and the identity has exactly one row
+//     whose .engram is gone from disk -- the project moved. That row is relocated
+//     rather than left stale. See relocateMovedProject for why a surviving old
+//     .engram (a genuine second copy) and multi-row identities are excluded.
+//   - Otherwise: upsert keyed by (identity, path), so a repo with several
+//     checkouts (clones / worktrees) keeps one row per copy instead of having a
+//     later copy overwrite an earlier one.
 //
 // Callers treat the error as advisory: manifest bookkeeping must never fail an
 // otherwise-successful DB open.
@@ -141,24 +147,84 @@ func RegisterProject(ctx context.Context, globalDB *sql.DB, root string) error {
 		return nil
 	}
 
-	// Upsert keyed by identity, refreshing the on-disk path if it moved.
+	// Move: relocate a single stale row for this identity instead of inserting.
+	if relocated, err := relocateMovedProject(ctx, globalDB, identity, path, now); err != nil {
+		return err
+	} else if relocated {
+		return nil
+	}
+
+	// Upsert keyed by (identity, path): one row per working copy.
 	if _, err := globalDB.ExecContext(ctx,
 		`INSERT INTO projects (identity, path, last_seen) VALUES (?, ?, ?)
-		 ON CONFLICT(identity) DO UPDATE SET path = excluded.path, last_seen = excluded.last_seen`,
+		 ON CONFLICT(identity, path) DO UPDATE SET last_seen = excluded.last_seen`,
 		identity, path, now); err != nil {
 		return fmt.Errorf("register project: %w", err)
 	}
 	return nil
 }
 
-// IsProjectRegistered reports whether a project is already recorded as live in
-// the global manifest. It is used by inject to skip the registration side-effect
-// for projects that are already known.
-func IsProjectRegistered(ctx context.Context, globalDB *sql.DB, identity string) bool {
+// relocateMovedProject handles RegisterProject's "the project moved on disk"
+// case. It reports true (and updates the row in place) only when newPath is not
+// yet recorded for identity AND the identity has exactly one existing row whose
+// .engram no longer exists -- the unambiguous signature of a move. Every other
+// shape reports false so the caller inserts a fresh row:
+//   - the identity already has this path (a re-register),
+//   - the lone existing row's .engram is still on disk (a genuine second copy),
+//   - the identity has several rows (can't tell which, if any, moved -- let the
+//     dead-row prune at save time reap stale ones).
+//
+// A stat error other than "not exist" (e.g. a permission issue) is treated as
+// "still present", the safe default: relocate only on a confirmed absence.
+func relocateMovedProject(ctx context.Context, globalDB *sql.DB, identity, newPath string, now int64) (bool, error) {
+	home, _ := os.UserHomeDir()
+
+	rows, err := globalDB.QueryContext(ctx, `SELECT path FROM projects WHERE identity = ?`, identity)
+	if err != nil {
+		return false, fmt.Errorf("register project (move check): %w", err)
+	}
+	var paths []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			rows.Close()
+			return false, err
+		}
+		paths = append(paths, p)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+
+	if len(paths) != 1 || paths[0] == newPath {
+		return false, nil // re-register, or ambiguous multi-row identity
+	}
+	oldAbs := absProjectRoot(paths[0], home)
+	if _, err := os.Stat(filepath.Join(oldAbs, ".engram")); !os.IsNotExist(err) {
+		return false, nil // old copy still present -> genuine second copy
+	}
+
+	if _, err := globalDB.ExecContext(ctx,
+		`UPDATE projects SET path = ?, last_seen = ? WHERE identity = ? AND path = ?`,
+		newPath, now, identity, paths[0]); err != nil {
+		return false, fmt.Errorf("register project (relocate): %w", err)
+	}
+	return true, nil
+}
+
+// IsProjectRegistered reports whether the working copy at root is already
+// recorded as live in the global manifest. It is used by inject to skip the
+// registration side-effect for copies that are already known.
+//
+// The check is keyed by (identity, path), not identity alone: a second checkout
+// of an already-registered repo is a distinct working copy that still needs its
+// own row, so it must not be treated as already registered.
+func IsProjectRegistered(ctx context.Context, globalDB *sql.DB, root string) bool {
 	var n int
 	_ = globalDB.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM projects WHERE identity = ? AND status = 'live'`,
-		identity).Scan(&n)
+		`SELECT COUNT(*) FROM projects WHERE identity = ? AND path = ? AND status = 'live'`,
+		ProjectIdentity(root), homeRelPath(root)).Scan(&n)
 	return n > 0
 }
 

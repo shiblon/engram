@@ -132,9 +132,20 @@ snapshots from a previous machine are waiting to be placed into working trees on
 this one. Engram reports them; YOU decide whether and where to apply them.
 
 Each entry shows: identity (the cross-machine key, usually a git remote URL),
-original path (where it lived on the source machine), stage path (where the
-snapshot sits locally now), and a [MATCHES CURRENT REPO] flag when the identity
-matches this working tree exactly.
+slot (a unique name that distinguishes copies sharing one identity), original
+path (where it lived on the source machine), stage path (where the snapshot sits
+locally now), and a [MATCHES CURRENT REPO] flag when the identity matches this
+working tree exactly.
+
+MULTIPLE COPIES OF ONE REPO: a single identity can have several staged copies --
+one repo checked out in parallel on different branches (separate clones or git
+worktrees), each saved with its own memory. They share an identity but differ in
+slot and original path. When you surface these to the user, do NOT just dump the
+rows: read each copy's staged mem.db and compose a short summary of how they
+differ (recent long-term keys, how much short-term/event activity, recency) so
+the user can tell "the feature-X checkout" from "the main checkout" and choose.
+The summary is yours to shape for the moment; engram only provides the raw
+materials, it does not hand you a canned description.
 
 Your responsibilities:
 
@@ -144,6 +155,11 @@ EXACT MATCH ([MATCHES CURRENT REPO] flag set):
   Run this from inside the project root. If the target already has curated
   memories, engram re-stages the snapshot under a new slot rather than
   overwriting -- it will report "conflict" and the user can decide later.
+  If the identity has SEVERAL staged copies, --apply lists them and stops
+  rather than guessing. Present your summary, let the user pick, then select
+  the chosen copy with --slot <name> (from --status) or --from <original-path>:
+    engram restore --apply <identity> --slot <name>
+    engram restore --apply <identity> --from <original-path>
 
 NEAR-MISS (no exact match, but a pending entry looks like this project):
   Engram is deterministic; it cannot guess. YOU notice when the basename of
@@ -157,6 +173,7 @@ UNRELATED entries: leave them alone. Do not apply or discard without asking.
 
 CHECK STATUS AT ANY TIME: engram restore --status
 DISCARD an unwanted entry: engram restore --discard <identity>
+  (add --slot or --from when the identity has several staged copies)
 
 Never apply or discard a staged restore without the user's explicit consent.
 Engram never auto-applies; that judgment is yours.

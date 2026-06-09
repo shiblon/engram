@@ -134,14 +134,20 @@ func Restore(ctx context.Context, r io.Reader) (RestoreResult, error) {
 
 	// Stage project snapshots. Process projects/<n>/ (live) first, then
 	// project-stage/<slug>/ carry-forwards (pending from source). Deduplicate
-	// by identity so a project appearing in both sections is staged once.
-	seen := map[string]bool{}
+	// by (identity, source path) so a copy appearing in both sections is staged
+	// once -- but distinct working copies of one repo (same identity, different
+	// source paths) are each staged, so the user can later choose which to apply.
+	// A struct key (not a delimiter-joined string) keeps this free of separator
+	// hazards if the dedup set ever moves out of memory into a store.
+	type copyKey struct{ identity, path string }
+	seen := map[copyKey]bool{}
 
 	stage := func(memData []byte, sp SaveProject) error {
-		if seen[sp.Identity] {
+		key := copyKey{sp.Identity, sp.Path}
+		if seen[key] {
 			return nil
 		}
-		seen[sp.Identity] = true
+		seen[key] = true
 
 		slug := uniqueStageSlug(stageDir, identitySlug(sp.Identity))
 		slotDir := filepath.Join(stageDir, slug)
@@ -160,11 +166,12 @@ func Restore(ctx context.Context, r io.Reader) (RestoreResult, error) {
 		if home != "" {
 			stagePath = homeRelPath(slotDir)
 		}
+		// Conflict target is (identity, path): each staged copy occupies its own
+		// unique stage slot, so distinct copies of one repo land in distinct rows.
 		_, err := globalDB.ExecContext(ctx,
 			`INSERT INTO projects (identity, path, last_seen, status)
 			 VALUES (?, ?, ?, 'pending')
-			 ON CONFLICT(identity) DO UPDATE SET
-			   path      = excluded.path,
+			 ON CONFLICT(identity, path) DO UPDATE SET
 			   last_seen = excluded.last_seen,
 			   status    = 'pending'`,
 			sp.Identity, stagePath, time.Now().UnixMilli())

@@ -56,8 +56,37 @@ func runRegister(_ *cobra.Command, _ []string) error {
 	if err := engram.RegisterProject(ctx, gdb, root); err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "registered: %s (%s)\n", root, engram.ProjectIdentity(root))
+	identity := engram.ProjectIdentity(root)
+	fmt.Fprintf(os.Stderr, "registered: %s (%s)\n", root, identity)
+	noteSiblingCopies(ctx, gdb, identity)
 	return nil
+}
+
+// noteSiblingCopies prints an informational note when the just-registered repo
+// shares its identity with other live working copies, so the user knows a
+// parallel copy (a separate clone or worktree) exists rather than assuming this
+// is the only checkout. Informational only -- registering a second copy is a
+// supported, non-error action, not something to gate behind a --force flag.
+func noteSiblingCopies(ctx context.Context, gdb *sql.DB, identity string) {
+	rows, err := gdb.QueryContext(ctx,
+		`SELECT path FROM projects WHERE identity = ? AND status = 'live' ORDER BY last_seen DESC`, identity)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	var paths []string
+	for rows.Next() {
+		var p string
+		if rows.Scan(&p) == nil {
+			paths = append(paths, p)
+		}
+	}
+	if len(paths) > 1 {
+		fmt.Fprintf(os.Stderr, "note: %q now has %d registered working copies:\n", identity, len(paths))
+		for _, p := range paths {
+			fmt.Fprintf(os.Stderr, "  %s\n", p)
+		}
+	}
 }
 
 // runRegisterScan walks scanRoot, finds every directory containing
