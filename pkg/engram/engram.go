@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -313,7 +314,11 @@ func openWithFallback(ctx context.Context, canonical, legacy string) (*sql.DB, e
 	}
 	gi := filepath.Join(dir, ".gitignore")
 	if _, err := os.Stat(gi); os.IsNotExist(err) {
-		_ = os.WriteFile(gi, []byte("*\n"), 0644)
+		if err := os.WriteFile(gi, []byte("*\n"), 0644); err != nil {
+			// Best-effort: without this the SQLite DB could be committed. Mirror
+			// apply.go's handling (log) rather than swallowing it entirely.
+			log.Printf("engram: write .gitignore for %s: %v", dir, err)
+		}
 	}
 	return Open(ctx, canonical)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -62,12 +63,18 @@ func mcpResourceInject(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.
 	}
 	defer db.Close()
 
-	projectResult, _ := engram.Inject(ctx, db, engram.DefaultInjectSessions)
+	projectResult, perr := engram.Inject(ctx, db, engram.DefaultInjectSessions)
+	if perr != nil {
+		log.Printf("engram: mcp inject project memory: %v", perr)
+	}
 
 	var globalResult engram.InjectResult
 	if engram.GlobalDBExists() {
 		if gdb, err := engram.OpenGlobalDB(ctx); err == nil {
-			globalResult, _ = engram.Inject(ctx, gdb, engram.DefaultInjectSessions)
+			globalResult, err = engram.Inject(ctx, gdb, engram.DefaultInjectSessions)
+			if err != nil {
+				log.Printf("engram: mcp inject global memory: %v", err)
+			}
 			gdb.Close()
 		}
 	}

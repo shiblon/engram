@@ -167,7 +167,10 @@ func runInject(cmd *cobra.Command, _ []string) error {
 	var globalResult engram.InjectResult
 	if engram.GlobalDBExists() {
 		if gdb, err := engram.OpenGlobalDB(ctx); err == nil {
-			globalResult, _ = engram.Inject(ctx, gdb, injectSessions)
+			globalResult, err = engram.Inject(ctx, gdb, injectSessions)
+			if err != nil {
+				log.Printf("engram: inject global memory: %v", err)
+			}
 			// Surface pending restores; mark any that match the current repo.
 			if pending, err := engram.ListPendingRestores(ctx, gdb); err == nil && len(pending) > 0 {
 				currentIdentity := engram.ProjectIdentity(cwd)
@@ -204,7 +207,10 @@ func runInject(cmd *cobra.Command, _ []string) error {
 		if engram.ProjectDBExists(root) || contextErr == nil {
 			if db, err := engram.OpenProjectDB(ctx, root); err == nil {
 				bootstrapped = loadContextFile(ctx, db, contextFile)
-				projectResult, _ = engram.Inject(ctx, db, injectSessions)
+				projectResult, err = engram.Inject(ctx, db, injectSessions)
+				if err != nil {
+					log.Printf("engram: inject project memory: %v", err)
+				}
 				if _, err := engram.Prune(ctx, db, injectKeep); err != nil {
 					fmt.Fprintf(os.Stderr, "engram prune: %v\n", err)
 				}

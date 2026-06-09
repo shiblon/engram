@@ -86,6 +86,12 @@ func gitRemoteURL(configPath string) (string, bool) {
 			fallback = url
 		}
 	}
+	if err := sc.Err(); err != nil {
+		// A read error mid-file could yield a partial/empty remote; identity is
+		// load-bearing for restore matching, so fall back to the path instead of
+		// trusting a truncated parse.
+		return "", false
+	}
 	if origin != "" {
 		return origin, true
 	}
