@@ -186,6 +186,7 @@ func uninstallSettings(global bool) error {
 
 var engramBlock = regexp.MustCompile(`(?s)<!-- engram:start -->.*?<!-- engram:end -->\n?`)
 var engramMdLine = regexp.MustCompile(`(?m)^@engram\.md\n?`)
+var engramInvariantsLine = regexp.MustCompile(`(?m)^@engram-invariants\.md\n?`)
 
 func uninstallClaudeMd() error {
 	home, err := os.UserHomeDir()
@@ -206,6 +207,7 @@ func uninstallClaudeMd() error {
 	content := string(data)
 	updated := engramBlock.ReplaceAllString(content, "")
 	updated = engramMdLine.ReplaceAllString(updated, "")
+	updated = engramInvariantsLine.ReplaceAllString(updated, "")
 
 	if updated == content {
 		fmt.Printf("skip (no engram content): %s\n", path)
@@ -216,11 +218,13 @@ func uninstallClaudeMd() error {
 		fmt.Printf("removed: engram reference from %s\n", path)
 	}
 
-	engramMd := filepath.Join(home, ".claude", "engram.md")
-	if err := os.Remove(engramMd); err == nil {
-		fmt.Printf("removed: %s\n", engramMd)
-	} else if !os.IsNotExist(err) {
-		return err
+	for _, name := range []string{"engram.md", "engram-invariants.md"} {
+		p := filepath.Join(home, ".claude", name)
+		if err := os.Remove(p); err == nil {
+			fmt.Printf("removed: %s\n", p)
+		} else if !os.IsNotExist(err) {
+			return err
+		}
 	}
 	return nil
 }

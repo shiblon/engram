@@ -120,6 +120,9 @@ func runBootstrapClaude(cmd *cobra.Command, _ []string) error {
 	if err := bootstrapEngramMd(); err != nil {
 		return err
 	}
+	if err := bootstrapInvariantsMd(ctx); err != nil {
+		return err
+	}
 	if err := bootstrapClaudeMd(); err != nil {
 		return err
 	}
@@ -150,6 +153,25 @@ func bootstrapEngramMd() error {
 	return nil
 }
 
+// bootstrapInvariantsMd renders the initial engram-invariants.md from the global
+// invariant tier (the file CLAUDE.md @-imports). It must run after
+// bootstrapEngramMd, since SyncInvariantFiles treats the presence of engram.md as
+// the signal that this platform is bootstrapped. On a fresh install with no
+// invariants yet it writes a placeholder; render-on-write fills it in later.
+func bootstrapInvariantsMd(ctx context.Context) error {
+	gdb, err := engram.OpenGlobalDB(ctx)
+	if err != nil {
+		return err
+	}
+	defer gdb.Close()
+	if err := engram.SyncInvariantFiles(ctx, gdb); err != nil {
+		return err
+	}
+	home, _ := os.UserHomeDir()
+	fmt.Printf("wrote: %s\n", filepath.Join(home, ".claude", "engram-invariants.md"))
+	return nil
+}
+
 func bootstrapClaudeMd() error {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -163,14 +185,24 @@ func bootstrapClaudeMd() error {
 	}
 	content := string(data)
 
-	if strings.Contains(content, "@engram.md") {
-		fmt.Printf("skip (already present): @engram.md in %s\n", path)
-		return nil
-	}
-
 	if strings.Contains(content, "<!-- engram:start -->") {
 		fmt.Printf("skip (has old marker-style engram section): %s\n", path)
 		fmt.Println("  Run 'engram uninstall' first to remove it, then re-run bootstrap.")
+		return nil
+	}
+
+	// Import both the static instructions (@engram.md) and the dynamic invariant
+	// tier (@engram-invariants.md). Each is added independently so an existing
+	// install that predates the invariants import still gains it on re-bootstrap.
+	var toAdd []string
+	for _, inc := range []string{"@engram.md", "@engram-invariants.md"} {
+		if strings.Contains(content, inc) {
+			fmt.Printf("skip (already present): %s in %s\n", inc, path)
+			continue
+		}
+		toAdd = append(toAdd, inc)
+	}
+	if len(toAdd) == 0 {
 		return nil
 	}
 
@@ -179,10 +211,12 @@ func bootstrapClaudeMd() error {
 		return err
 	}
 	defer f.Close()
-	if _, err := f.WriteString("\n@engram.md\n"); err != nil {
-		return err
+	for _, inc := range toAdd {
+		if _, err := f.WriteString("\n" + inc + "\n"); err != nil {
+			return err
+		}
+		fmt.Printf("wrote: %s in %s\n", inc, path)
 	}
-	fmt.Printf("wrote: @engram.md in %s\n", path)
 	return nil
 }
 

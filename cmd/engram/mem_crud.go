@@ -4,12 +4,31 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/shiblon/engram/pkg/engram"
 	"github.com/spf13/cobra"
 )
+
+// syncInvariantsIfTouched re-renders the per-platform invariant files when a
+// global invariant was just mutated -- the render-on-write half of the channel
+// strategy that keeps invariants on the authoritative always-loaded channel.
+// Best-effort: a sync failure must never fail the mem operation that triggered it.
+func syncInvariantsIfTouched(ctx context.Context, h *engram.DBHandle, tiers ...engram.Tier) {
+	if !memGlobal {
+		return
+	}
+	for _, t := range tiers {
+		if t == engram.TierInvariant {
+			if err := engram.SyncInvariantFiles(ctx, h.DB); err != nil {
+				fmt.Fprintf(os.Stderr, "engram: sync invariants: %v\n", err)
+			}
+			return
+		}
+	}
+}
 
 var memWriteCmd = &cobra.Command{
 	Use:   "write <key> <content>",
@@ -33,6 +52,7 @@ var memWriteCmd = &cobra.Command{
 		if err := engram.WriteMemory(ctx, h.DB, m); err != nil {
 			return err
 		}
+		syncInvariantsIfTouched(ctx, h, engram.Tier(memTier))
 		scope := "project"
 		if memGlobal {
 			scope = "global"
@@ -141,6 +161,7 @@ var memDeleteCmd = &cobra.Command{
 		}
 		defer h.DB.Close()
 
+		tier := engram.Tier(memTier)
 		if !cmd.Flag("tier").Changed {
 			matches, err := engram.FindMemoryByKey(ctx, h.DB, args[0])
 			if err != nil {
@@ -156,10 +177,14 @@ var memDeleteCmd = &cobra.Command{
 				}
 				return fmt.Errorf("ambiguous key")
 			}
-			return engram.DeleteMemory(ctx, h.DB, matches[0].Tier, args[0])
+			tier = matches[0].Tier
 		}
 
-		return engram.DeleteMemory(ctx, h.DB, engram.Tier(memTier), args[0])
+		if err := engram.DeleteMemory(ctx, h.DB, tier, args[0]); err != nil {
+			return err
+		}
+		syncInvariantsIfTouched(ctx, h, tier)
+		return nil
 	},
 }
 
@@ -213,6 +238,7 @@ Tiers: invariant, preference, long, short, cold`,
 			from, engram.Tier(moveTo)); err != nil {
 			return err
 		}
+		syncInvariantsIfTouched(ctx, h, from, engram.Tier(moveTo))
 		fmt.Printf("moved %q from %s to %s\n", args[0], from, moveTo)
 		return nil
 	},
