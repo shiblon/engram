@@ -140,10 +140,17 @@ func loadContextFile(ctx context.Context, db *sql.DB, contextFile string) int {
 	if err != nil {
 		return 0
 	}
+	// Count only memories that actually persisted; a swallowed write here would
+	// otherwise report context as loaded when it was lost (e.g. disk/corruption).
+	loaded := 0
 	for _, m := range memories {
-		_ = engram.WriteMemory(ctx, db, m)
+		if err := engram.WriteMemory(ctx, db, m); err != nil {
+			fmt.Fprintf(os.Stderr, "engram: load context/long.md %q: %v\n", m.Key, err)
+			continue
+		}
+		loaded++
 	}
-	return len(memories)
+	return loaded
 }
 
 func runInject(cmd *cobra.Command, _ []string) error {
