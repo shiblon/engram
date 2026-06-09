@@ -37,6 +37,17 @@ in other repos or projects without explicit user approval.
 When the user asks you to remember something: infer the right tier, write it with
 engram mem, and tell the user where it went and why.
 
+First, though, judge whether the preference is enforced by CONFIG or a HOOK rather
+than memory. Memory cannot override a harness or config-level default -- a pref
+stored only in engram gets silently beaten by it (the Co-Authored-By trailer was
+suppressed only by includeCoAuthoredBy:false, never by memory). If a settings.json
+flag, a hook, or managed policy enforces it, propose that change instead (use the
+update-config skill to find the current flag) and store only a memory POINTER to
+where it is enforced -- do not rely on memory alone. Categories that are usually
+config-not-memory: commit/PR attribution, git workflow gating, event-driven or
+"always do X" behaviors (hooks), verbosity, output style, theme, language, editor
+mode, and permissions.
+
 To decide global vs. project: ask "would this matter in a completely different
 project?" If yes, it's global. If it's specific to this codebase or team, it's
 project-level. Before writing or updating any global memory, always ask the user
