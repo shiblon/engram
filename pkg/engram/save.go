@@ -32,8 +32,9 @@ type SaveProject struct {
 
 // SaveResult summarises what was written.
 type SaveResult struct {
-	ProjectCount    int
+	ProjectCount    int      // projects actually snapshotted into the archive
 	PrunedCount     int
+	Skipped         []string // projects dropped from the archive (open/vacuum failure), with reason
 	ContextWarnings []string // non-empty when context/ exists but --include-context was false
 }
 
@@ -70,7 +71,6 @@ func Save(ctx context.Context, w io.Writer, opts SaveOptions) (SaveResult, error
 		return res, fmt.Errorf("save: read manifest: %w", err)
 	}
 	res.PrunedCount = pruned
-	res.ProjectCount = len(projects)
 
 	// Resolve well-known global paths.
 	globalDBPath, err := GlobalDBPath()
@@ -91,12 +91,9 @@ func Save(ctx context.Context, w io.Writer, opts SaveOptions) (SaveResult, error
 		SaveHost:      host,
 		SaveTime:      time.Now().UnixMilli(),
 	}
-	for _, p := range projects {
-		meta.Projects = append(meta.Projects, SaveProject{
-			Identity: p.identity,
-			Path:     p.path,
-		})
-	}
+	// meta.Projects is populated after the snapshot loop below, from the projects
+	// that actually made it into the archive -- so meta never lists a project the
+	// archive doesn't contain.
 
 	// All SQLite snapshots land in a temp dir; cleaned up after the tar is written.
 	tmpDir, err := os.MkdirTemp("", "engram-save-*")
@@ -124,12 +121,15 @@ func Save(ctx context.Context, w io.Writer, opts SaveOptions) (SaveResult, error
 
 		pdb, err := openRaw(ctx, dbPath)
 		if err != nil {
-			// If we can't open it (race, permissions), skip gracefully.
+			// Record the skip rather than dropping it silently: a backup that
+			// omits a project must say so, not report success.
+			res.Skipped = append(res.Skipped, fmt.Sprintf("%s (%s): open: %v", p.identity, p.path, err))
 			continue
 		}
 		vacErr := vacuumInto(ctx, pdb, snapPath)
 		pdb.Close()
 		if vacErr != nil {
+			res.Skipped = append(res.Skipped, fmt.Sprintf("%s (%s): snapshot: %v", p.identity, p.path, vacErr))
 			continue
 		}
 		snaps = append(snaps, projectSnap{entry: p, snapPath: snapPath})
@@ -142,6 +142,14 @@ func Save(ctx context.Context, w io.Writer, opts SaveOptions) (SaveResult, error
 					fmt.Sprintf("%s has context/ — use --include-context to bundle it", p.path))
 			}
 		}
+	}
+
+	// Count and describe only what actually made it into the archive, so
+	// ProjectCount never overstates and meta.Projects matches the projects/<n>/
+	// entries restore will read.
+	res.ProjectCount = len(snaps)
+	for _, ps := range snaps {
+		meta.Projects = append(meta.Projects, SaveProject{Identity: ps.entry.identity, Path: ps.entry.path})
 	}
 
 	// Write archive.

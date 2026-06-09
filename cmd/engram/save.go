@@ -75,6 +75,9 @@ func runSave(_ *cobra.Command, _ []string) error {
 	}
 	fmt.Fprintln(os.Stderr, ")")
 
+	for _, s := range result.Skipped {
+		fmt.Fprintf(os.Stderr, "warning: skipped (not in archive): %s\n", s)
+	}
 	for _, w := range result.ContextWarnings {
 		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
 	}
