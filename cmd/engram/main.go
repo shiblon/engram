@@ -120,10 +120,10 @@ var injectCmd = &cobra.Command{
 	RunE:  runInject,
 }
 
-// loadContextFile syncs contextFile into db's long-term memories if the file
+// importContextFile syncs contextFile into db's long-term memories if the file
 // is newer than the DB. Returns the number of memories loaded, or 0 if the
 // file is absent or already up to date.
-func loadContextFile(ctx context.Context, db *sql.DB, contextFile string) int {
+func importContextFile(ctx context.Context, db *sql.DB, contextFile string) int {
 	fi, err := os.Stat(contextFile)
 	if err != nil {
 		return 0
@@ -206,7 +206,7 @@ func runInject(cmd *cobra.Command, _ []string) error {
 		_, contextErr := os.Stat(contextFile)
 		if engram.ProjectDBExists(root) || contextErr == nil {
 			if db, err := engram.OpenProjectDB(ctx, root); err == nil {
-				bootstrapped = loadContextFile(ctx, db, contextFile)
+				bootstrapped = importContextFile(ctx, db, contextFile)
 				projectResult, err = engram.Inject(ctx, db, injectSessions)
 				if err != nil {
 					log.Printf("engram: inject project memory: %v", err)

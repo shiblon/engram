@@ -66,7 +66,7 @@ func Save(ctx context.Context, w io.Writer, opts SaveOptions) (SaveResult, error
 	defer globalDB.Close()
 
 	// Walk + prune manifest.
-	projects, pruned, err := manifestEntries(ctx, globalDB)
+	projects, pruned, err := readAndPruneManifest(ctx, globalDB)
 	if err != nil {
 		return res, fmt.Errorf("save: read manifest: %w", err)
 	}
@@ -218,10 +218,10 @@ type manifestEntry struct {
 	path     string // $HOME-relative or absolute
 }
 
-// manifestEntries reads all surviving projects from the global manifest,
+// readAndPruneManifest reads all surviving projects from the global manifest,
 // deletes rows whose .engram directory no longer exists, and returns the live
 // entries plus the count of pruned rows.
-func manifestEntries(ctx context.Context, globalDB *sql.DB) ([]manifestEntry, int, error) {
+func readAndPruneManifest(ctx context.Context, globalDB *sql.DB) ([]manifestEntry, int, error) {
 	home, _ := os.UserHomeDir()
 
 	rows, err := globalDB.QueryContext(ctx,

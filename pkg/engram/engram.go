@@ -757,8 +757,8 @@ type injectHookOutput struct {
 	AdditionalContext string `json:"additionalContext"`
 }
 
-// FormatInjectOutput formats the session-start hook output JSON.
-// InjectContextText formats global and project inject results as plain text.
+// InjectContextText formats global and project inject results as the plain-text
+// session context (the markdown body injected at session start).
 func InjectContextText(global, project InjectResult, nSessions int) string {
 	var parts []string
 
