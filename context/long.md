@@ -3,26 +3,30 @@
 # Long
 
 ## mcp-resource-architecture
-MCP v2 architecture (design settled; UNBUILT). For platforms supporting MCP context URIs: no CLAUDE.md or hooks needed, fully self-contained. Hook path remains for non-MCP platforms.
+MCP v2 architecture (design drafted; UNBUILT and DEPRIORITIZED -- read GATE first).
 
-STATELESS PER-CALL (load-bearing principle): every MCP tool takes cwd and resolves the project root dynamically via FindProjectRoot; the server NEVER caches project state. The multi-repo problem is not an MCP limitation -- it is a bad implementation pattern. A2A was REJECTED for engram: its statefulness serves long-running agent task lifecycle, not knowing which project you are in. MCP + stateless is the correct fit.
+GATE -- DO NOT BUILD YET (decided 2026-06-10 with Chris): MCP is NOT a priority until we have confirmed the engram CLI does NOT work for the target IDE plugins. TRIGGER QUESTION: can the agent in AntiGravity / Cursor / Copilot execute the engram binary (run `engram inject --text`, `engram mem ...`) via a shell/command surface? If YES -> no MCP server needed: those platforms drive the verbs through the CLI exactly like the hook CLIs do, and injection rides their native always-loaded instruction file (see INJECTION below). Only where the CLI is genuinely unavailable in a target does MCP earn its build. Verify per target BEFORE any MCP work; everything below is the deferred plan for that contingency.
 
-CONTEXT URIS (auto-included at session start by the client, read once):
-- engram://inject -- dynamic data: personality, memories, recent files
+WHY / TARGET CLASS: MCP, if ever built, serves the NON-HOOK platform class -- IDE/GUI plugins (AntiGravity, Cursor, Copilot) where CLI-style lifecycle hooks are not exposed. The hook CLIs (Claude Code, Codex, Gemini) already cover BOTH inject + record via hooks and need none of this.
+
+INJECTION DOES NOT NEED MCP (corrected 2026-06-10): MCP resources are APPLICATION-controlled -- the spec does NOT mandate the client auto-include a resource at session start; the reference UX is explicit user attachment. So "client auto-pulls engram://inject" is a per-client bet, NOT a protocol guarantee (verify per target -- e.g. if AntiGravity auto-includes resources, the URI becomes viable there). The one reliably auto-injected MCP channel is the server `instructions` field, but it is ADVISORY (staying-power, [[injected-memory-staying-power]]) and static-at-initialize. THEREFORE injection should ride each platform NATIVE always-loaded instruction file (.cursorrules / .cursor/rules/*.mdc, copilot-instructions.md, AntiGravity KI metadata): engram WRITES its rendered content there, the same lever as CLAUDE.md @-imports in [[personality-channel-strategy]]. That file is genuinely auto-loaded -- it is the CORRECT channel, not a degraded hack.
+
+RECORD: low-priority / per-host. Base MCP has no passive post-tool event and record must stay passive ([[engram-architecture-invariants]]); IDEs already have ambient file context (open tabs, recent files), so the breadcrumb matters LESS here than on a CLI. Per-host bonus, not a requirement.
+
+SESSION-START COAXING -- NON-GOAL: a tool description only matters if/when the agent decides to call it, so it cannot drive a startup ritual. The `instructions` field is the only description-only channel and it is advisory, not a deterministic trigger. Do not coax; rely on the native instruction file for injection.
+
+IF BUILT, the AGENT TOOL SURFACE is the actual (and possibly sole) MCP value -- inject, record, and coaxing all have non-MCP answers above:
+STATELESS PER-CALL (load-bearing): every MCP tool takes cwd and resolves the project root dynamically via FindProjectRoot; the server NEVER caches project state. The multi-repo problem is a bad implementation pattern, not an MCP limitation. A2A rejected (its statefulness serves long-running agent task lifecycle, not knowing which project you are in).
+MCP TOOLS (agent-invoked, stateless per-call, each takes cwd):
+- engram://mem -- write/read/list/search/delete
+- engram://tool -- stage/promote/discard/list
+- engram://restore -- apply/discard/status
+- engram://register -- one-time project registration in the manifest
+CONTEXT URIS (ONLY where a target client is confirmed to auto-include them):
+- engram://inject -- personality, memories, recent files
 - engram://agentinfo -- static agent instructions (same text as `engram agentinfo`)
 
-MCP TOOLS (agent-invoked, stateless per-call, each takes cwd):
-- engram://mem -- subcommand param: write/read/list/search/delete. Replaces 5 separate tools.
-- engram://tool -- subcommand param: stage/promote/discard/list. Agent manages tool catalog.
-- engram://restore -- subcommand param: apply/discard/status. Agent places staged project snapshots.
-- engram://register -- registers current project in manifest (one-time, replaces inject side-effect on MCP platforms).
-
-CLI-ONLY (human-driven, no MCP surface needed):
-- save / restore <file> -- run at terminal before/after moving machines
-- register --scan / --list -- bulk human operations
-- bootstrap / migrate / uninstall / agentinfo -- setup, maintenance, info
-
-SCOPE NOTE: MCP design was originally drafted covering only mem; tool + restore verbs added post-v0.6.0 and need MCP surfaces before build. Map all four tools above before implementing. Cursor is the first target: .cursorrules handles injection (per-project by definition), MCP server handles recording and mem+tool+restore operations. Related: [[engram-architecture-invariants]].
+SCOPE NOTE: design originally covered only mem; tool + restore verbs added post-v0.6.0 and need surfaces mapped before any build. Related: [[engram-architecture-invariants]], [[injected-memory-staying-power]], [[personality-channel-strategy]].
 
 ## personality-channel-strategy
 STANDING-MEMORY CHANNEL STRATEGY (Claude Code SHIPPED 2026-06-09; other platforms deferred). Implements the [[priority-ladder]] P1/P2 rungs on the authoritative always-loaded channel. Problem: injected memory has weak staying power, loses to harness defaults at point-of-action and is flattened at compaction ([[injected-memory-staying-power]]); soft/non-checkable content cannot be config/hook-enforced ([[enforce-checkable-prefs-via-hooks]]), so the only lever is CHANNEL -- ride the platform authoritative always-loaded instruction file.
