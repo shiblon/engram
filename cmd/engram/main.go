@@ -65,29 +65,28 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	var filePath string
-	switch {
-	case input.ToolName.Recordable():
-		absPath, err := filepath.Abs(input.ToolInput.FilePath)
-		if err != nil {
-			return nil
+	// Collect the file touches this tool use produced. Claude Code's
+	// Read/Edit/Write each report one path in tool_input.file_path; Codex's
+	// apply_patch names one or more paths inside the patch body (and may arrive
+	// as a shell heredoc), which PatchedFiles teases out. Anything else is not a
+	// file touch worth recording.
+	type fileEvent struct {
+		tool engram.Tool
+		path string
+	}
+	var events []fileEvent
+	if input.ToolName.Recordable() {
+		if rel, ok := recordableRel(root, input.CWD, input.FilePath()); ok {
+			events = append(events, fileEvent{input.ToolName, rel})
 		}
-		rel, err := engram.RelPath(root, absPath)
-		if err != nil {
-			return nil
+	} else {
+		for _, p := range engram.PatchedFiles(input.ToolInput) {
+			if rel, ok := recordableRel(root, input.CWD, p); ok {
+				events = append(events, fileEvent{engram.ToolApplyPatch, rel})
+			}
 		}
-		filePath = rel
-
-	case input.ToolName == engram.ToolBash:
-		if !engram.BashRecordable(input.ToolInput.Command) {
-			return nil
-		}
-		if !engram.BashSucceeded(input.Response) {
-			return nil
-		}
-		filePath = engram.NormalizeBashCommand(input.ToolInput.Command)
-
-	default:
+	}
+	if len(events) == 0 {
 		return nil
 	}
 
@@ -98,12 +97,34 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 	}
 	defer db.Close()
 
-	return engram.Record(ctx, db, engram.Event{
-		SessionID: input.SessionID,
-		Tool:      input.ToolName,
-		FilePath:  filePath,
-		Snippet:   engram.MakeSnippet(input.ToolName, input.Response),
-	})
+	for _, e := range events {
+		if err := engram.Record(ctx, db, engram.Event{
+			SessionID: input.SessionID,
+			Tool:      e.tool,
+			FilePath:  e.path,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// recordableRel resolves p -- absolute, or relative to cwd -- to a path relative
+// to the project root, reporting false if p is empty, unresolvable, or falls
+// outside the root.
+func recordableRel(root, cwd, p string) (string, bool) {
+	if p == "" {
+		return "", false
+	}
+	abs := p
+	if !filepath.IsAbs(abs) {
+		abs = filepath.Join(cwd, p)
+	}
+	rel, err := engram.RelPath(root, abs)
+	if err != nil {
+		return "", false
+	}
+	return rel, true
 }
 
 // inject

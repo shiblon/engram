@@ -20,11 +20,11 @@ var bootstrapCmd = &cobra.Command{
 
 Subcommands:
   claude       -- set up Claude Code hooks, CLAUDE.md, and global DB invariants
-  gemini       -- write ~/.gemini/GEMINI.md and SessionStart hook
+  codex        -- set up Codex CLI hooks (record/inject) plus AGENTS.md
+  gemini       -- set up Gemini CLI hooks (record/inject) plus GEMINI.md
   antigravity  -- write a Knowledge Item that instructs AntiGravity to call engram at session start
   copilot      -- write .github/copilot-instructions.md in the current project
   cursor       -- write .cursorrules in the current project
-  codex        -- write AGENTS.md in the current project (or ~/.codex/AGENTS.md with -g)
   initfile     -- append the engram protocol to any init file (generic escape hatch)`,
 }
 
@@ -466,11 +466,16 @@ func runBootstrapAntigravity(cmd *cobra.Command, _ []string) error {
 
 var bootstrapGeminiCmd = &cobra.Command{
 	Use:   "gemini",
-	Short: "Write ~/.gemini/GEMINI.md to call engram at session start",
-	Long: `Bootstrap Gemini CLI by appending the engram session protocol to
-~/.gemini/GEMINI.md (auto-loaded by Gemini CLI at session start).
+	Short: "Set up Gemini CLI hooks and GEMINI.md",
+	Long: `Bootstrap Gemini CLI for engram. Two pieces are installed in ~/.gemini:
 
-Safe to re-run: skips if the engram section is already present.`,
+  - settings.json: a SessionStart hook that runs "engram inject" (loading memory
+    into the session) and an AfterTool hook on read_file/write_file/replace that
+    runs "engram record" (logging touched files). Gemini's hook protocol matches
+    Claude Code's, so record/inject work unchanged.
+  - GEMINI.md: the human-readable engram session protocol, as a fallback.
+
+Safe to re-run: skips pieces that are already present.`,
 	RunE: runBootstrapGemini,
 }
 
@@ -497,22 +502,27 @@ func runBootstrapGemini(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	if err := bootstrapGeminiMd(); err != nil {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	ok, err := bootstrapAppendToFile(filepath.Join(home, ".gemini", "GEMINI.md"), engramProtocolSection)
+	if err != nil {
+		return err
+	}
+	countWroteSkipped(ok, &wrote, &skipped)
+
+	if err := bootstrapGeminiHooks(filepath.Join(home, ".gemini", "settings.json"), exe); err != nil {
 		return err
 	}
 
 	printBootstrapSummary(wrote, skipped)
 	return nil
-}
-
-func bootstrapGeminiMd() error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-	path := filepath.Join(home, ".gemini", "GEMINI.md")
-	_, err = bootstrapAppendToFile(path, engramProtocolSection)
-	return err
 }
 
 // bootstrap copilot
@@ -673,13 +683,21 @@ var bootstrapCodexGlobal bool
 
 var bootstrapCodexCmd = &cobra.Command{
 	Use:   "codex",
-	Short: "Write AGENTS.md to call engram at session start",
-	Long: `Bootstrap OpenAI Codex CLI by appending the engram session protocol to
-AGENTS.md in the current project root.
+	Short: "Set up Codex CLI hooks and AGENTS.md",
+	Long: `Bootstrap OpenAI Codex CLI for engram. Two pieces are installed:
 
-Use -g to write to ~/.codex/AGENTS.md instead (global, applies to all projects).
+  - hooks.json: a SessionStart hook that runs "engram inject" (loading memory
+    into the session) and a PostToolUse hook on apply_patch that runs
+    "engram record" (logging touched files). Codex's hook protocol matches
+    Claude Code's, so record/inject work unchanged.
+  - AGENTS.md: the human-readable engram session protocol, as a fallback.
 
-Safe to re-run: skips if the engram section is already present.`,
+By default both go in the project (.codex/hooks.json and ./AGENTS.md). Use -g to
+write to ~/.codex instead (global, applies to all projects). Codex only honors
+project-local .codex/ config in trusted projects, so prefer -g on machines where
+you have not trusted the project.
+
+Safe to re-run: skips pieces that are already present.`,
 	RunE: runBootstrapCodex,
 }
 
@@ -691,33 +709,138 @@ func runBootstrapCodex(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	var path string
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+
+	// Resolve where AGENTS.md and the Codex hooks.json live. AGENTS.md sits at
+	// the project root (or ~/.codex with -g); hooks always live under a .codex
+	// dir (the project's, or the home one).
+	var agentsPath, hooksPath string
 	if bootstrapCodexGlobal {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return err
 		}
-		path = filepath.Join(home, ".codex", "AGENTS.md")
+		agentsPath = filepath.Join(home, ".codex", "AGENTS.md")
+		hooksPath = filepath.Join(home, ".codex", "hooks.json")
 	} else {
 		root, err := engram.FindProjectRoot(effectiveCWD())
 		if err != nil {
 			return fmt.Errorf("codex bootstrap requires a project root (or use -g for global): %w", err)
 		}
-		path = filepath.Join(root, "AGENTS.md")
+		agentsPath = filepath.Join(root, "AGENTS.md")
+		hooksPath = filepath.Join(root, ".codex", "hooks.json")
 	}
 
-	ok, err := bootstrapAppendToFile(path, engramProtocolSection)
+	ok, err := bootstrapAppendToFile(agentsPath, engramProtocolSection)
 	if err != nil {
 		return err
 	}
-	if ok {
-		wrote++
-	} else {
-		skipped++
+	countWroteSkipped(ok, &wrote, &skipped)
+
+	if err := bootstrapCodexHooks(hooksPath, exe); err != nil {
+		return err
 	}
 
 	printBootstrapSummary(wrote, skipped)
 	return nil
+}
+
+// hookSpec describes one engram hook to install: the settings event key, an
+// optional tool/lifecycle matcher (empty means fire on every occurrence of the
+// event), and the engram subcommand the handler runs.
+type hookSpec struct {
+	event      string
+	matcher    string
+	subcommand string
+}
+
+// installEngramHooks merges the given engram hooks into a hook-config JSON file
+// (a Codex/Gemini hooks.json or settings.json) without disturbing existing
+// hooks. It shares Claude Code's hook JSON shape, so the same record/inject
+// commands work; only event names and matchers vary per agent. Idempotent: a
+// spec whose command is already registered under its event is skipped, so
+// partial installs repair cleanly on re-run.
+func installEngramHooks(path, exe string, specs []hookSpec) error {
+	settings, err := readSettingsJSON(path)
+	if err != nil {
+		return err
+	}
+	hooks, _ := settings["hooks"].(map[string]any)
+	if hooks == nil {
+		hooks = map[string]any{}
+	}
+
+	changed := false
+	for _, s := range specs {
+		cmd := exe + " " + s.subcommand
+		if engramHookPresent(hooks, s.event, cmd) {
+			fmt.Printf("skip (present): %s %s hook in %s\n", s.event, s.subcommand, path)
+			continue
+		}
+		entry := map[string]any{
+			"hooks": []any{map[string]any{
+				"type":    "command",
+				"command": cmd,
+			}},
+		}
+		if s.matcher != "" {
+			entry["matcher"] = s.matcher
+		}
+		hooks[s.event] = append(asSlice(hooks[s.event]), entry)
+		fmt.Printf("wrote: %s %s hook in %s\n", s.event, s.subcommand, path)
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+
+	settings["hooks"] = hooks
+	return writeSettingsJSON(path, settings)
+}
+
+// engramHookPresent reports whether any handler under the given event already
+// runs a command containing cmd.
+func engramHookPresent(hooks map[string]any, event, cmd string) bool {
+	for _, group := range asSlice(hooks[event]) {
+		gm, ok := group.(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, h := range asSlice(gm["hooks"]) {
+			hm, ok := h.(map[string]any)
+			if !ok {
+				continue
+			}
+			if c, _ := hm["command"].(string); strings.Contains(c, cmd) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// bootstrapCodexHooks installs engram's SessionStart (inject) and PostToolUse
+// (record) hooks into a Codex hooks.json. The record matcher targets
+// apply_patch, Codex's file-edit tool.
+func bootstrapCodexHooks(path, exe string) error {
+	return installEngramHooks(path, exe, []hookSpec{
+		{event: "SessionStart", matcher: "startup|resume|clear|compact", subcommand: "inject"},
+		{event: "PostToolUse", matcher: "^apply_patch$", subcommand: "record"},
+	})
+}
+
+// bootstrapGeminiHooks installs engram's SessionStart (inject) and AfterTool
+// (record) hooks into a Gemini settings.json. Gemini names the post-tool event
+// AfterTool and its file tools read_file/write_file/replace; its SessionStart
+// matcher is an exact lifecycle string, so we omit it to fire on every source.
+func bootstrapGeminiHooks(path, exe string) error {
+	return installEngramHooks(path, exe, []hookSpec{
+		{event: "SessionStart", subcommand: "inject"},
+		{event: "AfterTool", matcher: "read_file|write_file|replace", subcommand: "record"},
+	})
 }
 
 func readSettingsJSON(path string) (map[string]any, error) {

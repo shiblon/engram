@@ -72,6 +72,104 @@ func TestSchemaMigrationFromZero(t *testing.T) {
 	}
 }
 
+// A v2 DB stored a snippet column plus an events_fts table and triggers over it.
+// Migrating to v3 must drop all of that, purge the old Bash "search" rows, and
+// preserve the file rows (ids included).
+func TestSchemaMigrationV2ToV3DropsSnippetAndSearches(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	// Recreate the v2 events shape: drop the slim v3 table and rebuild the old
+	// one with snippet, the external-content FTS, and its sync triggers; then
+	// stamp the DB back to version 2.
+	v2setup := []string{
+		`DROP TABLE events`,
+		`CREATE TABLE events (
+		    id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, ts INTEGER NOT NULL,
+		    tool TEXT NOT NULL, file_path TEXT NOT NULL, snippet TEXT NOT NULL DEFAULT '')`,
+		`CREATE INDEX idx_events_session ON events (session_id)`,
+		`CREATE INDEX idx_events_ts ON events (ts DESC)`,
+		`CREATE VIRTUAL TABLE events_fts USING fts5(file_path, snippet, content='events', content_rowid='id')`,
+		`CREATE TRIGGER events_ai AFTER INSERT ON events BEGIN
+		    INSERT INTO events_fts(rowid, file_path, snippet) VALUES (new.id, new.file_path, new.snippet);
+		 END`,
+		`CREATE TRIGGER events_ad AFTER DELETE ON events BEGIN
+		    INSERT INTO events_fts(events_fts, rowid, file_path, snippet) VALUES ('delete', old.id, old.file_path, old.snippet);
+		 END`,
+		`CREATE TRIGGER events_au AFTER UPDATE ON events BEGIN
+		    INSERT INTO events_fts(events_fts, rowid, file_path, snippet) VALUES ('delete', old.id, old.file_path, old.snippet);
+		    INSERT INTO events_fts(rowid, file_path, snippet) VALUES (new.id, new.file_path, new.snippet);
+		 END`,
+		`PRAGMA user_version = 2`,
+	}
+	for _, stmt := range v2setup {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("set up v2 state (%q): %v", stmt, err)
+		}
+	}
+
+	// Two file touches and one Bash "search", each carrying a snippet.
+	rows := []struct {
+		id               int
+		tool, path, snip string
+	}{
+		{1, "Read", "main.go", "package main"},
+		{2, "Edit", "util.go", "func helper() {}"},
+		{3, "Bash", "grep -r auth .", "auth.go:42"},
+	}
+	for _, r := range rows {
+		if _, err := db.ExecContext(ctx,
+			`INSERT INTO events (id, session_id, ts, tool, file_path, snippet) VALUES (?, 's1', ?, ?, ?, ?)`,
+			r.id, r.id*1000, r.tool, r.path, r.snip); err != nil {
+			t.Fatalf("insert v2 row %d: %v", r.id, err)
+		}
+	}
+
+	if err := applyMigrations(ctx, db); err != nil {
+		t.Fatalf("applyMigrations v2->: %v", err)
+	}
+
+	var v int
+	if err := db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&v); err != nil {
+		t.Fatal(err)
+	}
+	if v != schemaVersion {
+		t.Errorf("user_version = %d, want %d", v, schemaVersion)
+	}
+
+	var snippetCols int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM pragma_table_info('events') WHERE name = 'snippet'`).Scan(&snippetCols); err != nil {
+		t.Fatal(err)
+	}
+	if snippetCols != 0 {
+		t.Error("snippet column still present after migration")
+	}
+
+	var ftsTables int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master WHERE name = 'events_fts'`).Scan(&ftsTables); err != nil {
+		t.Fatal(err)
+	}
+	if ftsTables != 0 {
+		t.Error("events_fts still present after migration")
+	}
+
+	// The Bash row is gone; the two file rows survive with their ids.
+	got, err := queryStrings(ctx, db,
+		`SELECT file_path FROM events ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !equalStrings(got, []string{"main.go", "util.go"}) {
+		t.Errorf("surviving file_paths = %v, want [main.go util.go]", got)
+	}
+}
+
 // A v1 DB keyed UNIQUE(identity); migrating to v2 must drop that index and key
 // on (identity, path) so two copies of one repo can coexist in the manifest.
 func TestSchemaMigrationV1ToV2RelaxesProjectsKey(t *testing.T) {

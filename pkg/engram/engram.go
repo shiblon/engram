@@ -27,62 +27,39 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// Tool identifies a Claude Code tool that produces recordable events.
+// Tool identifies an agent tool whose use produces a recordable file event.
+// The names are the on-the-wire tool_name values across the agents engram
+// supports: Claude Code edits through Read/Edit/Write, Gemini CLI through
+// read_file/write_file/replace, and Codex CLI through apply_patch.
 type Tool string
 
 const (
+	// Claude Code file tools.
 	ToolRead  Tool = "Read"
 	ToolEdit  Tool = "Edit"
 	ToolWrite Tool = "Write"
-	ToolBash  Tool = "Bash"
+	// Gemini CLI file tools (all carry the path in tool_input.file_path, just
+	// like Claude's, so they record through the same FilePath() path).
+	ToolReadFile  Tool = "read_file"
+	ToolWriteFile Tool = "write_file"
+	ToolReplace   Tool = "replace"
+	// Codex CLI file tool. Unlike the others it names paths inside the patch
+	// body rather than a file_path field -- see PatchedFiles.
+	ToolApplyPatch Tool = "apply_patch"
 )
 
-// Recordable reports whether this tool unconditionally produces events worth
-// recording. Bash is conditionally recordable; use BashRecordable to check.
+// Recordable reports whether this tool carries its file path in
+// tool_input.file_path (Claude Code's Read/Edit/Write and Gemini CLI's
+// read_file/write_file/replace). apply_patch is also recordable but names its
+// paths inside the patch body, so callers extract those with PatchedFiles
+// rather than reading a single file_path.
 func (t Tool) Recordable() bool {
 	switch t {
-	case ToolRead, ToolEdit, ToolWrite:
+	case ToolRead, ToolEdit, ToolWrite,
+		ToolReadFile, ToolWriteFile, ToolReplace:
 		return true
 	}
 	return false
-}
-
-// NormalizeBashCommand strips rtk-style prefixes, returning the canonical
-// form of the command (e.g. "rtk grep -r foo" -> "grep -r foo").
-func NormalizeBashCommand(command string) string {
-	parts := strings.Fields(command)
-	if len(parts) >= 2 && filepath.Base(parts[0]) == "rtk" {
-		return strings.Join(parts[1:], " ")
-	}
-	return command
-}
-
-// BashRecordable reports whether a Bash command is worth recording. It
-// recognises grep and find, including rtk-prefixed variants (e.g. "rtk grep").
-func BashRecordable(command string) bool {
-	parts := strings.Fields(NormalizeBashCommand(command))
-	if len(parts) == 0 {
-		return false
-	}
-	switch filepath.Base(parts[0]) {
-	case "grep", "find":
-		return true
-	}
-	return false
-}
-
-// BashSucceeded reports whether a Bash tool_response indicates success.
-// A command is considered failed if it was interrupted or produced no stdout
-// and non-empty stderr.
-func BashSucceeded(raw json.RawMessage) bool {
-	var r BashResponse
-	if err := json.Unmarshal(raw, &r); err != nil {
-		return false
-	}
-	if r.Interrupted {
-		return false
-	}
-	return r.Stdout != "" || r.Stderr == ""
 }
 
 // Tier identifies the memory tier for a Memory entry.
@@ -113,64 +90,81 @@ const (
 	// DefaultPruneSessions is the default number of sessions to keep when
 	// pruning old events.
 	DefaultPruneSessions = 100
-
-	snippetHeadLines = 50
-	snippetDiffChars = 2000
 )
 
 //go:embed schema.sql
 var schema string
 
-// HookInput is the JSON payload received on stdin from Claude Code PostToolUse hooks.
+// HookInput is the JSON payload an agent delivers on stdin to the record
+// (PostToolUse) and inject (SessionStart) hooks. The schema is shared across
+// Claude Code and Codex CLI, which use the same snake_case field names. Only
+// the fields engram acts on are decoded; tool_input is kept raw because its
+// shape varies by tool (and by agent), and the typed accessors below pull what
+// each record path needs.
 type HookInput struct {
-	SessionID string `json:"session_id"`
-	CWD       string `json:"cwd"`
-	ToolName  Tool   `json:"tool_name"`
-	ToolInput struct {
-		FilePath string `json:"file_path"` // Read, Edit, Write
-		Command  string `json:"command"`   // Bash
-	} `json:"tool_input"`
-	// Response holds the raw tool_response JSON. Use the typed response structs
-	// (ReadResponse, EditResponse, BashResponse) to unmarshal as needed.
-	// TODO: consider a typed union here once all tool response shapes are probed.
-	Response json.RawMessage `json:"tool_response"`
+	SessionID string          `json:"session_id"`
+	CWD       string          `json:"cwd"`
+	ToolName  Tool            `json:"tool_name"`
+	ToolInput json.RawMessage `json:"tool_input"`
 }
 
-// ReadResponse is the tool_response shape for Read events.
-type ReadResponse struct {
-	File struct {
-		Content    string `json:"content"`
-		NumLines   int    `json:"numLines"`
-		StartLine  int    `json:"startLine"`
-		TotalLines int    `json:"totalLines"`
-	} `json:"file"`
+// FilePath returns tool_input.file_path -- the single edited file reported by
+// Claude Code's Read/Edit/Write tools. It is empty for tools that carry no such
+// field, including Codex's apply_patch, whose paths live in the patch body and
+// are extracted with PatchedFiles instead.
+func (h *HookInput) FilePath() string {
+	var ti struct {
+		FilePath string `json:"file_path"`
+	}
+	if err := json.Unmarshal(h.ToolInput, &ti); err != nil {
+		return ""
+	}
+	return ti.FilePath
 }
 
-// EditHunk is one hunk in an EditResponse.StructuredPatch.
-type EditHunk struct {
-	OldStart int      `json:"oldStart"`
-	OldLines int      `json:"oldLines"`
-	NewStart int      `json:"newStart"`
-	NewLines int      `json:"newLines"`
-	Lines    []string `json:"lines"`
+// patchFileHeaders are the V4A apply_patch envelope markers that name a file.
+// PatchedFiles records the destination path for each. "*** Move to:" is the new
+// location of a rename and so also counts as a touched file.
+var patchFileHeaders = []string{
+	"*** Add File: ",
+	"*** Update File: ",
+	"*** Delete File: ",
+	"*** Move to: ",
 }
 
-// EditResponse is the tool_response shape for Edit events.
-type EditResponse struct {
-	NewString       string     `json:"newString"`
-	StructuredPatch []EditHunk `json:"structuredPatch"`
-}
-
-// WriteResponse is the tool_response shape for Write events.
-type WriteResponse struct {
-	Content string `json:"content"`
-}
-
-// BashResponse is the tool_response shape for Bash events.
-type BashResponse struct {
-	Stdout      string `json:"stdout"`
-	Stderr      string `json:"stderr"`
-	Interrupted bool   `json:"interrupted"`
+// PatchedFiles extracts the file paths named in a Codex apply_patch V4A envelope
+// (*** Begin Patch ... *** End Patch) found inside the tool_input. Codex delivers
+// the patch as a string whose field name varies (and a shell-heredoc invocation
+// puts it under "command"), so rather than bind to one field we scan every
+// string value in the tool_input object for the envelope's "*** <op> File:"
+// headers. Returns the touched paths in the order encountered, deduplicated;
+// nil if tool_input holds no patch.
+func PatchedFiles(toolInput json.RawMessage) []string {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(toolInput, &fields); err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, raw := range fields {
+		var s string
+		if err := json.Unmarshal(raw, &s); err != nil {
+			continue // not a string field
+		}
+		for _, line := range strings.Split(s, "\n") {
+			line = strings.TrimSpace(line)
+			for _, header := range patchFileHeaders {
+				if path, ok := strings.CutPrefix(line, header); ok {
+					path = strings.TrimSpace(path)
+					if path != "" && !seen[path] {
+						seen[path] = true
+						out = append(out, path)
+					}
+				}
+			}
+		}
+	}
+	return out
 }
 
 // ParseHookInput decodes a HookInput from r.
@@ -195,15 +189,13 @@ func RelPath(root, absPath string) (string, error) {
 	return rel, nil
 }
 
-// Event holds a single recorded tool-use event.
+// Event holds a single recorded file-touch event.
 type Event struct {
 	SessionID string
 	TS        int64 // unix epoch ms; zero means use current time
 	Tool      Tool
-	// FilePath is the file path relative to project root for file tool events,
-	// or the normalized command string for Bash events.
+	// FilePath is the touched file's path relative to the project root.
 	FilePath string
-	Snippet  string
 }
 
 // FindProjectRoot walks up from start to find the nearest project root,
@@ -396,8 +388,8 @@ func Record(ctx context.Context, db *sql.DB, event Event) error {
 		event.TS = time.Now().UnixMilli()
 	}
 	_, err := db.ExecContext(ctx,
-		`INSERT INTO events (session_id, ts, tool, file_path, snippet) VALUES (?, ?, ?, ?, ?)`,
-		event.SessionID, event.TS, event.Tool, event.FilePath, event.Snippet,
+		`INSERT INTO events (session_id, ts, tool, file_path) VALUES (?, ?, ?, ?)`,
+		event.SessionID, event.TS, event.Tool, event.FilePath,
 	)
 	if err != nil {
 		return fmt.Errorf("record: %w", err)
@@ -408,8 +400,7 @@ func Record(ctx context.Context, db *sql.DB, event Event) error {
 // InjectResult holds the context gathered for a session-start injection.
 type InjectResult struct {
 	// From events table
-	Files    []string
-	Searches []string
+	Files []string
 	// From memories table
 	Invariants  []Memory
 	Preferences []Memory
@@ -429,7 +420,7 @@ type InjectResult struct {
 	PendingRestores []PendingRestore
 }
 
-// Inject returns files and bash searches from the last nSessions sessions,
+// Inject returns the recently active files from the last nSessions sessions,
 // plus all memories from the given database.
 func Inject(ctx context.Context, db *sql.DB, nSessions int) (InjectResult, error) {
 	recentSessions := `
@@ -444,23 +435,12 @@ func Inject(ctx context.Context, db *sql.DB, nSessions int) (InjectResult, error
 	files, err := queryStrings(ctx, db, `
 		SELECT file_path
 		FROM events
-		WHERE tool != ? AND session_id IN (`+recentSessions+`)
+		WHERE session_id IN (`+recentSessions+`)
 		GROUP BY file_path
 		ORDER BY MAX(ts) DESC
-	`, ToolBash, nSessions)
+	`, nSessions)
 	if err != nil {
 		return InjectResult{}, fmt.Errorf("inject files: %w", err)
-	}
-
-	searches, err := queryStrings(ctx, db, `
-		SELECT file_path
-		FROM events
-		WHERE tool = ? AND session_id IN (`+recentSessions+`)
-		GROUP BY file_path
-		ORDER BY MAX(ts) DESC
-	`, ToolBash, nSessions)
-	if err != nil {
-		return InjectResult{}, fmt.Errorf("inject searches: %w", err)
 	}
 
 	invariants, err := ListMemories(ctx, db, TierInvariant)
@@ -486,7 +466,6 @@ func Inject(ctx context.Context, db *sql.DB, nSessions int) (InjectResult, error
 
 	return InjectResult{
 		Files:       files,
-		Searches:    searches,
 		Invariants:  invariants,
 		Preferences: preferences,
 		LongTerm:    longTerm,
@@ -692,61 +671,6 @@ func SearchMemories(ctx context.Context, db *sql.DB, query string, tier Tier) ([
 	return scanMemories(rows)
 }
 
-// MakeSnippet extracts a snippet from a raw tool_response JSON payload.
-func MakeSnippet(tool Tool, raw json.RawMessage) string {
-	switch tool {
-	case ToolRead:
-		var r ReadResponse
-		if err := json.Unmarshal(raw, &r); err != nil {
-			return ""
-		}
-		return headLines(r.File.Content, snippetHeadLines)
-
-	case ToolEdit:
-		var r EditResponse
-		if err := json.Unmarshal(raw, &r); err != nil {
-			return ""
-		}
-		if len(r.StructuredPatch) == 0 {
-			if len(r.NewString) > snippetDiffChars {
-				return r.NewString[:snippetDiffChars]
-			}
-			return r.NewString
-		}
-		var b strings.Builder
-		for _, hunk := range r.StructuredPatch {
-			fmt.Fprintf(&b, "@@ -%d,%d +%d,%d @@\n",
-				hunk.OldStart, hunk.OldLines, hunk.NewStart, hunk.NewLines)
-			for _, line := range hunk.Lines {
-				b.WriteString(line)
-				b.WriteByte('\n')
-			}
-		}
-		result := b.String()
-		if len(result) > snippetDiffChars {
-			return result[:snippetDiffChars] + "\n... (truncated)"
-		}
-		return result
-
-	case ToolWrite:
-		var r WriteResponse
-		if err := json.Unmarshal(raw, &r); err != nil {
-			return ""
-		}
-		return headLines(r.Content, snippetHeadLines)
-
-	case ToolBash:
-		var r BashResponse
-		if err := json.Unmarshal(raw, &r); err != nil {
-			return ""
-		}
-		return headLines(r.Stdout, snippetHeadLines)
-
-	default:
-		return ""
-	}
-}
-
 // injectOutput is the JSON structure returned by the SessionStart hook.
 type injectOutput struct {
 	HookSpecificOutput injectHookOutput `json:"hookSpecificOutput"`
@@ -837,11 +761,6 @@ func InjectContextText(global, project InjectResult, nSessions int) string {
 				nSessions, strings.Join(project.Files, "\n  ")))
 	}
 
-	if len(project.Searches) > 0 {
-		parts = append(parts,
-			"## Recent searches\n  "+strings.Join(project.Searches, "\n  "))
-	}
-
 	if len(parts) == 0 {
 		return "Engram is active but not yet set up. " +
 			"Ask your agent to set a personality, codename, and preferences with `engram mem write`."
@@ -927,14 +846,6 @@ func firstLine(s string) string {
 		return s[:i]
 	}
 	return s
-}
-
-func headLines(s string, n int) string {
-	lines := strings.SplitN(s, "\n", n+1)
-	if len(lines) > n {
-		lines = lines[:n]
-	}
-	return strings.Join(lines, "\n")
 }
 
 // FormatMemoryMD formats a slice of memories as a markdown document for the given tier.

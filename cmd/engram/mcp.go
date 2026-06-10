@@ -172,7 +172,6 @@ func openMCPDB(ctx context.Context, req mcp.CallToolRequest) (*engram.DBHandle, 
 	return &engram.DBHandle{DB: db, Path: engram.DBPath(root)}, nil
 }
 
-
 func mcpMemWrite(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	h, err := openMCPDB(ctx, req)
 	if err != nil {

@@ -19,7 +19,8 @@ var uninstallCmd = &cobra.Command{
 
 Subcommands:
   claude       -- remove Claude Code hooks, statusLine, and CLAUDE.md entries
-  gemini       -- remove the Gemini CLI GEMINI.md section and SessionStart hook
+  codex        -- remove Codex CLI hooks and the AGENTS.md section
+  gemini       -- remove Gemini CLI hooks and the GEMINI.md section
   antigravity  -- remove the AntiGravity Knowledge Item
   copilot      -- remove the engram section from .github/copilot-instructions.md
   cursor       -- remove the engram section from .cursorrules
@@ -299,7 +300,7 @@ func uninstallDB() error {
 
 var uninstallGeminiCmd = &cobra.Command{
 	Use:   "gemini",
-	Short: "Remove the Gemini CLI knowledge file written by bootstrap gemini",
+	Short: "Remove Gemini CLI hooks and the GEMINI.md section",
 	RunE:  runUninstallGemini,
 }
 
@@ -311,8 +312,99 @@ func runUninstallGemini(_ *cobra.Command, _ []string) error {
 	if err := removeSectionFromFile(filepath.Join(home, ".gemini", "GEMINI.md"), engramSectionRE); err != nil {
 		return err
 	}
+	if err := stripEngramHooks(filepath.Join(home, ".gemini", "settings.json"), "AfterTool", "SessionStart"); err != nil {
+		return err
+	}
 	printMemoriesUntouchedFooter()
 	return nil
+}
+
+// uninstall codex
+
+var uninstallCodexGlobal bool
+
+var uninstallCodexCmd = &cobra.Command{
+	Use:   "codex",
+	Short: "Remove Codex CLI hooks and the AGENTS.md section",
+	Long: `Uninstall Codex CLI integration:
+  - Removes engram hooks (record/inject) from .codex/hooks.json
+  - Removes the engram section from AGENTS.md
+
+By default these are the project's (.codex/hooks.json and ./AGENTS.md). Use -g to
+target ~/.codex instead.
+
+Memories are NOT deleted.`,
+	RunE: runUninstallCodex,
+}
+
+func runUninstallCodex(_ *cobra.Command, _ []string) error {
+	var agentsPath, hooksPath string
+	if uninstallCodexGlobal {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return err
+		}
+		agentsPath = filepath.Join(home, ".codex", "AGENTS.md")
+		hooksPath = filepath.Join(home, ".codex", "hooks.json")
+	} else {
+		root, err := engram.FindProjectRoot(effectiveCWD())
+		if err != nil {
+			fmt.Println("skip (no project root found): codex")
+			return nil
+		}
+		agentsPath = filepath.Join(root, "AGENTS.md")
+		hooksPath = filepath.Join(root, ".codex", "hooks.json")
+	}
+
+	if err := removeSectionFromFile(agentsPath, engramSectionRE); err != nil {
+		return err
+	}
+	if err := stripEngramHooks(hooksPath, "PostToolUse", "SessionStart"); err != nil {
+		return err
+	}
+	printMemoriesUntouchedFooter()
+	return nil
+}
+
+// stripEngramHooks removes engram's record and inject hooks from a hook-config
+// JSON file, rewriting it (or reporting a benign skip when the file or entries
+// are absent). recordEvent/sessionEvent name the events the two hooks live under,
+// which differ per agent (Codex: PostToolUse/SessionStart; Gemini: AfterTool/
+// SessionStart).
+func stripEngramHooks(path, recordEvent, sessionEvent string) error {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		fmt.Printf("skip (not found): %s\n", path)
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return fmt.Errorf("parse %s: %w", path, err)
+	}
+
+	changed := false
+	if hooks, ok := settings["hooks"].(map[string]any); ok {
+		if removeEngramHook(hooks, recordEvent, "engram record", "engram record hook", path) {
+			changed = true
+		}
+		if removeEngramHook(hooks, sessionEvent, "engram inject", "engram inject hook", path) {
+			changed = true
+		}
+	}
+	if !changed {
+		fmt.Printf("skip (no engram entries found): %s\n", path)
+		return nil
+	}
+
+	out, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(out, '\n'), 0644)
 }
 
 // uninstall copilot
@@ -388,6 +480,7 @@ func runUninstallAntigravity(_ *cobra.Command, _ []string) error {
 func init() {
 	uninstallClaudeCmd.Flags().BoolVar(&uninstallClaudeDropDB, "drop-db", false, "also delete the project database")
 	uninstallClaudeCmd.Flags().BoolVarP(&uninstallClaudeGlobal, "global", "g", false, "remove hooks from ~/.claude/settings.json instead of the project's .claude/settings.json")
-	uninstallCmd.AddCommand(uninstallClaudeCmd, uninstallGeminiCmd, uninstallAntigravityCmd, uninstallCopilotCmd, uninstallCursorCmd)
+	uninstallCodexCmd.Flags().BoolVarP(&uninstallCodexGlobal, "global", "g", false, "remove from ~/.codex instead of the project's .codex/AGENTS.md")
+	uninstallCmd.AddCommand(uninstallClaudeCmd, uninstallCodexCmd, uninstallGeminiCmd, uninstallAntigravityCmd, uninstallCopilotCmd, uninstallCursorCmd)
 	rootCmd.AddCommand(uninstallCmd)
 }

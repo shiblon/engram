@@ -46,7 +46,10 @@ func Restore(ctx context.Context, r io.Reader) (RestoreResult, error) {
 
 	// Read the full archive into a name→data index so we can process sections
 	// without re-reading the reader.
-	type entry struct{ name string; data []byte }
+	type entry struct {
+		name string
+		data []byte
+	}
 	var all []entry
 	gz, err := gzip.NewReader(r)
 	if err != nil {

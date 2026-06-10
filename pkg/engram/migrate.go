@@ -30,14 +30,14 @@ func Migrate(ctx context.Context, src, dst *sql.DB) (MigrateResult, error) {
 }
 
 func migrateEvents(ctx context.Context, src, dst *sql.DB, result *MigrateResult) error {
-	rows, err := src.QueryContext(ctx, `SELECT session_id, ts, tool, file_path, snippet FROM events ORDER BY ts`)
+	rows, err := src.QueryContext(ctx, `SELECT session_id, ts, tool, file_path FROM events ORDER BY ts`)
 	if err != nil {
 		return fmt.Errorf("migrate events: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var e Event
-		if err := rows.Scan(&e.SessionID, &e.TS, &e.Tool, &e.FilePath, &e.Snippet); err != nil {
+		if err := rows.Scan(&e.SessionID, &e.TS, &e.Tool, &e.FilePath); err != nil {
 			return fmt.Errorf("migrate events scan: %w", err)
 		}
 		if err := Record(ctx, dst, e); err != nil {

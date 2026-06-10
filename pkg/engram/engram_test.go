@@ -36,85 +36,78 @@ func samePath(a, b string) bool {
 
 // --- pure functions ---
 
-func TestHeadLines(t *testing.T) {
+func TestPatchedFiles(t *testing.T) {
+	// A full V4A envelope exercising every file-naming header, including a
+	// rename (Update File + Move to). The patch may sit under any tool_input
+	// field name, so the field key here ("input") is deliberately not "command".
+	patch := strings.Join([]string{
+		"*** Begin Patch",
+		"*** Add File: pkg/new.go",
+		"+package pkg",
+		"*** Update File: cmd/old.go",
+		"*** Move to: cmd/renamed.go",
+		"@@",
+		"-gone",
+		"+kept",
+		"*** Delete File: docs/stale.md",
+		"*** End Patch",
+	}, "\n")
+
 	cases := []struct {
-		in   string
-		n    int
-		want string
+		name      string
+		toolInput string
+		want      []string
 	}{
-		{"a\nb\nc", 2, "a\nb"},
-		{"a\nb\nc", 3, "a\nb\nc"},
-		{"a\nb\nc", 10, "a\nb\nc"},
-		{"a", 1, "a"},
-		{"", 5, ""},
-		{"a\nb", 0, ""},
+		{
+			name:      "all headers, patch under input field",
+			toolInput: mustJSONObj(t, map[string]string{"input": patch}),
+			want:      []string{"pkg/new.go", "cmd/old.go", "cmd/renamed.go", "docs/stale.md"},
+		},
+		{
+			name:      "patch arriving as a shell heredoc under command",
+			toolInput: mustJSONObj(t, map[string]string{"command": "apply_patch <<'EOF'\n" + patch + "\nEOF"}),
+			want:      []string{"pkg/new.go", "cmd/old.go", "cmd/renamed.go", "docs/stale.md"},
+		},
+		{
+			name:      "no patch present",
+			toolInput: mustJSONObj(t, map[string]string{"command": "go test ./..."}),
+			want:      nil,
+		},
+		{
+			name:      "not a JSON object",
+			toolInput: `"bare string"`,
+			want:      nil,
+		},
 	}
 	for _, c := range cases {
-		got := headLines(c.in, c.n)
-		if got != c.want {
-			t.Errorf("headLines(%q, %d) = %q, want %q", c.in, c.n, got, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			got := PatchedFiles(json.RawMessage(c.toolInput))
+			if !equalStrings(got, c.want) {
+				t.Errorf("PatchedFiles() = %v, want %v", got, c.want)
+			}
+		})
 	}
 }
 
-func TestNormalizeBashCommand(t *testing.T) {
-	cases := []struct{ in, want string }{
-		{"grep -r foo .", "grep -r foo ."},
-		{"rtk grep -r foo .", "grep -r foo ."},
-		{"/usr/local/bin/rtk find . -name '*.go'", "find . -name '*.go'"},
-		{"git status", "git status"},
-		{"rtk", "rtk"},
-		{"", ""},
+func mustJSONObj(t *testing.T, m map[string]string) string {
+	t.Helper()
+	b, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, c := range cases {
-		got := NormalizeBashCommand(c.in)
-		if got != c.want {
-			t.Errorf("NormalizeBashCommand(%q) = %q, want %q", c.in, got, c.want)
-		}
-	}
+	return string(b)
 }
 
-func TestBashRecordable(t *testing.T) {
-	cases := []struct {
-		cmd  string
-		want bool
-	}{
-		{"grep -r foo .", true},
-		{"find . -name '*.go'", true},
-		{"rtk grep -r foo .", true},
-		{"/usr/bin/grep -r foo .", true},
-		{"git status", false},
-		{"ls -la", false},
-		{"findme stuff", false},
-		{"", false},
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
 	}
-	for _, c := range cases {
-		got := BashRecordable(c.cmd)
-		if got != c.want {
-			t.Errorf("BashRecordable(%q) = %v, want %v", c.cmd, got, c.want)
+	for i := range a {
+		if a[i] != b[i] {
+			return false
 		}
 	}
-}
-
-func TestBashSucceeded(t *testing.T) {
-	cases := []struct {
-		raw  string
-		want bool
-	}{
-		{`{"stdout":"output","stderr":"","interrupted":false}`, true},
-		{`{"stdout":"","stderr":"","interrupted":false}`, true},
-		{`{"stdout":"out","stderr":"warn","interrupted":false}`, true},
-		{`{"stdout":"","stderr":"error","interrupted":false}`, false},
-		{`{"stdout":"","stderr":"","interrupted":true}`, false},
-		{`{"stdout":"out","stderr":"","interrupted":true}`, false},
-		{`not json`, false},
-	}
-	for _, c := range cases {
-		got := BashSucceeded(json.RawMessage(c.raw))
-		if got != c.want {
-			t.Errorf("BashSucceeded(%s) = %v, want %v", c.raw, got, c.want)
-		}
-	}
+	return true
 }
 
 func TestRelPath(t *testing.T) {
@@ -140,29 +133,53 @@ func TestRelPath(t *testing.T) {
 	}
 }
 
+func TestRecordable(t *testing.T) {
+	// Claude (Read/Edit/Write) and Gemini (read_file/write_file/replace) file
+	// tools all record through the file_path branch; apply_patch and non-file
+	// tools do not.
+	recordable := []Tool{ToolRead, ToolEdit, ToolWrite, ToolReadFile, ToolWriteFile, ToolReplace}
+	for _, tool := range recordable {
+		if !tool.Recordable() {
+			t.Errorf("%s.Recordable() = false, want true", tool)
+		}
+	}
+	for _, tool := range []Tool{ToolApplyPatch, "Bash", "run_shell_command", "glob"} {
+		if tool.Recordable() {
+			t.Errorf("%s.Recordable() = true, want false", tool)
+		}
+	}
+}
+
 func TestParseHookInput(t *testing.T) {
-	t.Run("read_tool", func(t *testing.T) {
-		raw := `{"session_id":"s1","cwd":"/proj","tool_name":"Read","tool_input":{"file_path":"/proj/main.go"},"tool_response":{}}`
+	t.Run("file_tool", func(t *testing.T) {
+		raw := `{"session_id":"s1","cwd":"/proj","tool_name":"Edit","tool_input":{"file_path":"/proj/main.go"}}`
 		h, err := ParseHookInput(strings.NewReader(raw))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if h.SessionID != "s1" || h.CWD != "/proj" || h.ToolName != ToolRead {
+		if h.SessionID != "s1" || h.CWD != "/proj" || h.ToolName != ToolEdit {
 			t.Errorf("unexpected HookInput: %+v", h)
 		}
-		if h.ToolInput.FilePath != "/proj/main.go" {
-			t.Errorf("file_path = %q, want /proj/main.go", h.ToolInput.FilePath)
+		if got := h.FilePath(); got != "/proj/main.go" {
+			t.Errorf("FilePath() = %q, want /proj/main.go", got)
 		}
 	})
 
-	t.Run("bash_tool", func(t *testing.T) {
-		raw := `{"session_id":"s2","cwd":"/proj","tool_name":"Bash","tool_input":{"command":"grep -r foo ."},"tool_response":{}}`
+	t.Run("apply_patch_tool", func(t *testing.T) {
+		raw := `{"session_id":"s2","cwd":"/proj","tool_name":"apply_patch",` +
+			`"tool_input":{"input":"*** Begin Patch\n*** Update File: a.go\n*** End Patch"}}`
 		h, err := ParseHookInput(strings.NewReader(raw))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if h.ToolName != ToolBash || h.ToolInput.Command != "grep -r foo ." {
-			t.Errorf("unexpected HookInput: %+v", h)
+		if h.ToolName != ToolApplyPatch {
+			t.Errorf("tool_name = %q, want apply_patch", h.ToolName)
+		}
+		if h.FilePath() != "" {
+			t.Errorf("FilePath() = %q, want empty (apply_patch carries no file_path)", h.FilePath())
+		}
+		if got := PatchedFiles(h.ToolInput); !equalStrings(got, []string{"a.go"}) {
+			t.Errorf("PatchedFiles() = %v, want [a.go]", got)
 		}
 	})
 
@@ -170,84 +187,6 @@ func TestParseHookInput(t *testing.T) {
 		_, err := ParseHookInput(strings.NewReader("not json"))
 		if err == nil {
 			t.Error("expected error for malformed JSON")
-		}
-	})
-}
-
-func TestMakeSnippet(t *testing.T) {
-	t.Run("read", func(t *testing.T) {
-		raw := json.RawMessage(`{"file":{"content":"line1\nline2\nline3","numLines":3,"startLine":1,"totalLines":3}}`)
-		got := MakeSnippet(ToolRead, raw)
-		if got != "line1\nline2\nline3" {
-			t.Errorf("got %q", got)
-		}
-	})
-
-	t.Run("read_truncates", func(t *testing.T) {
-		lines := make([]string, 60)
-		for i := range lines {
-			lines[i] = "line"
-		}
-		content := strings.Join(lines, "\n")
-		raw, _ := json.Marshal(map[string]any{"file": map[string]any{"content": content}})
-		got := MakeSnippet(ToolRead, json.RawMessage(raw))
-		gotLines := strings.Split(got, "\n")
-		if len(gotLines) != snippetHeadLines {
-			t.Errorf("got %d lines, want %d", len(gotLines), snippetHeadLines)
-		}
-	})
-
-	t.Run("edit_structured_patch", func(t *testing.T) {
-		raw := json.RawMessage(`{
-			"newString": "ignored",
-			"structuredPatch": [
-				{"oldStart":1,"oldLines":1,"newStart":1,"newLines":2,"lines":["-old","+new1","+new2"]}
-			]
-		}`)
-		got := MakeSnippet(ToolEdit, raw)
-		if !strings.Contains(got, "@@ -1,1 +1,2 @@") {
-			t.Errorf("missing hunk header in %q", got)
-		}
-		if !strings.Contains(got, "-old") || !strings.Contains(got, "+new1") {
-			t.Errorf("missing diff lines in %q", got)
-		}
-	})
-
-	t.Run("edit_newstring_fallback", func(t *testing.T) {
-		raw := json.RawMessage(`{"newString":"hello world","structuredPatch":[]}`)
-		got := MakeSnippet(ToolEdit, raw)
-		if got != "hello world" {
-			t.Errorf("got %q, want %q", got, "hello world")
-		}
-	})
-
-	t.Run("write", func(t *testing.T) {
-		raw := json.RawMessage(`{"content":"file content"}`)
-		got := MakeSnippet(ToolWrite, raw)
-		if got != "file content" {
-			t.Errorf("got %q, want %q", got, "file content")
-		}
-	})
-
-	t.Run("bash", func(t *testing.T) {
-		raw := json.RawMessage(`{"stdout":"search result","stderr":"","interrupted":false}`)
-		got := MakeSnippet(ToolBash, raw)
-		if got != "search result" {
-			t.Errorf("got %q, want %q", got, "search result")
-		}
-	})
-
-	t.Run("unknown_tool", func(t *testing.T) {
-		got := MakeSnippet(Tool("Unknown"), json.RawMessage(`{}`))
-		if got != "" {
-			t.Errorf("got %q, want empty", got)
-		}
-	})
-
-	t.Run("malformed_json", func(t *testing.T) {
-		got := MakeSnippet(ToolRead, json.RawMessage(`not json`))
-		if got != "" {
-			t.Errorf("got %q, want empty", got)
 		}
 	})
 }
@@ -454,7 +393,6 @@ func TestRecord(t *testing.T) {
 		TS:        1000,
 		Tool:      ToolRead,
 		FilePath:  "main.go",
-		Snippet:   "package main",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -469,32 +407,24 @@ func TestRecord(t *testing.T) {
 	}
 }
 
-func TestInjectSeparatesFilesAndSearches(t *testing.T) {
+func TestInjectRecentFiles(t *testing.T) {
 	db := testDB(t)
 	ctx := context.Background()
 
+	// File touches from every tool that records -- Claude's Read/Edit/Write and
+	// Codex's apply_patch -- all surface as recently active files, ordered most
+	// recent first.
 	Record(ctx, db, Event{SessionID: "s1", TS: 1000, Tool: ToolRead, FilePath: "foo.go"})
 	Record(ctx, db, Event{SessionID: "s1", TS: 2000, Tool: ToolEdit, FilePath: "bar.go"})
-	Record(ctx, db, Event{SessionID: "s1", TS: 3000, Tool: ToolBash, FilePath: "grep -r auth ."})
+	Record(ctx, db, Event{SessionID: "s1", TS: 3000, Tool: ToolApplyPatch, FilePath: "baz.go"})
 
 	result, err := Inject(ctx, db, 5)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	fileSet := map[string]bool{}
-	for _, f := range result.Files {
-		fileSet[f] = true
-	}
-	if !fileSet["foo.go"] || !fileSet["bar.go"] {
-		t.Errorf("Files = %v, missing expected entries", result.Files)
-	}
-	if fileSet["grep -r auth ."] {
-		t.Error("bash command should not appear in Files")
-	}
-
-	if len(result.Searches) != 1 || result.Searches[0] != "grep -r auth ." {
-		t.Errorf("Searches = %v, want [grep -r auth .]", result.Searches)
+	if !equalStrings(result.Files, []string{"baz.go", "bar.go", "foo.go"}) {
+		t.Errorf("Files = %v, want [baz.go bar.go foo.go]", result.Files)
 	}
 }
 

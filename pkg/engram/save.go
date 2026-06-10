@@ -32,7 +32,7 @@ type SaveProject struct {
 
 // SaveResult summarises what was written.
 type SaveResult struct {
-	ProjectCount    int      // projects actually snapshotted into the archive
+	ProjectCount    int // projects actually snapshotted into the archive
 	PrunedCount     int
 	Skipped         []string // projects dropped from the archive (open/vacuum failure), with reason
 	ContextWarnings []string // non-empty when context/ exists but --include-context was false
@@ -110,7 +110,7 @@ func Save(ctx context.Context, w io.Writer, opts SaveOptions) (SaveResult, error
 
 	// Project DB snapshots.
 	type projectSnap struct {
-		entry   manifestEntry
+		entry    manifestEntry
 		snapPath string
 	}
 	var snaps []projectSnap
@@ -304,9 +304,9 @@ func vacuumInto(ctx context.Context, src *sql.DB, destPath string) error {
 // tarWriteBytes adds a regular file entry with the given content to tw.
 func tarWriteBytes(tw *tar.Writer, name string, data []byte) error {
 	hdr := &tar.Header{
-		Name:    name,
-		Mode:    0o644,
-		Size:    int64(len(data)),
+		Name:     name,
+		Mode:     0o644,
+		Size:     int64(len(data)),
 		Typeflag: tar.TypeReg,
 	}
 	if err := tw.WriteHeader(hdr); err != nil {
