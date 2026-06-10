@@ -368,18 +368,9 @@ func OpenGlobalDB(ctx context.Context) (*sql.DB, error) {
 // Open opens (and initializes) the engram database at path. The caller is
 // responsible for calling db.Close.
 func Open(ctx context.Context, path string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", path)
+	db, err := openRaw(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("open: %w", err)
-	}
-	db.SetMaxOpenConns(1)
-	if _, err := db.ExecContext(ctx, "PRAGMA journal_mode=WAL"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("set WAL mode: %w", err)
-	}
-	if _, err := db.ExecContext(ctx, "PRAGMA busy_timeout=5000"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("set busy timeout: %w", err)
 	}
 	if err := dbInit(ctx, db); err != nil {
 		db.Close()
@@ -584,12 +575,19 @@ func queryMemories(ctx context.Context, db *sql.DB, tier Tier, key string, limit
 	if err != nil {
 		return nil, fmt.Errorf("query memories: %w", err)
 	}
+	return scanMemories(rows)
+}
+
+// scanMemories collects every row of the canonical memories projection
+// (id, ts, tier, key, content, session_id) and closes the rows. Shared by
+// queryMemories and SearchMemories, which return identically-shaped rows.
+func scanMemories(rows *sql.Rows) ([]Memory, error) {
 	defer rows.Close()
 	var out []Memory
 	for rows.Next() {
 		var m Memory
 		if err := rows.Scan(&m.ID, &m.TS, &m.Tier, &m.Key, &m.Content, &m.SessionID); err != nil {
-			return nil, fmt.Errorf("query memories scan: %w", err)
+			return nil, fmt.Errorf("scan memory row: %w", err)
 		}
 		out = append(out, m)
 	}
@@ -691,16 +689,7 @@ func SearchMemories(ctx context.Context, db *sql.DB, query string, tier Tier) ([
 	if err != nil {
 		return nil, fmt.Errorf("search memories: %w", err)
 	}
-	defer rows.Close()
-	var out []Memory
-	for rows.Next() {
-		var m Memory
-		if err := rows.Scan(&m.ID, &m.TS, &m.Tier, &m.Key, &m.Content, &m.SessionID); err != nil {
-			return nil, fmt.Errorf("search scan: %w", err)
-		}
-		out = append(out, m)
-	}
-	return out, rows.Err()
+	return scanMemories(rows)
 }
 
 // MakeSnippet extracts a snippet from a raw tool_response JSON payload.
