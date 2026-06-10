@@ -2,6 +2,35 @@
 
 # Long
 
+## context-memory
+Project memory in version control: context/long.md is the canonical committed location for long-term project memories. engram inject auto-loads it when the file is newer than the DB (or DB has no long-term entries). At natural commit points, offer to run: engram mem dump --tier long -- user reviews and includes in commit. This covers fresh clones, new machines, and teammate sharing. Short-term, events, and cold are never committed.
+
+## cold-tier
+Cold tier: semantic convention for low-priority long-term storage. Injected at session start as a one-line catalog (first line of content only) -- full content never auto-loaded. Use for project ideas, reference material, or anything bulky and rarely needed. Write with first line as summary, details on subsequent lines. Do not read cold entries unprompted; fetch on demand with: engram mem --tier cold read <key>
+
+## platform-strategy
+Platform strategy (updated 2026-06-10):
+
+Claude Code: full hooks -- SessionStart (inject) + PostToolUse (record). bootstrap claude [-g] writes project or global settings.json, plus statusLine and CLAUDE.md @-imports.
+
+Codex CLI + Gemini CLI: FULL HOOK PARITY as of 2026-06-10. Both converged on essentially Claude Code's hook protocol -- snake_case stdin (session_id/cwd/tool_name/tool_input/tool_response/source) and the IDENTICAL hookSpecificOutput.additionalContext SessionStart injection envelope -- so inject transfers with ZERO code change on both.
+  - Codex: bootstrap codex [-g] writes .codex/hooks.json (SessionStart->inject, PostToolUse matcher ^apply_patch$ ->record) + AGENTS.md fallback. Honors project-local .codex/ only in TRUSTED projects -> prefer -g on untrusted machines. record reads Codex via apply_patch's V4A patch body ([[record-file-activity-only]]).
+  - Gemini: bootstrap gemini writes ~/.gemini/settings.json (SessionStart->inject, AfterTool matcher read_file|write_file|replace ->record) + GEMINI.md fallback. Gemini's file tools carry the path in tool_input.file_path (same field as Claude), so record needs no special parsing -- just the tool names. Gemini-only: post-tool event is AfterTool (not PostToolUse); SessionStart matcher is an exact lifecycle string so we OMIT it to fire on all sources.
+
+SHARED CODE: cmd/engram/bootstrap.go installEngramHooks(path, exe, []hookSpec) writes both Codex and Gemini hook files (they differ only in event names + matchers); stripEngramHooks(path, recordEvent, sessionEvent) removes them. Claude's addEngramHooks stays separate (entangled with statusLine + allowlist + project/global). All three CLIs converging on one hook protocol validates engram's hook architecture; a future unification of all three writers is the noted refactor when it earns its keep.
+
+Other platforms (AntiGravity, Copilot, Cursor): still system-prompt-file only (KI metadata / copilot-instructions.md / .cursorrules) telling the agent to run 'engram inject --text'; no record. Add hooks for any that gain reliable support. See [[priority-ladder]] (P0 config is platform-specific).
+
+## db-design
+Per-project DB at .engram/mem.db, paths relative to project root. Global DB at ~/.engram/mem.db.
+
+memories table + memories_fts (FTS5, full-text searched via engram mem search). events table is FILE-ACTIVITY-ONLY as of schema v3 (2026-06-10): columns (id, session_id, ts, tool, file_path) -- NO snippet column and NO events_fts virtual table, because nothing ever queried the events FTS. See [[record-file-activity-only]] for the rationale and the v2->v3 rebuild migration.
+
+Session-count pruning (keep 100). Prune runs at session start alongside inject. Legacy path .claude/engram.db supported via read fallback; migrate --cleanup to move. Schema versioned via PRAGMA user_version; dbInit applies schema.sql (CREATE IF NOT EXISTS) then replays migrations from the stored version, so every migration must be idempotent on a fresh DB too.
+
+## global-db
+Global memories (invariants, preferences) in ~/.engram/mem.db. Project memories (long, short) + events in .engram/mem.db (relative to project root). Legacy paths (.claude/engram.db) supported via read fallback. Inject reads both global and project DBs.
+
 ## mcp-resource-architecture
 MCP v2 architecture (design drafted; UNBUILT and DEPRIORITIZED -- read GATE first).
 
@@ -49,35 +78,6 @@ STILL OPEN (not in code):
 - managing the project+global duplicate after a copy-promotion (sync/drift).
 
 (DUMP/RELOAD-ALL, once the "next thread" anchored here, SHIPPED as v0.6.0-v0.6.4 -> see [[dump-restore-all-design]].)
-
-## context-memory
-Project memory in version control: context/long.md is the canonical committed location for long-term project memories. engram inject auto-loads it when the file is newer than the DB (or DB has no long-term entries). At natural commit points, offer to run: engram mem dump --tier long -- user reviews and includes in commit. This covers fresh clones, new machines, and teammate sharing. Short-term, events, and cold are never committed.
-
-## cold-tier
-Cold tier: semantic convention for low-priority long-term storage. Injected at session start as a one-line catalog (first line of content only) -- full content never auto-loaded. Use for project ideas, reference material, or anything bulky and rarely needed. Write with first line as summary, details on subsequent lines. Do not read cold entries unprompted; fetch on demand with: engram mem --tier cold read <key>
-
-## platform-strategy
-Platform strategy (updated 2026-06-10):
-
-Claude Code: full hooks -- SessionStart (inject) + PostToolUse (record). bootstrap claude [-g] writes project or global settings.json, plus statusLine and CLAUDE.md @-imports.
-
-Codex CLI + Gemini CLI: FULL HOOK PARITY as of 2026-06-10. Both converged on essentially Claude Code's hook protocol -- snake_case stdin (session_id/cwd/tool_name/tool_input/tool_response/source) and the IDENTICAL hookSpecificOutput.additionalContext SessionStart injection envelope -- so inject transfers with ZERO code change on both.
-  - Codex: bootstrap codex [-g] writes .codex/hooks.json (SessionStart->inject, PostToolUse matcher ^apply_patch$ ->record) + AGENTS.md fallback. Honors project-local .codex/ only in TRUSTED projects -> prefer -g on untrusted machines. record reads Codex via apply_patch's V4A patch body ([[record-file-activity-only]]).
-  - Gemini: bootstrap gemini writes ~/.gemini/settings.json (SessionStart->inject, AfterTool matcher read_file|write_file|replace ->record) + GEMINI.md fallback. Gemini's file tools carry the path in tool_input.file_path (same field as Claude), so record needs no special parsing -- just the tool names. Gemini-only: post-tool event is AfterTool (not PostToolUse); SessionStart matcher is an exact lifecycle string so we OMIT it to fire on all sources.
-
-SHARED CODE: cmd/engram/bootstrap.go installEngramHooks(path, exe, []hookSpec) writes both Codex and Gemini hook files (they differ only in event names + matchers); stripEngramHooks(path, recordEvent, sessionEvent) removes them. Claude's addEngramHooks stays separate (entangled with statusLine + allowlist + project/global). All three CLIs converging on one hook protocol validates engram's hook architecture; a future unification of all three writers is the noted refactor when it earns its keep.
-
-Other platforms (AntiGravity, Copilot, Cursor): still system-prompt-file only (KI metadata / copilot-instructions.md / .cursorrules) telling the agent to run 'engram inject --text'; no record. Add hooks for any that gain reliable support. See [[priority-ladder]] (P0 config is platform-specific).
-
-## db-design
-Per-project DB at .engram/mem.db, paths relative to project root. Global DB at ~/.engram/mem.db.
-
-memories table + memories_fts (FTS5, full-text searched via engram mem search). events table is FILE-ACTIVITY-ONLY as of schema v3 (2026-06-10): columns (id, session_id, ts, tool, file_path) -- NO snippet column and NO events_fts virtual table, because nothing ever queried the events FTS. See [[record-file-activity-only]] for the rationale and the v2->v3 rebuild migration.
-
-Session-count pruning (keep 100). Prune runs at session start alongside inject. Legacy path .claude/engram.db supported via read fallback; migrate --cleanup to move. Schema versioned via PRAGMA user_version; dbInit applies schema.sql (CREATE IF NOT EXISTS) then replays migrations from the stored version, so every migration must be idempotent on a fresh DB too.
-
-## global-db
-Global memories (invariants, preferences) in ~/.engram/mem.db. Project memories (long, short) + events in .engram/mem.db (relative to project root). Legacy paths (.claude/engram.db) supported via read fallback. Inject reads both global and project DBs.
 
 ## cmd-engram-test-gap
 cmd/engram historically had NO test files. PARTIAL PAYDOWN 2026-06-04: cmd/engram/tool_test.go added, covering the new "engram tool" command logic -- validToolName (path-traversal safety), promote project=move vs global=copy semantics, candidate->global move, discard, copyFile mode preservation -- via temp-root + temp-HOME fixtures driving the RunE funcs directly (rootCWD global pointed at the temp root; no stdin/stdout plumbing needed).
@@ -173,4 +173,13 @@ HOW TO APPLY: at the START of any multi-file edit task, run `git status`; if the
 RECORD IS FILE-ACTIVITY-ONLY (decided 2026-06-10, Chris). record captures only the "recently active files" breadcrumb -- the one passive signal that earns its keep, because recency itself IS the signal (no curated "why" needed to make "the files I just had open" useful). DROPPED as noise: bash grep/find "searches" (result-less, intent-less trivia) and content "snippets" (the snippet column fed an events_fts index NOTHING ever queried). Schema v3 rebuilds events without snippet/FTS and purges old Bash rows; the migration is a canonical SQLite table-rebuild (copy kept columns into a new table, swap names) so it names snippet nowhere and is safe on a fresh DB too, where migrations replay from v0. See [[db-design]].
 
 DISPATCH IS DATA-DRIVEN, NO FLAG: `engram record` reads tool_name off the hook stdin. Claude's Read/Edit/Write take tool_input.file_path; ANY other tool falls through to engram.PatchedFiles, which scans tool_input string fields for a Codex V4A apply_patch envelope (*** Add File: / *** Update File: / *** Delete File: / *** Move to:) and records each touched path. Field-name-agnostic, so it catches both native apply_patch and shell-heredoc delivery. The SAME `engram record` hook line works verbatim on Claude and Codex -- the binary never needs to know which agent invoked it. The only knob is the hooks.json matcher (config, not record code): broadening it (e.g. to catch heredoc apply_patch arriving as Bash) needs no record change. See [[platform-strategy]].
+
+## status-line-questions
+Status line + orientation resolved (2026-06-03). engram status reads the 'codename' invariant and renders 'codename · project · N long · M short' via the pure helper FormatStatusLine (pkg/engram). inject leads with a '## Orientation' header (orientationHeader) stating codename + memory counts, before the Identity dump. agentinfo asks the agent to open with a brief in-character orientation sentence and keep its codename in voice all session. Codename IS a canonical invariant key (not gone). Remaining gap: status line still does not render in VS Code (platform limitation).
+
+## mcp-design
+MCP server for engram must be stateless per-call: every tool takes cwd, resolves project root dynamically via FindProjectRoot, never caches project state at server level. The multi-repo problem is not an MCP limitation -- it is a bad implementation pattern. A2A rejected for engram: its statefulness is for long-running agent task lifecycle, not for knowing which project you are in. MCP + stateless design is correct. Cursor is the first target: .cursorrules handles injection (per-project by definition), MCP server handles recording and mem operations.
+
+## bash-events
+Bash events: file_path = normalized command string (rtk prefix stripped), snippet = stdout head-N. Only grep and find recorded. Failed commands filtered.
 

@@ -53,9 +53,10 @@ project?" If yes, it's global. If it's specific to this codebase or team, it's
 project-level. Before writing or updating any global memory, always ask the user
 for confirmation -- global changes affect every project and session.
 
-If session start context appears twice or seems duplicated, engram hooks are
-probably configured in more than one place. Ask the user which to keep and help
-remove the duplicate.
+If session start context appears twice or seems duplicated, first check whether
+a markdown init file still has an unconditional "engram inject --text" startup
+instruction, then check whether engram hooks are configured in more than one
+place. Ask the user which to keep and help remove the duplicate.
 
 When starting a digression or the user says "come back to this": save current context
 to short-term memory first, confirm it is saved, then proceed. Re-read short-term

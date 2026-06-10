@@ -487,7 +487,13 @@ Safe to re-run: skips pieces that are already present.`,
 const engramProtocolSection = `
 ## Engram Session Protocol
 
-At the start of every new conversation, before taking any other action, run:
+At the start of a new conversation, first check whether engram context is already
+present in this session. Look for sections such as "## Orientation",
+"## Identity", "## Preferences", or "## Long-term memory".
+
+If that context is already present, do not run another inject command.
+
+If it is absent, before taking any other action, run:
 
   engram inject --text
 
@@ -619,6 +625,18 @@ func bootstrapAppendToFile(path, section string) (bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return false, err
+	}
+	if engramSectionRE.Match(data) {
+		updated := engramSectionRE.ReplaceAll(data, []byte(section+"\n"))
+		if string(updated) == string(data) {
+			fmt.Printf("skip (already present): engram section in %s\n", path)
+			return false, nil
+		}
+		if err := os.WriteFile(path, updated, 0644); err != nil {
+			return false, err
+		}
+		fmt.Printf("updated: engram section in %s\n", path)
+		return true, nil
 	}
 	if strings.Contains(string(data), "engram inject --text") {
 		fmt.Printf("skip (already present): engram section in %s\n", path)

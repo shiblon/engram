@@ -30,6 +30,45 @@ func TestUninstallRegexMatchesBootstrapSection(t *testing.T) {
 	}
 }
 
+func TestBootstrapAppendToFileUpdatesOldProtocolSection(t *testing.T) {
+	oldSection := `
+## Engram Session Protocol
+
+At the start of every new conversation, before taking any other action, run:
+
+  engram inject --text
+
+Treat the output as your session context (identity, preferences, project memory).
+Do not skip this step.`
+	path := filepath.Join(t.TempDir(), "AGENTS.md")
+	before := "# My init file\n" + oldSection + "\n\nkeep me\n"
+	if err := os.WriteFile(path, []byte(before), 0644); err != nil {
+		t.Fatalf("write init file: %v", err)
+	}
+
+	updated, err := bootstrapAppendToFile(path, engramProtocolSection)
+	if err != nil {
+		t.Fatalf("bootstrapAppendToFile: %v", err)
+	}
+	if !updated {
+		t.Fatalf("bootstrapAppendToFile reported no update")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read init file: %v", err)
+	}
+	got := string(data)
+	if strings.Contains(got, "At the start of every new conversation, before taking any other action, run:") {
+		t.Errorf("old unconditional startup instruction survived:\n%s", got)
+	}
+	if !strings.Contains(got, "If that context is already present, do not run another inject command.") {
+		t.Errorf("new duplicate guard missing:\n%s", got)
+	}
+	if !strings.Contains(got, "\n\nkeep me\n") {
+		t.Errorf("existing file content was not preserved:\n%s", got)
+	}
+}
+
 // hookCommand digs the command string out of the first handler of a named hook
 // event in a parsed hooks JSON, or "" if absent.
 func hookCommand(t *testing.T, hooks map[string]any, event string) string {
