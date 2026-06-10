@@ -12,18 +12,18 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// syncInvariantsIfTouched re-renders the per-platform invariant files when a
-// global invariant was just mutated -- the render-on-write half of the channel
-// strategy that keeps invariants on the authoritative always-loaded channel.
-// Best-effort: a sync failure must never fail the mem operation that triggered it.
-func syncInvariantsIfTouched(ctx context.Context, h *engram.DBHandle, tiers ...engram.Tier) {
+// syncStandingIfTouched re-renders the per-platform standing-memory files when a
+// global invariant or preference was just mutated -- the render-on-write half of
+// the channel strategy that keeps both tiers on the authoritative always-loaded
+// channel. Best-effort: a sync failure must never fail the mem operation itself.
+func syncStandingIfTouched(ctx context.Context, h *engram.DBHandle, tiers ...engram.Tier) {
 	if !memGlobal {
 		return
 	}
 	for _, t := range tiers {
-		if t == engram.TierInvariant {
-			if err := engram.SyncInvariantFiles(ctx, h.DB); err != nil {
-				fmt.Fprintf(os.Stderr, "engram: sync invariants: %v\n", err)
+		if t == engram.TierInvariant || t == engram.TierPreference {
+			if err := engram.SyncStandingMemory(ctx, h.DB); err != nil {
+				fmt.Fprintf(os.Stderr, "engram: sync standing memory: %v\n", err)
 			}
 			return
 		}
@@ -52,7 +52,7 @@ var memWriteCmd = &cobra.Command{
 		if err := engram.WriteMemory(ctx, h.DB, m); err != nil {
 			return err
 		}
-		syncInvariantsIfTouched(ctx, h, engram.Tier(memTier))
+		syncStandingIfTouched(ctx, h, engram.Tier(memTier))
 		scope := "project"
 		if memGlobal {
 			scope = "global"
@@ -183,7 +183,7 @@ var memDeleteCmd = &cobra.Command{
 		if err := engram.DeleteMemory(ctx, h.DB, tier, args[0]); err != nil {
 			return err
 		}
-		syncInvariantsIfTouched(ctx, h, tier)
+		syncStandingIfTouched(ctx, h, tier)
 		return nil
 	},
 }
@@ -238,7 +238,7 @@ Tiers: invariant, preference, long, short, cold`,
 			from, engram.Tier(moveTo)); err != nil {
 			return err
 		}
-		syncInvariantsIfTouched(ctx, h, from, engram.Tier(moveTo))
+		syncStandingIfTouched(ctx, h, from, engram.Tier(moveTo))
 		fmt.Printf("moved %q from %s to %s\n", args[0], from, moveTo)
 		return nil
 	},
