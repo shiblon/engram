@@ -101,16 +101,33 @@ func hookMatcher(t *testing.T, hooks map[string]any, event string) string {
 
 func readHooks(t *testing.T, path string) map[string]any {
 	t.Helper()
+	settings := readSettings(t, path)
+	hooks, _ := settings["hooks"].(map[string]any)
+	return hooks
+}
+
+func readSettings(t *testing.T, path string) map[string]any {
+	t.Helper()
 	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read hooks file: %v", err)
+		t.Fatalf("read settings file: %v", err)
 	}
 	var settings map[string]any
 	if err := json.Unmarshal(data, &settings); err != nil {
-		t.Fatalf("parse hooks file: %v", err)
+		t.Fatalf("parse settings file: %v", err)
 	}
-	hooks, _ := settings["hooks"].(map[string]any)
-	return hooks
+	return settings
+}
+
+func writeSettings(t *testing.T, path string, settings map[string]any) {
+	t.Helper()
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal settings: %v", err)
+	}
+	if err := os.WriteFile(path, append(data, '\n'), 0644); err != nil {
+		t.Fatalf("write settings file: %v", err)
+	}
 }
 
 // Both Codex and Gemini install record + inject hooks through the shared
@@ -125,7 +142,9 @@ func TestAgentHooksRoundTrip(t *testing.T) {
 		recordMatch  string
 		sessionEvent string
 	}{
-		{"codex", bootstrapCodexHooks, "PostToolUse", "^apply_patch$", "SessionStart"},
+		{"codex", func(path, exe string) error {
+			return bootstrapCodexHooks(path, exe, true)
+		}, "PostToolUse", "^apply_patch$", "SessionStart"},
 		{"gemini", bootstrapGeminiHooks, "AfterTool", "read_file|write_file|replace", "SessionStart"},
 	}
 	for _, c := range cases {
@@ -164,5 +183,89 @@ func TestAgentHooksRoundTrip(t *testing.T) {
 				t.Errorf("engram hooks survived uninstall: %+v", hooks)
 			}
 		})
+	}
+}
+
+func TestCodexNoSessionHookKeepsRecordAndRemovesInject(t *testing.T) {
+	const exe = "/usr/local/bin/engram"
+	path := filepath.Join(t.TempDir(), "codex", "hooks.json")
+
+	if err := bootstrapCodexHooks(path, exe, true); err != nil {
+		t.Fatalf("bootstrapCodexHooks: %v", err)
+	}
+	hooks := readHooks(t, path)
+	if got := hookCommand(t, hooks, "SessionStart"); !strings.Contains(got, "engram inject") {
+		t.Fatalf("initial SessionStart command = %q, want engram inject", got)
+	}
+
+	if err := bootstrapCodexHooks(path, exe, false); err != nil {
+		t.Fatalf("bootstrapCodexHooks no session: %v", err)
+	}
+	hooks = readHooks(t, path)
+	if got := hookCommand(t, hooks, "SessionStart"); got != "" {
+		t.Errorf("SessionStart command after no-session bootstrap = %q, want none", got)
+	}
+	if got := hookCommand(t, hooks, "PostToolUse"); !strings.Contains(got, "engram record") {
+		t.Errorf("PostToolUse command after no-session bootstrap = %q, want engram record", got)
+	}
+
+	// Idempotent: a second no-session bootstrap still keeps only the record hook.
+	if err := bootstrapCodexHooks(path, exe, false); err != nil {
+		t.Fatalf("second bootstrapCodexHooks no session: %v", err)
+	}
+	hooks = readHooks(t, path)
+	if got := hookCommand(t, hooks, "SessionStart"); got != "" {
+		t.Errorf("SessionStart command after second no-session bootstrap = %q, want none", got)
+	}
+	if n := len(hooks["PostToolUse"].([]any)); n != 1 {
+		t.Errorf("PostToolUse entries after second no-session bootstrap = %d, want 1", n)
+	}
+}
+
+func TestCodexBootstrapDoesNotDuplicateRecordHookWhenExePathChanges(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "codex", "hooks.json")
+
+	if err := bootstrapCodexHooks(path, "/opt/homebrew/bin/engram", false); err != nil {
+		t.Fatalf("initial bootstrapCodexHooks: %v", err)
+	}
+	if err := bootstrapCodexHooks(path, "/var/folders/tmp/go-build/b001/exe/engram", false); err != nil {
+		t.Fatalf("second bootstrapCodexHooks: %v", err)
+	}
+
+	hooks := readHooks(t, path)
+	if n := len(hooks["PostToolUse"].([]any)); n != 1 {
+		t.Fatalf("PostToolUse entries after exe path changed = %d, want 1", n)
+	}
+	if got := hookCommand(t, hooks, "PostToolUse"); got != "/opt/homebrew/bin/engram record" {
+		t.Errorf("PostToolUse command = %q, want original stable command", got)
+	}
+}
+
+func TestCodexBootstrapDedupesExistingRecordHooks(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "codex", "hooks.json")
+
+	if err := bootstrapCodexHooks(path, "/opt/homebrew/bin/engram", false); err != nil {
+		t.Fatalf("initial bootstrapCodexHooks: %v", err)
+	}
+	settings := readSettings(t, path)
+	hooks := settings["hooks"].(map[string]any)
+	hooks["PostToolUse"] = append(hooks["PostToolUse"].([]any), map[string]any{
+		"matcher": "^apply_patch$",
+		"hooks": []any{map[string]any{
+			"type":    "command",
+			"command": "/var/folders/tmp/go-build/b001/exe/engram record",
+		}},
+	})
+	writeSettings(t, path, settings)
+
+	if err := bootstrapCodexHooks(path, "/usr/local/bin/engram", false); err != nil {
+		t.Fatalf("repair bootstrapCodexHooks: %v", err)
+	}
+	hooks = readHooks(t, path)
+	if n := len(hooks["PostToolUse"].([]any)); n != 1 {
+		t.Fatalf("PostToolUse entries after repair = %d, want 1", n)
+	}
+	if got := hookCommand(t, hooks, "PostToolUse"); got != "/opt/homebrew/bin/engram record" {
+		t.Errorf("PostToolUse command after repair = %q, want original stable command", got)
 	}
 }

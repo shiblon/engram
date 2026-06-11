@@ -103,6 +103,8 @@ Install engram:
    <full-path>/engram bootstrap cursor           # Cursor (run in project dir)
    <full-path>/engram bootstrap codex            # Codex CLI (run in project dir)
    <full-path>/engram bootstrap codex -g         # Codex CLI (global, ~/.codex/AGENTS.md)
+   <full-path>/engram bootstrap codex -g --no-session-hook
+                                                 # Codex fallback-only startup, keeps file tracking
    <full-path>/engram bootstrap initfile <path>  # any agent with a markdown init file
 
 Open a new session when done -- the short-term stack will guide you from there.

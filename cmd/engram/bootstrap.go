@@ -698,6 +698,7 @@ func runBootstrapInitFile(cmd *cobra.Command, args []string) error {
 // bootstrap codex
 
 var bootstrapCodexGlobal bool
+var bootstrapCodexNoSessionHook bool
 
 var bootstrapCodexCmd = &cobra.Command{
 	Use:   "codex",
@@ -714,6 +715,10 @@ By default both go in the project (.codex/hooks.json and ./AGENTS.md). Use -g to
 write to ~/.codex instead (global, applies to all projects). Codex only honors
 project-local .codex/ config in trusted projects, so prefer -g on machines where
 you have not trusted the project.
+
+Use --no-session-hook to skip the SessionStart inject hook and rely on AGENTS.md
+for startup context while keeping apply_patch file tracking. Re-running with
+--no-session-hook removes an existing engram SessionStart hook.
 
 Safe to re-run: skips pieces that are already present.`,
 	RunE: runBootstrapCodex,
@@ -758,7 +763,7 @@ func runBootstrapCodex(cmd *cobra.Command, _ []string) error {
 	}
 	countWroteSkipped(ok, &wrote, &skipped)
 
-	if err := bootstrapCodexHooks(hooksPath, exe); err != nil {
+	if err := bootstrapCodexHooks(hooksPath, exe, !bootstrapCodexNoSessionHook); err != nil {
 		return err
 	}
 
@@ -794,7 +799,11 @@ func installEngramHooks(path, exe string, specs []hookSpec) error {
 	changed := false
 	for _, s := range specs {
 		cmd := exe + " " + s.subcommand
-		if engramHookPresent(hooks, s.event, cmd) {
+		marker := "engram " + s.subcommand
+		if dedupeEngramHooks(hooks, s.event, marker, path) {
+			changed = true
+		}
+		if engramHookPresent(hooks, s.event, marker) {
 			fmt.Printf("skip (present): %s %s hook in %s\n", s.event, s.subcommand, path)
 			continue
 		}
@@ -820,8 +829,8 @@ func installEngramHooks(path, exe string, specs []hookSpec) error {
 }
 
 // engramHookPresent reports whether any handler under the given event already
-// runs a command containing cmd.
-func engramHookPresent(hooks map[string]any, event, cmd string) bool {
+// runs the engram subcommand named by marker (for example, "engram record").
+func engramHookPresent(hooks map[string]any, event, marker string) bool {
 	for _, group := range asSlice(hooks[event]) {
 		gm, ok := group.(map[string]any)
 		if !ok {
@@ -832,7 +841,7 @@ func engramHookPresent(hooks map[string]any, event, cmd string) bool {
 			if !ok {
 				continue
 			}
-			if c, _ := hm["command"].(string); strings.Contains(c, cmd) {
+			if c, _ := hm["command"].(string); strings.Contains(c, marker) {
 				return true
 			}
 		}
@@ -840,14 +849,86 @@ func engramHookPresent(hooks map[string]any, event, cmd string) bool {
 	return false
 }
 
-// bootstrapCodexHooks installs engram's SessionStart (inject) and PostToolUse
-// (record) hooks into a Codex hooks.json. The record matcher targets
-// apply_patch, Codex's file-edit tool.
-func bootstrapCodexHooks(path, exe string) error {
-	return installEngramHooks(path, exe, []hookSpec{
-		{event: "SessionStart", matcher: "startup|resume|clear|compact", subcommand: "inject"},
+// dedupeEngramHooks keeps the first hook for marker and removes later duplicate
+// handlers. It matters when bootstrap is run from a development binary: the
+// executable path may be a Go build-cache path, but the semantic hook is still
+// the same "engram record" or "engram inject" action.
+func dedupeEngramHooks(hooks map[string]any, event, marker, path string) bool {
+	arr, ok := hooks[event].([]any)
+	if !ok {
+		return false
+	}
+	kept := false
+	changed := false
+	filtered := make([]any, 0, len(arr))
+	for _, group := range arr {
+		gm, ok := group.(map[string]any)
+		if !ok {
+			filtered = append(filtered, group)
+			continue
+		}
+		hookList, _ := gm["hooks"].([]any)
+		keptHooks := make([]any, 0, len(hookList))
+		for _, h := range hookList {
+			hm, ok := h.(map[string]any)
+			cmd, _ := hm["command"].(string)
+			if ok && strings.Contains(cmd, marker) {
+				if kept {
+					changed = true
+					continue
+				}
+				kept = true
+			}
+			keptHooks = append(keptHooks, h)
+		}
+		if len(keptHooks) == 0 {
+			changed = true
+			continue
+		}
+		gm["hooks"] = keptHooks
+		filtered = append(filtered, gm)
+	}
+	if changed {
+		hooks[event] = filtered
+		fmt.Printf("removed duplicate: %s hook from %s\n", marker, path)
+	}
+	return changed
+}
+
+// bootstrapCodexHooks installs engram's Codex hooks. The record hook always
+// tracks apply_patch file edits; the SessionStart inject hook is optional
+// because Codex currently surfaces hook additionalContext visibly. When the
+// session hook is omitted, any existing engram SessionStart hook is removed so
+// re-running bootstrap repairs earlier installs.
+func bootstrapCodexHooks(path, exe string, includeSessionHook bool) error {
+	specs := []hookSpec{
 		{event: "PostToolUse", matcher: "^apply_patch$", subcommand: "record"},
-	})
+	}
+	if includeSessionHook {
+		specs = append([]hookSpec{
+			{event: "SessionStart", matcher: "startup|resume|clear|compact", subcommand: "inject"},
+		}, specs...)
+	}
+	if err := installEngramHooks(path, exe, specs); err != nil {
+		return err
+	}
+	if includeSessionHook {
+		return nil
+	}
+
+	settings, err := readSettingsJSON(path)
+	if err != nil {
+		return err
+	}
+	hooks, _ := settings["hooks"].(map[string]any)
+	if hooks == nil {
+		return nil
+	}
+	if !removeEngramHook(hooks, "SessionStart", "engram inject", "engram inject hook", path) {
+		return nil
+	}
+	settings["hooks"] = hooks
+	return writeSettingsJSON(path, settings)
 }
 
 // bootstrapGeminiHooks installs engram's SessionStart (inject) and AfterTool
@@ -897,6 +978,7 @@ func asSlice(v any) []any {
 func init() {
 	bootstrapClaudeCmd.Flags().BoolVarP(&bootstrapClaudeGlobal, "global", "g", false, "write hooks to ~/.claude/settings.json instead of the project's .claude/settings.json")
 	bootstrapCodexCmd.Flags().BoolVarP(&bootstrapCodexGlobal, "global", "g", false, "write to ~/.codex/AGENTS.md instead of the project's AGENTS.md")
+	bootstrapCodexCmd.Flags().BoolVar(&bootstrapCodexNoSessionHook, "no-session-hook", false, "do not install Codex SessionStart inject hook; rely on AGENTS.md fallback")
 	bootstrapCmd.AddCommand(bootstrapClaudeCmd, bootstrapAntigravityCmd, bootstrapGeminiCmd, bootstrapCopilotCmd, bootstrapCursorCmd, bootstrapCodexCmd, bootstrapInitFileCmd)
 	rootCmd.AddCommand(bootstrapCmd)
 }
