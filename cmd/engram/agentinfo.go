@@ -29,6 +29,11 @@ If inject context was absent and you are reading these instructions for the firs
 (not from your normal startup files), ask the user whether to add engram to their
 session startup: engram bootstrap <platform> wires it in permanently.
 
+Platform bootstraps call inject with an agent flag, such as
+engram inject --agent codex. That flag loads the agent-specific global layer on
+top of the primary identity/preferences. Plain engram inject loads only primary
+global guidance plus project memory.
+
 ## Memory workflow
 
 Memory writes are scoped to the current project. Do not write to memory or files
@@ -37,21 +42,32 @@ in other repos or projects without explicit user approval.
 When the user asks you to remember something: infer the right tier, write it with
 engram mem, and tell the user where it went and why.
 
-First, though, judge whether the preference is enforced by CONFIG or a HOOK rather
-than memory. Memory cannot override a harness or config-level default -- a pref
-stored only in engram gets silently beaten by it (the Co-Authored-By trailer was
-suppressed only by includeCoAuthoredBy:false, never by memory). If a settings.json
-flag, a hook, or managed policy enforces it, propose that change instead (use the
-update-config skill to find the current flag) and store only a memory POINTER to
-where it is enforced -- do not rely on memory alone. Categories that are usually
-config-not-memory: commit/PR attribution, git workflow gating, event-driven or
-"always do X" behaviors (hooks), verbosity, output style, theme, language, editor
-mode, and permissions.
+First, decide whether the rule belongs in memory at all. If a native config flag,
+hook, or managed policy can enforce it, propose that structural change and store
+only a terse memory pointer to where it is enforced. Memory alone loses to
+harness/config defaults at point of action.
 
-To decide global vs. project: ask "would this matter in a completely different
-project?" If yes, it's global. If it's specific to this codebase or team, it's
-project-level. Before writing or updating any global memory, always ask the user
-for confirmation -- global changes affect every project and session.
+Then choose project vs. global: if it matters in a completely different project,
+it is global; if it belongs to this repo or team, it is project memory. Ask before
+writing or updating global memory.
+
+For global personality, invariants, and preferences, choose primary vs. agent
+layer:
+- Primary global memory is for cross-agent guidance the user wants everywhere.
+  Examples: codename, base personality, general code style, durable workflow
+  preferences. Use: engram mem -g -t invariant|preference write <key> <content>
+- Agent-layer memory is for guidance caused by one agent's harness defaults,
+  instruction channel, tool shape, or recurring failure mode. Use the current
+  agent slug, for example: engram mem -g --agent codex -t preference write <key> <content>
+
+When the user asks to adjust personality or behavior, do not guess primary vs.
+layer silently. If the adjustment compensates for this agent's defaults, say so
+and write it to the layer; if it is general, write it to the primary tier.
+
+Useful inspections:
+  engram mem -g list personality          # primary personality plus all layers
+  engram mem -g --agent codex list        # primary standing memory plus Codex layer
+  engram inject --text --agent codex      # verify the effective injected context
 
 If session start context appears twice or seems duplicated, first check whether
 a markdown init file still has an unconditional "engram inject --text" startup
@@ -71,6 +87,7 @@ Run: engram mem --help for full command reference.
 
 - invariant  (--global): personality -- applies to all projects
 - preference (--global): rules -- applies to all projects
+- --agent <name>:      global invariant/preference layer for one agent
 - long:                  settled decisions, facts, and durable backlog
 - short:                 truly transient working state, the live stack
 - cold:                  low-priority archive -- injected as index only

@@ -41,11 +41,15 @@ changes are overwritten on the next `+"`engram mem`"+` %s change. Update with:
 // framed with the same weight as operating instructions to push back against the
 // harness defaults that otherwise dominate at point-of-action.
 func RenderInvariantsText(invariants []Memory) string {
+	return RenderLayeredInvariantsText(PrimaryMemories(invariants), nil, "")
+}
+
+func RenderLayeredInvariantsText(invariants, layer []Memory, agent string) string {
 	var b strings.Builder
 	b.WriteString(standingFileHeader(TierInvariant))
 	b.WriteString("\n# Invariants (binding)\n\n")
 
-	if len(invariants) == 0 {
+	if len(invariants) == 0 && len(layer) == 0 {
 		b.WriteString("(No invariants set yet. Add one with:\n" +
 			"  engram mem -g -t invariant write codename <name>)\n")
 		return b.String()
@@ -61,6 +65,13 @@ func RenderInvariantsText(invariants []Memory) string {
 	for _, m := range invariants {
 		fmt.Fprintf(&b, "**%s**: %s\n", m.Key, m.Content)
 	}
+	if agent != "" && len(layer) > 0 {
+		fmt.Fprintf(&b, "\n## %s layer\n\n", agent)
+		b.WriteString("Apply these agent-specific invariants on top of the primary invariants.\n\n")
+		for _, m := range layer {
+			fmt.Fprintf(&b, "**%s**: %s\n", m.Key, m.Content)
+		}
+	}
 	return b.String()
 }
 
@@ -69,11 +80,15 @@ func RenderInvariantsText(invariants []Memory) string {
 // the user's current instruction -- one rung below invariants, deliberately not
 // framed as unconditional. Rules that must never yield belong in config/hooks.
 func RenderPreferencesText(prefs []Memory) string {
+	return RenderLayeredPreferencesText(PrimaryMemories(prefs), nil, "")
+}
+
+func RenderLayeredPreferencesText(prefs, layer []Memory, agent string) string {
 	var b strings.Builder
 	b.WriteString(standingFileHeader(TierPreference))
 	b.WriteString("\n# Preferences (standing defaults)\n\n")
 
-	if len(prefs) == 0 {
+	if len(prefs) == 0 && len(layer) == 0 {
 		b.WriteString("(No preferences set yet. Add one with:\n" +
 			"  engram mem -g -t preference write <key> <content>)\n")
 		return b.String()
@@ -87,6 +102,13 @@ func RenderPreferencesText(prefs []Memory) string {
 	for _, m := range prefs {
 		fmt.Fprintf(&b, "- %s\n", m.Content)
 	}
+	if agent != "" && len(layer) > 0 {
+		fmt.Fprintf(&b, "\n## %s layer\n\n", agent)
+		b.WriteString("Apply these agent-specific preferences on top of the primary preferences.\n\n")
+		for _, m := range layer {
+			fmt.Fprintf(&b, "- %s\n", m.Content)
+		}
+	}
 	return b.String()
 }
 
@@ -96,12 +118,12 @@ func RenderPreferencesText(prefs []Memory) string {
 type standingRender struct {
 	tier     Tier
 	fileBase string
-	render   func([]Memory) string
+	render   func([]Memory, []Memory, string) string
 }
 
 var standingRenders = []standingRender{
-	{tier: TierInvariant, fileBase: "engram-invariants.md", render: RenderInvariantsText},
-	{tier: TierPreference, fileBase: "engram-preferences.md", render: RenderPreferencesText},
+	{tier: TierInvariant, fileBase: "engram-invariants.md", render: RenderLayeredInvariantsText},
+	{tier: TierPreference, fileBase: "engram-preferences.md", render: RenderLayeredPreferencesText},
 }
 
 // StandingFileBases returns the base names of the per-platform files engram
@@ -120,6 +142,7 @@ func StandingFileBases() []string {
 // a no-op until the platform is bootstrapped).
 type standingTarget struct {
 	dir          string
+	agent        string
 	bootstrapped func() bool
 }
 
@@ -131,7 +154,8 @@ func standingTargets(home string) []standingTarget {
 	claudeDir := filepath.Join(home, ".claude")
 	return []standingTarget{
 		{
-			dir: claudeDir,
+			dir:   claudeDir,
+			agent: "claude",
 			bootstrapped: func() bool {
 				_, err := os.Stat(filepath.Join(claudeDir, "engram.md"))
 				return err == nil
@@ -156,27 +180,21 @@ func SyncStandingMemory(ctx context.Context, globalDB *sql.DB) error {
 		return nil // can't locate home; nothing to render to
 	}
 
-	// Render each tier once, independent of how many platforms consume it.
-	type rendered struct{ fileBase, text string }
-	out := make([]rendered, len(standingRenders))
-	for i, s := range standingRenders {
-		mems, err := ListMemories(ctx, globalDB, s.tier)
-		if err != nil {
-			return fmt.Errorf("sync standing: read %s: %w", s.tier, err)
-		}
-		out[i] = rendered{s.fileBase, s.render(mems)}
-	}
-
 	for _, t := range standingTargets(home) {
 		if !t.bootstrapped() {
 			continue
 		}
-		for _, r := range out {
-			path := filepath.Join(t.dir, r.fileBase)
-			if cur, err := os.ReadFile(path); err == nil && string(cur) == r.text {
+		for _, s := range standingRenders {
+			mems, err := ListMemories(ctx, globalDB, s.tier)
+			if err != nil {
+				return fmt.Errorf("sync standing: read %s: %w", s.tier, err)
+			}
+			text := s.render(PrimaryMemories(mems), AgentLayerMemories(mems, t.agent), t.agent)
+			path := filepath.Join(t.dir, s.fileBase)
+			if cur, err := os.ReadFile(path); err == nil && string(cur) == text {
 				continue // already current
 			}
-			if err := os.WriteFile(path, []byte(r.text), 0o644); err != nil {
+			if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
 				return fmt.Errorf("sync standing (%s): %w", path, err)
 			}
 		}

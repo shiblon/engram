@@ -8,14 +8,14 @@ import (
 	"testing"
 )
 
-// The session-protocol block lives in one constant (engramProtocolSection,
+// The session-protocol block lives in one renderer (engramProtocolSection,
 // written by every markdown-init-file bootstrap) and is removed by one regex
 // (engramSectionRE, used by every corresponding uninstall). They live in
 // separate files and must not drift: a regex that no longer matches what
 // bootstrap wrote would silently leave the section behind on uninstall.
 func TestUninstallRegexMatchesBootstrapSection(t *testing.T) {
 	// bootstrap appends the section followed by a newline.
-	written := engramProtocolSection + "\n"
+	written := engramProtocolSection("codex") + "\n"
 
 	if !engramSectionRE.MatchString(written) {
 		t.Fatalf("engramSectionRE does not match what bootstrap writes:\n%q", written)
@@ -46,7 +46,7 @@ Do not skip this step.`
 		t.Fatalf("write init file: %v", err)
 	}
 
-	updated, err := bootstrapAppendToFile(path, engramProtocolSection)
+	updated, err := bootstrapAppendToFile(path, engramProtocolSection("codex"))
 	if err != nil {
 		t.Fatalf("bootstrapAppendToFile: %v", err)
 	}
@@ -63,6 +63,39 @@ Do not skip this step.`
 	}
 	if !strings.Contains(got, "If that context is already present, do not run another inject command.") {
 		t.Errorf("new duplicate guard missing:\n%s", got)
+	}
+	if !strings.Contains(got, "engram inject --text --agent codex") {
+		t.Errorf("agent-specific inject command missing:\n%s", got)
+	}
+	if !strings.Contains(got, "\n\nkeep me\n") {
+		t.Errorf("existing file content was not preserved:\n%s", got)
+	}
+}
+
+func TestBootstrapAppendToFileUpdatesUnlayeredProtocolSection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "AGENTS.md")
+	before := "# My init file\n" + engramProtocolSection("") + "\n\nkeep me\n"
+	if err := os.WriteFile(path, []byte(before), 0644); err != nil {
+		t.Fatalf("write init file: %v", err)
+	}
+
+	updated, err := bootstrapAppendToFile(path, engramProtocolSection("codex"))
+	if err != nil {
+		t.Fatalf("bootstrapAppendToFile: %v", err)
+	}
+	if !updated {
+		t.Fatalf("bootstrapAppendToFile reported no update")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read init file: %v", err)
+	}
+	got := string(data)
+	if !strings.Contains(got, "engram inject --text --agent codex") {
+		t.Errorf("agent-specific inject command missing:\n%s", got)
+	}
+	if strings.Contains(got, "\n  engram inject --text\n") {
+		t.Errorf("old unlayered inject command survived:\n%s", got)
 	}
 	if !strings.Contains(got, "\n\nkeep me\n") {
 		t.Errorf("existing file content was not preserved:\n%s", got)
@@ -158,8 +191,8 @@ func TestAgentHooksRoundTrip(t *testing.T) {
 			if got := hookCommand(t, hooks, c.recordEvent); !strings.Contains(got, "engram record") {
 				t.Errorf("%s command = %q, want 'engram record'", c.recordEvent, got)
 			}
-			if got := hookCommand(t, hooks, c.sessionEvent); !strings.Contains(got, "engram inject") {
-				t.Errorf("%s command = %q, want 'engram inject'", c.sessionEvent, got)
+			if got := hookCommand(t, hooks, c.sessionEvent); !strings.Contains(got, "engram inject --agent "+c.name) {
+				t.Errorf("%s command = %q, want agent-specific inject", c.sessionEvent, got)
 			}
 			if got := hookMatcher(t, hooks, c.recordEvent); got != c.recordMatch {
 				t.Errorf("%s matcher = %q, want %q", c.recordEvent, got, c.recordMatch)
@@ -186,6 +219,34 @@ func TestAgentHooksRoundTrip(t *testing.T) {
 	}
 }
 
+func TestAgentHooksUpgradePlainInjectCommand(t *testing.T) {
+	const exe = "/usr/local/bin/engram"
+	path := filepath.Join(t.TempDir(), "codex", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("mkdir hooks dir: %v", err)
+	}
+	settings := map[string]any{
+		"hooks": map[string]any{
+			"SessionStart": []any{map[string]any{
+				"matcher": "startup|resume|clear|compact",
+				"hooks": []any{map[string]any{
+					"type":    "command",
+					"command": "/opt/homebrew/bin/engram inject",
+				}},
+			}},
+		},
+	}
+	writeSettings(t, path, settings)
+
+	if err := bootstrapCodexHooks(path, exe, true); err != nil {
+		t.Fatalf("bootstrapCodexHooks: %v", err)
+	}
+	hooks := readHooks(t, path)
+	if got := hookCommand(t, hooks, "SessionStart"); got != "/opt/homebrew/bin/engram inject --agent codex" {
+		t.Errorf("SessionStart command = %q, want upgraded stable path", got)
+	}
+}
+
 func TestCodexNoSessionHookKeepsRecordAndRemovesInject(t *testing.T) {
 	const exe = "/usr/local/bin/engram"
 	path := filepath.Join(t.TempDir(), "codex", "hooks.json")
@@ -194,8 +255,8 @@ func TestCodexNoSessionHookKeepsRecordAndRemovesInject(t *testing.T) {
 		t.Fatalf("bootstrapCodexHooks: %v", err)
 	}
 	hooks := readHooks(t, path)
-	if got := hookCommand(t, hooks, "SessionStart"); !strings.Contains(got, "engram inject") {
-		t.Fatalf("initial SessionStart command = %q, want engram inject", got)
+	if got := hookCommand(t, hooks, "SessionStart"); !strings.Contains(got, "engram inject --agent codex") {
+		t.Fatalf("initial SessionStart command = %q, want agent-specific engram inject", got)
 	}
 
 	if err := bootstrapCodexHooks(path, exe, false); err != nil {

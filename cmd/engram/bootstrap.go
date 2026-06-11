@@ -280,6 +280,9 @@ func bootstrapHooks(exe string, global bool) error {
 		}
 		fmt.Printf("wrote: engram hooks in %s\n", path)
 	}
+	if err := ensureClaudeInjectAgent(path); err != nil {
+		return err
+	}
 
 	// Ensure the engram allowlist independently of the hooks check above, so
 	// re-running bootstrap repairs older installs that predate it.
@@ -287,6 +290,22 @@ func bootstrapHooks(exe string, global bool) error {
 		return err
 	}
 	return nil
+}
+
+func ensureClaudeInjectAgent(path string) error {
+	settings, err := readSettingsJSON(path)
+	if err != nil {
+		return err
+	}
+	hooks, _ := settings["hooks"].(map[string]any)
+	if hooks == nil {
+		return nil
+	}
+	if !updateEngramHookCommand(hooks, "SessionStart", "engram inject", "engram inject --agent claude", path) {
+		return nil
+	}
+	settings["hooks"] = hooks
+	return writeSettingsJSON(path, settings)
 }
 
 // engramAllowlist is the set of engram command families an agent invokes
@@ -354,7 +373,7 @@ func addEngramHooks(path string, exe string) error {
 			"matcher": "startup|resume|clear|compact",
 			"hooks": []any{map[string]any{
 				"type":    "command",
-				"command": exe + " inject",
+				"command": exe + " inject --agent claude",
 			}},
 		},
 	)
@@ -389,24 +408,16 @@ var bootstrapAntigravityCmd = &cobra.Command{
 	Long: `Bootstrap AntiGravity by writing a Knowledge Item to
 ~/.gemini/antigravity/knowledge/engram_protocol/.
 
-The KI instructs AntiGravity to run "engram inject --text" at the start of
-every session and treat the output as session context.
+The KI instructs AntiGravity to run "engram inject --text --agent antigravity"
+at the start of every session and treat the output as session context.
 
 Safe to re-run: skips if the KI already exists.`,
 	RunE: runBootstrapAntigravity,
 }
 
-const antigravityInstructions = `# Engram Session Protocol
+var antigravityInstructions = "# Engram Session Protocol\n" + strings.TrimPrefix(engramProtocolSection("antigravity"), "\n## Engram Session Protocol\n")
 
-At the start of every new conversation, before taking any other actions, run:
-
-  engram inject --text
-
-Read the output and treat it as your session context. It contains identity,
-preferences, and project-specific memory loaded from the engram database.
-Do not skip this step.`
-
-const antigravitySummary = `REQUIRED: At the start of every new conversation, before taking any other action, run "engram inject --text" and treat the output as your session context (identity, preferences, project memory).`
+const antigravitySummary = `REQUIRED: At the start of every new conversation, before taking any other action, run "engram inject --text --agent antigravity" and treat the output as your session context (identity, preferences, project memory, and the AntiGravity layer).`
 
 func runBootstrapAntigravity(cmd *cobra.Command, _ []string) error {
 	ctx := context.Background()
@@ -469,10 +480,11 @@ var bootstrapGeminiCmd = &cobra.Command{
 	Short: "Set up Gemini CLI hooks and GEMINI.md",
 	Long: `Bootstrap Gemini CLI for engram. Two pieces are installed in ~/.gemini:
 
-  - settings.json: a SessionStart hook that runs "engram inject" (loading memory
-    into the session) and an AfterTool hook on read_file/write_file/replace that
-    runs "engram record" (logging touched files). Gemini's hook protocol matches
-    Claude Code's, so record/inject work unchanged.
+  - settings.json: a SessionStart hook that runs "engram inject --agent gemini"
+    (loading memory plus the Gemini layer into the session) and an AfterTool hook
+    on read_file/write_file/replace that runs "engram record" (logging touched
+    files). Gemini's hook protocol matches Claude Code's, so record/inject work
+    unchanged.
   - GEMINI.md: the human-readable engram session protocol, as a fallback.
 
 Safe to re-run: skips pieces that are already present.`,
@@ -484,7 +496,17 @@ Safe to re-run: skips pieces that are already present.`,
 // the single source of truth for that block; uninstall's engramSectionRE removes
 // exactly this (a test asserts the two stay in sync). AntiGravity uses a distinct
 // single-# variant -- see antigravityInstructions.
-const engramProtocolSection = `
+func engramProtocolSection(agent string) string {
+	agent, _ = engram.NormalizeAgent(agent)
+	cmd := "engram inject --text"
+	layer := "No --agent flag is used here, so no agent-specific layer is injected."
+	layerExample := "engram mem -g --agent <agent> -t preference write <key> <content>"
+	if agent != "" {
+		cmd += " --agent " + agent
+		layer = fmt.Sprintf("The --agent flag loads the %s-specific global layer on top of the primary identity and preferences. Without --agent, no agent-specific layer is injected.", agent)
+		layerExample = fmt.Sprintf("engram mem -g --agent %s -t preference write <key> <content>", agent)
+	}
+	return fmt.Sprintf(`
 ## Engram Session Protocol
 
 At the start of a new conversation, first check whether engram context is already
@@ -495,10 +517,20 @@ If that context is already present, do not run another inject command.
 
 If it is absent, before taking any other action, run:
 
-  engram inject --text
+  %s
 
 Treat the output as your session context (identity, preferences, project memory).
-Do not skip this step.`
+%s
+
+When the user asks you to adjust personality, invariants, or preferences, store
+general cross-agent guidance in the primary global invariant/preference tier.
+Store guidance that compensates for this agent's harness defaults in the agent
+layer instead, for example:
+
+  %s
+
+Do not skip this step.`, cmd, layer, layerExample)
+}
 
 func runBootstrapGemini(cmd *cobra.Command, _ []string) error {
 	ctx := context.Background()
@@ -517,7 +549,7 @@ func runBootstrapGemini(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	ok, err := bootstrapAppendToFile(filepath.Join(home, ".gemini", "GEMINI.md"), engramProtocolSection)
+	ok, err := bootstrapAppendToFile(filepath.Join(home, ".gemini", "GEMINI.md"), engramProtocolSection("gemini"))
 	if err != nil {
 		return err
 	}
@@ -557,7 +589,7 @@ func runBootstrapCopilot(cmd *cobra.Command, _ []string) error {
 	}
 	path := filepath.Join(root, ".github", "copilot-instructions.md")
 
-	ok, err := bootstrapAppendToFile(path, engramProtocolSection)
+	ok, err := bootstrapAppendToFile(path, engramProtocolSection("copilot"))
 	if err != nil {
 		return err
 	}
@@ -593,7 +625,7 @@ func runBootstrapCursor(cmd *cobra.Command, _ []string) error {
 	}
 	path := filepath.Join(root, ".cursorrules")
 
-	ok, err := bootstrapAppendToFile(path, engramProtocolSection)
+	ok, err := bootstrapAppendToFile(path, engramProtocolSection("cursor"))
 	if err != nil {
 		return err
 	}
@@ -638,10 +670,6 @@ func bootstrapAppendToFile(path, section string) (bool, error) {
 		fmt.Printf("updated: engram section in %s\n", path)
 		return true, nil
 	}
-	if strings.Contains(string(data), "engram inject --text") {
-		fmt.Printf("skip (already present): engram section in %s\n", path)
-		return false, nil
-	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return false, err
 	}
@@ -681,7 +709,7 @@ func runBootstrapInitFile(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ok, err := bootstrapAppendToFile(args[0], engramProtocolSection)
+	ok, err := bootstrapAppendToFile(args[0], engramProtocolSection(""))
 	if err != nil {
 		return err
 	}
@@ -705,10 +733,10 @@ var bootstrapCodexCmd = &cobra.Command{
 	Short: "Set up Codex CLI hooks and AGENTS.md",
 	Long: `Bootstrap OpenAI Codex CLI for engram. Two pieces are installed:
 
-  - hooks.json: a SessionStart hook that runs "engram inject" (loading memory
-    into the session) and a PostToolUse hook on apply_patch that runs
-    "engram record" (logging touched files). Codex's hook protocol matches
-    Claude Code's, so record/inject work unchanged.
+  - hooks.json: a SessionStart hook that runs "engram inject --agent codex"
+    (loading memory plus the Codex layer into the session) and a PostToolUse hook
+    on apply_patch that runs "engram record" (logging touched files). Codex's
+    hook protocol matches Claude Code's, so record/inject work unchanged.
   - AGENTS.md: the human-readable engram session protocol, as a fallback.
 
 By default both go in the project (.codex/hooks.json and ./AGENTS.md). Use -g to
@@ -757,7 +785,7 @@ func runBootstrapCodex(cmd *cobra.Command, _ []string) error {
 		hooksPath = filepath.Join(root, ".codex", "hooks.json")
 	}
 
-	ok, err := bootstrapAppendToFile(agentsPath, engramProtocolSection)
+	ok, err := bootstrapAppendToFile(agentsPath, engramProtocolSection("codex"))
 	if err != nil {
 		return err
 	}
@@ -800,7 +828,13 @@ func installEngramHooks(path, exe string, specs []hookSpec) error {
 	for _, s := range specs {
 		cmd := exe + " " + s.subcommand
 		marker := "engram " + s.subcommand
+		if strings.HasPrefix(s.subcommand, "inject") {
+			marker = "engram inject"
+		}
 		if dedupeEngramHooks(hooks, s.event, marker, path) {
+			changed = true
+		}
+		if updateEngramHookCommand(hooks, s.event, marker, "engram "+s.subcommand, path) {
 			changed = true
 		}
 		if engramHookPresent(hooks, s.event, marker) {
@@ -826,6 +860,38 @@ func installEngramHooks(path, exe string, specs []hookSpec) error {
 
 	settings["hooks"] = hooks
 	return writeSettingsJSON(path, settings)
+}
+
+// updateEngramHookCommand upgrades an existing semantic hook in place while
+// preserving the executable path that was already installed. This lets a stable
+// /usr/local/bin/engram hook gain new arguments without being replaced by a
+// transient development-binary path from go test/go run.
+func updateEngramHookCommand(hooks map[string]any, event, marker, want, path string) bool {
+	changed := false
+	for _, group := range asSlice(hooks[event]) {
+		gm, ok := group.(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, h := range asSlice(gm["hooks"]) {
+			hm, ok := h.(map[string]any)
+			if !ok {
+				continue
+			}
+			cmd, _ := hm["command"].(string)
+			idx := strings.Index(cmd, marker)
+			if idx < 0 {
+				continue
+			}
+			next := cmd[:idx] + want
+			if cmd != next {
+				hm["command"] = next
+				fmt.Printf("updated: %s hook command in %s\n", marker, path)
+				changed = true
+			}
+		}
+	}
+	return changed
 }
 
 // engramHookPresent reports whether any handler under the given event already
@@ -906,7 +972,7 @@ func bootstrapCodexHooks(path, exe string, includeSessionHook bool) error {
 	}
 	if includeSessionHook {
 		specs = append([]hookSpec{
-			{event: "SessionStart", matcher: "startup|resume|clear|compact", subcommand: "inject"},
+			{event: "SessionStart", matcher: "startup|resume|clear|compact", subcommand: "inject --agent codex"},
 		}, specs...)
 	}
 	if err := installEngramHooks(path, exe, specs); err != nil {
@@ -937,7 +1003,7 @@ func bootstrapCodexHooks(path, exe string, includeSessionHook bool) error {
 // matcher is an exact lifecycle string, so we omit it to fire on every source.
 func bootstrapGeminiHooks(path, exe string) error {
 	return installEngramHooks(path, exe, []hookSpec{
-		{event: "SessionStart", subcommand: "inject"},
+		{event: "SessionStart", subcommand: "inject --agent gemini"},
 		{event: "AfterTool", matcher: "read_file|write_file|replace", subcommand: "record"},
 	})
 }

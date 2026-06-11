@@ -402,11 +402,14 @@ type InjectResult struct {
 	// From events table
 	Files []string
 	// From memories table
-	Invariants  []Memory
-	Preferences []Memory
-	LongTerm    []Memory
-	ShortTerm   []Memory
-	Cold        []Memory // keys+content injected as index only; content not expanded
+	Invariants       []Memory
+	Preferences      []Memory
+	Agent            string
+	AgentInvariants  []Memory
+	AgentPreferences []Memory
+	LongTerm         []Memory
+	ShortTerm        []Memory
+	Cold             []Memory // keys+content injected as index only; content not expanded
 	// From the filesystem (agenttools dirs), not the DB. Populated by the caller
 	// after Inject, since scanning is I/O outside the memory database.
 	AgentTools []ToolDesc
@@ -423,6 +426,17 @@ type InjectResult struct {
 // Inject returns the recently active files from the last nSessions sessions,
 // plus all memories from the given database.
 func Inject(ctx context.Context, db *sql.DB, nSessions int) (InjectResult, error) {
+	return InjectWithAgent(ctx, db, nSessions, "")
+}
+
+// InjectWithAgent returns Inject plus the requested agent-specific global layer.
+// Agent layers live in the same global invariant/preference tiers as primary
+// standing guidance, but are hidden unless agent is non-empty.
+func InjectWithAgent(ctx context.Context, db *sql.DB, nSessions int, agent string) (InjectResult, error) {
+	agent, err := NormalizeAgent(agent)
+	if err != nil {
+		return InjectResult{}, err
+	}
 	recentSessions := `
 		SELECT session_id FROM (
 			SELECT session_id, MAX(ts) AS last_ts
@@ -465,12 +479,15 @@ func Inject(ctx context.Context, db *sql.DB, nSessions int) (InjectResult, error
 	}
 
 	return InjectResult{
-		Files:       files,
-		Invariants:  invariants,
-		Preferences: preferences,
-		LongTerm:    longTerm,
-		ShortTerm:   shortTerm,
-		Cold:        cold,
+		Files:            files,
+		Invariants:       PrimaryMemories(invariants),
+		Preferences:      PrimaryMemories(preferences),
+		Agent:            agent,
+		AgentInvariants:  AgentLayerMemories(invariants, agent),
+		AgentPreferences: AgentLayerMemories(preferences, agent),
+		LongTerm:         longTerm,
+		ShortTerm:        shortTerm,
+		Cold:             cold,
 	}, nil
 }
 
@@ -702,6 +719,18 @@ func InjectContextText(global, project InjectResult, nSessions int) string {
 		parts = append(parts, "## Preferences\n"+strings.Join(lines, "\n"))
 	}
 
+	if global.Agent != "" && (len(global.AgentInvariants) > 0 || len(global.AgentPreferences) > 0) {
+		var lines []string
+		lines = append(lines, "Agent-specific global guidance layered on top of the primary identity and preferences.")
+		for _, m := range global.AgentInvariants {
+			lines = append(lines, fmt.Sprintf("**%s**: %s", m.Key, m.Content))
+		}
+		for _, m := range global.AgentPreferences {
+			lines = append(lines, "- "+m.Content)
+		}
+		parts = append(parts, fmt.Sprintf("## Agent layer (%s)\n%s", global.Agent, strings.Join(lines, "\n")))
+	}
+
 	coldEntries := append(global.Cold, project.Cold...)
 	if len(coldEntries) > 0 {
 		lines := make([]string, len(coldEntries))
@@ -778,11 +807,17 @@ func InjectContextText(global, project InjectResult, nSessions int) string {
 // agent must infer.
 func orientationHeader(global, project InjectResult) string {
 	who := "Oriented (no codename set)."
-	if codename := displayCodename(invariantValue(global.Invariants, "codename")); codename != "" {
+	if codename := displayCodename(invariantValue(global.AgentInvariants, "codename")); codename != "" {
+		who = fmt.Sprintf("Oriented as %s.", codename)
+	} else if codename := displayCodename(invariantValue(global.Invariants, "codename")); codename != "" {
 		who = fmt.Sprintf("Oriented as %s.", codename)
 	}
 	counts := fmt.Sprintf("Memory loaded: %d identity, %d preferences, %d long-term, %d short-term.",
 		len(global.Invariants), len(global.Preferences), len(project.LongTerm), len(project.ShortTerm))
+	if global.Agent != "" {
+		counts += fmt.Sprintf(" Agent layer %s: %d identity, %d preferences.",
+			global.Agent, len(global.AgentInvariants), len(global.AgentPreferences))
+	}
 	return "## Orientation\n" + who + " " + counts + "\n" +
 		"First reply this session: open with a brief, in-character orientation sentence that " +
 		"names your codename and confirms what loaded, then answer. Keep your codename present " +

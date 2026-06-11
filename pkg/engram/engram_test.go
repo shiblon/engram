@@ -319,6 +319,98 @@ func TestInjectContextText(t *testing.T) {
 	})
 }
 
+func TestAgentLayerKeys(t *testing.T) {
+	key, err := AgentLayerKey("Codex", "personality")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key != "agent/codex/personality" {
+		t.Fatalf("AgentLayerKey = %q, want agent/codex/personality", key)
+	}
+	agent, base, ok := ParseAgentLayerKey(key)
+	if !ok || agent != "codex" || base != "personality" {
+		t.Fatalf("ParseAgentLayerKey = %q, %q, %v", agent, base, ok)
+	}
+	if got := MemoryLabel(Memory{Tier: TierInvariant, Key: key}); got != "[invariant/personality @codex]" {
+		t.Fatalf("MemoryLabel = %q", got)
+	}
+}
+
+func TestInjectWithAgentLayers(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	for _, m := range []Memory{
+		{Tier: TierInvariant, Key: "personality", Content: "base personality"},
+		{Tier: TierPreference, Key: "style", Content: "base style"},
+		{Tier: TierInvariant, Key: "agent/codex/personality", Content: "codex personality"},
+		{Tier: TierPreference, Key: "agent/codex/style", Content: "codex style"},
+		{Tier: TierPreference, Key: "agent/gemini/style", Content: "gemini style"},
+	} {
+		if err := WriteMemory(ctx, db, m); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	primary, err := InjectWithAgent(ctx, db, 5, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := InjectContextText(primary, InjectResult{}, 5)
+	if strings.Contains(got, "codex style") || strings.Contains(got, "gemini style") {
+		t.Fatalf("unscoped inject leaked agent layer:\n%s", got)
+	}
+	if !strings.Contains(got, "base personality") || !strings.Contains(got, "base style") {
+		t.Fatalf("unscoped inject lost primary guidance:\n%s", got)
+	}
+
+	codex, err := InjectWithAgent(ctx, db, 5, "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = InjectContextText(codex, InjectResult{}, 5)
+	if !strings.Contains(got, "## Agent layer (codex)") || !strings.Contains(got, "codex personality") || !strings.Contains(got, "codex style") {
+		t.Fatalf("codex layer missing:\n%s", got)
+	}
+	if strings.Contains(got, "gemini style") {
+		t.Fatalf("codex inject leaked gemini layer:\n%s", got)
+	}
+}
+
+func TestListMemoriesForViewAgentLayer(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	for _, m := range []Memory{
+		{Tier: TierInvariant, Key: "personality", Content: "base personality"},
+		{Tier: TierInvariant, Key: "agent/codex/personality", Content: "codex personality"},
+		{Tier: TierInvariant, Key: "agent/gemini/personality", Content: "gemini personality"},
+	} {
+		if err := WriteMemory(ctx, db, m); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	all, err := ListMemoriesForView(ctx, db, []Tier{TierInvariant}, "", "personality")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("all visible memories = %d, want 3: %+v", len(all), all)
+	}
+
+	codex, err := ListMemoriesForView(ctx, db, []Tier{TierInvariant}, "codex", "personality")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(codex) != 2 {
+		t.Fatalf("codex visible memories = %d, want primary + codex layer: %+v", len(codex), codex)
+	}
+	for _, m := range codex {
+		if strings.Contains(m.Key, "gemini") {
+			t.Fatalf("codex view leaked gemini layer: %+v", codex)
+		}
+	}
+}
+
 func TestFormatStatusLine(t *testing.T) {
 	cases := []struct {
 		name        string

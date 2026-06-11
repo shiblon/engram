@@ -133,6 +133,7 @@ var (
 	injectSessions int
 	injectKeep     int
 	injectText     bool
+	injectAgent    string
 )
 
 var injectCmd = &cobra.Command{
@@ -188,7 +189,7 @@ func runInject(cmd *cobra.Command, _ []string) error {
 	var globalResult engram.InjectResult
 	if engram.GlobalDBExists() {
 		if gdb, err := engram.OpenGlobalDB(ctx); err == nil {
-			globalResult, err = engram.Inject(ctx, gdb, injectSessions)
+			globalResult, err = engram.InjectWithAgent(ctx, gdb, injectSessions, injectAgent)
 			if err != nil {
 				log.Printf("engram: inject global memory: %v", err)
 			}
@@ -328,6 +329,7 @@ func init() {
 	injectCmd.Flags().IntVar(&injectSessions, "sessions", engram.DefaultInjectSessions, "number of recent sessions to include")
 	injectCmd.Flags().IntVar(&injectKeep, "keep", engram.DefaultPruneSessions, "number of sessions to keep")
 	injectCmd.Flags().BoolVar(&injectText, "text", false, "output plain text instead of session-start hook JSON")
+	injectCmd.Flags().StringVar(&injectAgent, "agent", "", "agent layer to inject on top of primary global identity/preferences (empty injects no layer)")
 	pruneCmd.Flags().IntVar(&pruneKeep, "keep", engram.DefaultPruneSessions, "number of sessions to keep")
 	rootCmd.AddCommand(recordCmd, injectCmd, pruneCmd, memCmd)
 }

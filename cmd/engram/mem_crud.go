@@ -17,7 +17,7 @@ import (
 // the channel strategy that keeps both tiers on the authoritative always-loaded
 // channel. Best-effort: a sync failure must never fail the mem operation itself.
 func syncStandingIfTouched(ctx context.Context, h *engram.DBHandle, tiers ...engram.Tier) {
-	if !memGlobal {
+	if !memUsesGlobal() {
 		return
 	}
 	for _, t := range tiers {
@@ -27,6 +27,53 @@ func syncStandingIfTouched(ctx context.Context, h *engram.DBHandle, tiers ...eng
 			}
 			return
 		}
+	}
+}
+
+func memAgentName() (string, error) {
+	return engram.NormalizeAgent(memAgent)
+}
+
+func memStoredKey(key string, tier engram.Tier) (string, error) {
+	agent, err := memAgentName()
+	if err != nil {
+		return "", err
+	}
+	if agent == "" {
+		return key, nil
+	}
+	if !engram.IsStandingTier(tier) {
+		return "", fmt.Errorf("--agent only applies to global invariant/preference memory; specify --tier invariant or --tier preference")
+	}
+	return engram.AgentLayerKey(agent, key)
+}
+
+func memDefaultTiers(cmd *cobra.Command) []engram.Tier {
+	if cmd.Flag("tier").Changed {
+		return []engram.Tier{engram.Tier(memTier)}
+	}
+	if memAgent != "" {
+		return engram.StandingTiers
+	}
+	return []engram.Tier{engram.TierInvariant, engram.TierPreference, engram.TierLong, engram.TierShort}
+}
+
+func memViewTiers(cmd *cobra.Command) ([]engram.Tier, error) {
+	tiers := memDefaultTiers(cmd)
+	if memAgent == "" {
+		return tiers, nil
+	}
+	for _, t := range tiers {
+		if !engram.IsStandingTier(t) {
+			return nil, fmt.Errorf("--agent only applies to global invariant/preference memory")
+		}
+	}
+	return tiers, nil
+}
+
+func printMemories(memories []engram.Memory) {
+	for i, m := range memories {
+		fmt.Printf("%d. %s %s\n", i+1, engram.MemoryLabel(m), m.Content)
 	}
 }
 
@@ -43,10 +90,15 @@ var memWriteCmd = &cobra.Command{
 		defer h.DB.Close()
 
 		content := strings.Join(args[1:], " ")
+		tier := engram.Tier(memTier)
+		key, err := memStoredKey(args[0], tier)
+		if err != nil {
+			return err
+		}
 		m := engram.Memory{
 			TS:      time.Now().UnixMilli(),
-			Tier:    engram.Tier(memTier),
-			Key:     args[0],
+			Tier:    tier,
+			Key:     key,
 			Content: content,
 		}
 		if err := engram.WriteMemory(ctx, h.DB, m); err != nil {
@@ -56,6 +108,10 @@ var memWriteCmd = &cobra.Command{
 		scope := "project"
 		if memGlobal {
 			scope = "global"
+		}
+		if agent, _ := memAgentName(); agent != "" {
+			fmt.Printf("stored in global %s %s layer: %s\n", agent, memTier, args[0])
+			return nil
 		}
 		fmt.Printf("stored in %s %s memory: %s\n", scope, memTier, args[0])
 		return nil
@@ -74,8 +130,12 @@ var memReadCmd = &cobra.Command{
 		}
 		defer h.DB.Close()
 
-		if !cmd.Flag("tier").Changed {
-			matches, err := engram.FindMemoryByKey(ctx, h.DB, args[0])
+		if !cmd.Flag("tier").Changed || memAgent != "" || memUsesGlobal() {
+			tiers, err := memViewTiers(cmd)
+			if err != nil {
+				return err
+			}
+			matches, err := engram.ListMemoriesForView(ctx, h.DB, tiers, memAgent, args[0])
 			if err != nil {
 				return err
 			}
@@ -83,19 +143,23 @@ var memReadCmd = &cobra.Command{
 				return fmt.Errorf("not found: %s", args[0])
 			}
 			for _, m := range matches {
-				fmt.Printf("[%s/%s]\n%s\n\n", m.Tier, m.Key, m.Content)
+				fmt.Printf("%s\n%s\n\n", engram.MemoryLabel(m), m.Content)
 			}
 			return nil
 		}
 
-		m, err := engram.ReadMemory(ctx, h.DB, engram.Tier(memTier), args[0])
+		key, err := memStoredKey(args[0], engram.Tier(memTier))
+		if err != nil {
+			return err
+		}
+		m, err := engram.ReadMemory(ctx, h.DB, engram.Tier(memTier), key)
 		if err != nil {
 			return err
 		}
 		if m == nil {
 			return fmt.Errorf("not found: %s/%s", memTier, args[0])
 		}
-		fmt.Printf("[%s/%s]\n%s\n", m.Tier, m.Key, m.Content)
+		fmt.Printf("%s\n%s\n", engram.MemoryLabel(*m), m.Content)
 		return nil
 	},
 }
@@ -103,8 +167,9 @@ var memReadCmd = &cobra.Command{
 var memListJSON bool
 
 var memListCmd = &cobra.Command{
-	Use:   "list",
+	Use:   "list [key]",
 	Short: "List memories. Omit --tier to list all tiers (cold excluded; use --tier cold).",
+	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
 		h, err := openMemDB(ctx)
@@ -113,18 +178,15 @@ var memListCmd = &cobra.Command{
 		}
 		defer h.DB.Close()
 
-		var memories []engram.Memory
-		if cmd.Flag("tier").Changed {
-			memories, err = engram.ListMemories(ctx, h.DB, engram.Tier(memTier))
-		} else {
-			for _, t := range []engram.Tier{engram.TierInvariant, engram.TierPreference, engram.TierLong, engram.TierShort} {
-				ms, err := engram.ListMemories(ctx, h.DB, t)
-				if err != nil {
-					return err
-				}
-				memories = append(memories, ms...)
-			}
+		var key string
+		if len(args) > 0 {
+			key = args[0]
 		}
+		tiers, err := memViewTiers(cmd)
+		if err != nil {
+			return err
+		}
+		memories, err := engram.ListMemoriesForView(ctx, h.DB, tiers, memAgent, key)
 		if err != nil {
 			return err
 		}
@@ -142,9 +204,7 @@ var memListCmd = &cobra.Command{
 			fmt.Println("no memories")
 			return nil
 		}
-		for i, m := range memories {
-			fmt.Printf("%d. [%s/%s] %s\n", i+1, m.Tier, m.Key, m.Content)
-		}
+		printMemories(memories)
 		return nil
 	},
 }
@@ -162,8 +222,13 @@ var memDeleteCmd = &cobra.Command{
 		defer h.DB.Close()
 
 		tier := engram.Tier(memTier)
+		key := args[0]
 		if !cmd.Flag("tier").Changed {
-			matches, err := engram.FindMemoryByKey(ctx, h.DB, args[0])
+			tiers, err := memViewTiers(cmd)
+			if err != nil {
+				return err
+			}
+			matches, err := engram.ListMemoriesForView(ctx, h.DB, tiers, memAgent, args[0])
 			if err != nil {
 				return err
 			}
@@ -173,14 +238,20 @@ var memDeleteCmd = &cobra.Command{
 			if len(matches) > 1 {
 				fmt.Printf("ambiguous: %q found in multiple tiers, specify --tier:\n", args[0])
 				for _, m := range matches {
-					fmt.Printf("  %s/%s\n", m.Tier, m.Key)
+					fmt.Printf("  %s\n", engram.MemoryLabel(m))
 				}
 				return fmt.Errorf("ambiguous key")
 			}
 			tier = matches[0].Tier
+			key = matches[0].Key
+		} else {
+			key, err = memStoredKey(args[0], tier)
+			if err != nil {
+				return err
+			}
 		}
 
-		if err := engram.DeleteMemory(ctx, h.DB, tier, args[0]); err != nil {
+		if err := engram.DeleteMemory(ctx, h.DB, tier, key); err != nil {
 			return err
 		}
 		syncStandingIfTouched(ctx, h, tier)
@@ -214,10 +285,18 @@ Tiers: invariant, preference, long, short, cold`,
 		if moveTo == "" {
 			return fmt.Errorf("--to is required")
 		}
+		if memAgent != "" && !engram.IsStandingTier(engram.Tier(moveTo)) {
+			return fmt.Errorf("--agent only applies to global invariant/preference memory; --to must be invariant or preference")
+		}
 
 		from := engram.Tier(moveFrom)
+		key := args[0]
 		if !cmd.Flag("from").Changed {
-			matches, err := engram.FindMemoryByKey(ctx, h.DB, args[0])
+			tiers, err := memViewTiers(cmd)
+			if err != nil {
+				return err
+			}
+			matches, err := engram.ListMemoriesForView(ctx, h.DB, tiers, memAgent, args[0])
 			if err != nil {
 				return err
 			}
@@ -227,14 +306,21 @@ Tiers: invariant, preference, long, short, cold`,
 			if len(matches) > 1 {
 				fmt.Printf("ambiguous: %q found in multiple tiers, specify --from:\n", args[0])
 				for _, m := range matches {
-					fmt.Printf("  %s/%s\n", m.Tier, m.Key)
+					fmt.Printf("  %s\n", engram.MemoryLabel(m))
 				}
 				return fmt.Errorf("ambiguous key")
 			}
 			from = matches[0].Tier
+			key = matches[0].Key
+		} else {
+			var err error
+			key, err = memStoredKey(args[0], from)
+			if err != nil {
+				return err
+			}
 		}
 
-		if err := engram.MoveMemory(ctx, h.DB, args[0],
+		if err := engram.MoveMemory(ctx, h.DB, key,
 			from, engram.Tier(moveTo)); err != nil {
 			return err
 		}
@@ -248,6 +334,9 @@ var memPopCmd = &cobra.Command{
 	Use:   "pop",
 	Short: "Read and remove the most recent short-term memory",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if memAgent != "" {
+			return fmt.Errorf("--agent only applies to global invariant/preference memory")
+		}
 		ctx := context.Background()
 		h, err := openMemDB(ctx)
 		if err != nil {

@@ -21,14 +21,19 @@ var memCmd = &cobra.Command{
   cold                       Low-priority archive. Injected as index only.
 
 Global memories (invariant, preference) are stored in ~/.engram/mem.db and
-injected at the start of every session across all projects.
+injected at the start of every session across all projects. Agent-specific
+layers are also global and are selected with --agent <name>; they apply on top
+of the primary invariant/preference tiers only when inject is called with the
+same agent.
 
 Project memories (long, short, cold) are stored in .engram/mem.db at the project
 root and injected only for that project.
 
 Common operations:
   engram mem -g -t invariant list          list all global invariants
+  engram mem -g list personality           list primary + agent personality layers
   engram mem -g -t invariant read <key>    read a specific invariant
+  engram mem -g --agent codex -t preference write <key> <content>
   engram mem -g write <key> <content>      write to global short (default tier)
   engram mem -t long write <key> <content> write to project long-term memory
   engram mem search <query>                full-text search across all tiers
@@ -40,9 +45,14 @@ Run 'engram mem <subcommand> --help' for details on each operation.`,
 // shared flags
 var memGlobal bool
 var memTier string
+var memAgent string
+
+func memUsesGlobal() bool {
+	return memGlobal || memAgent != ""
+}
 
 func openMemDB(ctx context.Context) (*engram.DBHandle, error) {
-	if memGlobal {
+	if memUsesGlobal() {
 		db, err := engram.OpenGlobalDB(ctx)
 		if err != nil {
 			return nil, err
@@ -64,4 +74,5 @@ func openMemDB(ctx context.Context) (*engram.DBHandle, error) {
 func init() {
 	memCmd.PersistentFlags().BoolVarP(&memGlobal, "global", "g", false, "use global (~/.engram) database")
 	memCmd.PersistentFlags().StringVarP(&memTier, "tier", "t", string(engram.TierShort), "memory tier (invariant, preference, long, short, cold)")
+	memCmd.PersistentFlags().StringVar(&memAgent, "agent", "", "agent layer for global invariant/preference memory (implies --global)")
 }
