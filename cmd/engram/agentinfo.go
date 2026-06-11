@@ -167,14 +167,16 @@ locally now), and a [MATCHES CURRENT REPO] flag when the identity matches this
 working tree exactly.
 
 MULTIPLE COPIES OF ONE REPO: a single identity can have several staged copies --
-one repo checked out in parallel on different branches (separate clones or git
-worktrees), each saved with its own memory. They share an identity but differ in
-slot and original path. When you surface these to the user, do NOT just dump the
-rows: read each copy's staged mem.db and compose a short summary of how they
-differ (recent long-term keys, how much short-term/event activity, recency) so
-the user can tell "the feature-X checkout" from "the main checkout" and choose.
-The summary is yours to shape for the moment; engram only provides the raw
-materials, it does not hand you a canned description.
+one repo checked out in parallel as separate clones, each saved with its own
+memory. They share an identity but differ in slot and original path. Linked git
+worktrees are intentionally collapsed into the main checkout's project memory, so
+they should not produce separate staged copies. When you surface separate-clone
+entries to the user, do NOT just dump the rows: read each copy's staged mem.db
+and compose a short summary of how they differ (recent long-term keys, how much
+short-term/event activity, recency) so the user can tell "the feature-X checkout"
+from "the main checkout" and choose. The summary is yours to shape for the
+moment; engram only provides the raw materials, it does not hand you a canned
+description.
 
 Your responsibilities:
 

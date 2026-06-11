@@ -196,6 +196,9 @@ func runInject(cmd *cobra.Command, _ []string) error {
 			// Surface pending restores; mark any that match the current repo.
 			if pending, err := engram.ListPendingRestores(ctx, gdb); err == nil && len(pending) > 0 {
 				currentIdentity := engram.ProjectIdentity(cwd)
+				if root, err := engram.FindProjectRoot(cwd); err == nil {
+					currentIdentity = engram.ProjectIdentity(root)
+				}
 				for i := range pending {
 					pending[i].MatchesCurrent = pending[i].Identity == currentIdentity
 				}
@@ -224,7 +227,7 @@ func runInject(cmd *cobra.Command, _ []string) error {
 	var projectResult engram.InjectResult
 	var bootstrapped int
 	if root, err := engram.FindProjectRoot(cwd); err == nil {
-		contextFile := filepath.Join(root, "context", "long.md")
+		contextFile := filepath.Join(engram.ProjectStorageRoot(root), "context", "long.md")
 		_, contextErr := os.Stat(contextFile)
 		if engram.ProjectDBExists(root) || contextErr == nil {
 			if db, err := engram.OpenProjectDB(ctx, root); err == nil {

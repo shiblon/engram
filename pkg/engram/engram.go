@@ -243,13 +243,17 @@ func FindProjectRoot(start string) (string, error) {
 	return "", fmt.Errorf("no project root found from %s", start)
 }
 
-// DBPath returns the canonical project database path for the given root.
+// DBPath returns the canonical project database path for the given root. Linked
+// git worktrees store project memory in the main worktree so every branch
+// checkout shares the same project-level memories.
 func DBPath(root string) string {
+	root = ProjectStorageRoot(root)
 	return filepath.Join(root, ".engram", "mem.db")
 }
 
 // LegacyDBPath returns the old project database path, used for read fallback.
 func LegacyDBPath(root string) string {
+	root = ProjectStorageRoot(root)
 	return filepath.Join(root, ".claude", "engram.db")
 }
 

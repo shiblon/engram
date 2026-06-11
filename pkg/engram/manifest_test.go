@@ -94,6 +94,47 @@ func TestProjectIdentity(t *testing.T) {
 	})
 }
 
+func writeLinkedWorktree(t *testing.T, mainRoot, worktreeRoot, name string) {
+	t.Helper()
+	gitDir := filepath.Join(mainRoot, ".git", "worktrees", name)
+	if err := os.MkdirAll(gitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(worktreeRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gitDir, "commondir"), []byte("../..\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreeRoot, ".git"), []byte("gitdir: "+gitDir+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProjectStorageRootLinkedWorktree(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	mainRoot := filepath.Join(home, "code", "repo")
+	worktreeRoot := filepath.Join(home, "worktrees", "repo-feature")
+	remote := "git@github.com:me/repo.git"
+	writeGitRemote(t, mainRoot, [][2]string{{"origin", remote}})
+	writeLinkedWorktree(t, mainRoot, worktreeRoot, "repo-feature")
+
+	if got := ProjectStorageRoot(worktreeRoot); !samePath(got, mainRoot) {
+		t.Errorf("ProjectStorageRoot = %q, want main root %q", got, mainRoot)
+	}
+	if got := DBPath(worktreeRoot); got != filepath.Join(mainRoot, ".engram", "mem.db") {
+		t.Errorf("DBPath = %q, want main checkout DB", got)
+	}
+	if got := ProjectToolCandidatesDir(worktreeRoot); got != filepath.Join(mainRoot, ".engram", "toolcandidates") {
+		t.Errorf("ProjectToolCandidatesDir = %q, want main checkout candidates", got)
+	}
+	if got := ProjectIdentity(worktreeRoot); got != remote {
+		t.Errorf("ProjectIdentity = %q, want common git remote", got)
+	}
+}
+
 func TestRegisterProject(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -157,8 +198,9 @@ func TestRegisterProject(t *testing.T) {
 
 	t.Run("multiple_copies_share_identity", func(t *testing.T) {
 		// Two working copies of one repo (same remote, different paths) -- e.g.
-		// parallel branches in separate clones/worktrees -- must each get a row,
-		// keyed by (identity, path), so neither evicts the other.
+		// parallel branches in separate clones -- must each get a row, keyed by
+		// (identity, path), so neither evicts the other. Linked git worktrees are
+		// covered separately below and deliberately share one storage row.
 		db := testDB(t)
 		shared := "git@github.com:me/parallel.git"
 		rootA := filepath.Join(home, "code", "loc-a")
@@ -202,6 +244,75 @@ func TestRegisterProject(t *testing.T) {
 		}
 		if !paths[filepath.Join("code", "loc-a")] || !paths[filepath.Join("code", "loc-b")] {
 			t.Errorf("paths = %v, want both loc-a and loc-b", paths)
+		}
+	})
+
+	t.Run("linked_worktree_shares_main_checkout_row", func(t *testing.T) {
+		db := testDB(t)
+		shared := "git@github.com:me/worktree.git"
+		mainRoot := filepath.Join(home, "code", "repo")
+		worktreeRoot := filepath.Join(home, "worktrees", "repo-feature")
+
+		if err := os.MkdirAll(filepath.Join(mainRoot, ".engram"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeGitRemote(t, mainRoot, [][2]string{{"origin", shared}})
+		writeLinkedWorktree(t, mainRoot, worktreeRoot, "repo-feature")
+
+		if err := RegisterProject(ctx, db, mainRoot); err != nil {
+			t.Fatal(err)
+		}
+		if err := RegisterProject(ctx, db, worktreeRoot); err != nil {
+			t.Fatal(err)
+		}
+		if n := countProjects(t, db); n != 1 {
+			t.Fatalf("project count = %d, want 1 (linked worktree shares main storage)", n)
+		}
+		if !IsProjectRegistered(ctx, db, worktreeRoot) {
+			t.Fatal("linked worktree should see main checkout manifest row as registered")
+		}
+		var path string
+		if err := db.QueryRow(`SELECT path FROM projects WHERE identity = ?`, shared).Scan(&path); err != nil {
+			t.Fatal(err)
+		}
+		if path != filepath.Join("code", "repo") {
+			t.Errorf("path = %q, want main checkout path", path)
+		}
+	})
+
+	t.Run("linked_worktree_registration_removes_stale_worktree_row", func(t *testing.T) {
+		db := testDB(t)
+		shared := "git@github.com:me/stale-worktree.git"
+		mainRoot := filepath.Join(home, "code", "stale-main")
+		worktreeRoot := filepath.Join(home, "worktrees", "stale-feature")
+
+		if err := os.MkdirAll(filepath.Join(mainRoot, ".engram"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(worktreeRoot, ".engram"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeGitRemote(t, mainRoot, [][2]string{{"origin", shared}})
+		writeLinkedWorktree(t, mainRoot, worktreeRoot, "stale-feature")
+
+		_, err := db.ExecContext(ctx,
+			`INSERT INTO projects (identity, path, last_seen) VALUES (?, ?, 1)`,
+			shared, filepath.Join("worktrees", "stale-feature"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := RegisterProject(ctx, db, worktreeRoot); err != nil {
+			t.Fatal(err)
+		}
+		if n := countProjects(t, db); n != 1 {
+			t.Fatalf("project count = %d, want 1 (stale worktree row collapsed)", n)
+		}
+		var path string
+		if err := db.QueryRow(`SELECT path FROM projects WHERE identity = ?`, shared).Scan(&path); err != nil {
+			t.Fatal(err)
+		}
+		if path != filepath.Join("code", "stale-main") {
+			t.Errorf("path = %q, want main checkout path", path)
 		}
 	})
 
@@ -284,5 +395,47 @@ func TestOpenProjectDBRegistersOnCreation(t *testing.T) {
 	db2.Close()
 	if n := countProjects(t, gdb); n != 1 {
 		t.Fatalf("after re-open, manifest count = %d, want 1 (creation-only)", n)
+	}
+}
+
+func TestOpenProjectDBFromLinkedWorktreeCreatesOnlyMainDB(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	ctx := context.Background()
+
+	mainRoot := filepath.Join(home, "code", "repo")
+	worktreeRoot := filepath.Join(home, "worktrees", "repo-feature")
+	remote := "git@github.com:me/repo.git"
+	writeGitRemote(t, mainRoot, [][2]string{{"origin", remote}})
+	writeLinkedWorktree(t, mainRoot, worktreeRoot, "repo-feature")
+
+	db, err := OpenProjectDB(ctx, worktreeRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	if _, err := os.Stat(filepath.Join(mainRoot, ".engram", "mem.db")); err != nil {
+		t.Fatalf("main checkout DB missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(worktreeRoot, ".engram")); !os.IsNotExist(err) {
+		t.Fatalf("linked worktree should not get .engram dir, stat err = %v", err)
+	}
+
+	gdb, err := OpenGlobalDB(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gdb.Close()
+
+	var identity, path string
+	if err := gdb.QueryRow(`SELECT identity, path FROM projects`).Scan(&identity, &path); err != nil {
+		t.Fatal(err)
+	}
+	if identity != remote {
+		t.Errorf("identity = %q, want %q", identity, remote)
+	}
+	if path != filepath.Join("code", "repo") {
+		t.Errorf("path = %q, want main checkout path", path)
 	}
 }

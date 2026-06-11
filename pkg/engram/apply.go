@@ -144,9 +144,10 @@ func ApplyRestore(ctx context.Context, globalDB *sql.DB, identity string, sel Re
 	if err != nil {
 		return res, fmt.Errorf("apply: resolve root: %w", err)
 	}
+	storageRoot := ProjectStorageRoot(absRoot)
 
 	// Check whether the target already has curated content.
-	engDir := filepath.Join(absRoot, ".engram")
+	engDir := filepath.Join(storageRoot, ".engram")
 	targetDBPath := DBPath(absRoot)
 	populated := false
 	if _, statErr := os.Stat(targetDBPath); statErr == nil {
@@ -201,7 +202,7 @@ func ApplyRestore(ctx context.Context, globalDB *sql.DB, identity string, sel Re
 
 	// Update the manifest: this entry is now live at its real root.
 	liveIdentity := ProjectIdentity(absRoot)
-	livePath := homeRelPath(absRoot)
+	livePath := homeRelPath(storageRoot)
 	_, err = globalDB.ExecContext(ctx,
 		`UPDATE projects SET identity = ?, path = ?, last_seen = ?, status = 'live'
 		 WHERE identity = ? AND path = ?`,

@@ -52,8 +52,10 @@ func ProjectAgentToolsDir(root string) string {
 
 // ProjectToolCandidatesDir returns the staging scratch directory. It lives under
 // .engram/ (already gitignored by construction) so candidates are captured
-// freely without ever entering the committed tree. Reset on every inject.
+// freely without ever entering the committed tree. Linked git worktrees share
+// the main worktree's scratch dir, matching the shared project memory DB.
 func ProjectToolCandidatesDir(root string) string {
+	root = ProjectStorageRoot(root)
 	return filepath.Join(root, ".engram", "toolcandidates")
 }
 

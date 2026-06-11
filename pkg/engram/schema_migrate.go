@@ -17,11 +17,11 @@ var schemaMigrations = []string{
 	// 0 -> 1: baseline schema (applied by schema.sql on Open; nothing extra needed)
 	``,
 	// 1 -> 2: the projects manifest key becomes (identity, path) so a repo with
-	// multiple working copies (clones / worktrees) keeps one row per copy instead
-	// of having later copies overwrite earlier ones. Safe on existing data: v1's
-	// UNIQUE(identity) guaranteed no duplicate identities, so every row already
-	// satisfies the stricter (identity, path) uniqueness. IF [NOT] EXISTS keeps it
-	// idempotent for fresh DBs, where schema.sql already created the new index.
+	// multiple independent clones keeps one row per copy instead of having later
+	// copies overwrite earlier ones. Safe on existing data: v1's UNIQUE(identity)
+	// guaranteed no duplicate identities, so every row already satisfies the
+	// stricter (identity, path) uniqueness. IF [NOT] EXISTS keeps it idempotent
+	// for fresh DBs, where schema.sql already created the new index.
 	`DROP INDEX IF EXISTS idx_projects_identity;
 	 CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_identity_path ON projects (identity, path);`,
 	// 2 -> 3: drop the events snippet column and the events_fts apparatus.

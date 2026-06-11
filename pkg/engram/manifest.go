@@ -13,18 +13,22 @@ import (
 )
 
 // ProjectIdentity returns the cross-machine identity for the project rooted at
-// root: its git remote URL when one can be read from root/.git/config, else the
-// project's $HOME-relative path. Identity is the manifest key that lets a saved
-// project be recognized on another machine, where absolute paths differ.
+// root: its git remote URL when one can be read from git config, else the
+// project's $HOME-relative storage path. Identity is the manifest key that lets
+// a saved project be recognized on another machine, where absolute paths differ.
 //
 // The git remote is read straight from the config file (a plain FILE READ, no
-// subprocess), so it works regardless of whether git is installed. When .git is
-// a file rather than a directory (worktrees, submodules) or the config has no
-// remote, the read fails cleanly and we fall back to the path.
+// subprocess), so it works regardless of whether git is installed. Linked git
+// worktrees read the common git config, so they share the same identity and
+// storage root as the main checkout. If no remote can be read, identity falls
+// back to the storage root path.
 func ProjectIdentity(root string) string {
-	if url, ok := gitRemoteURL(filepath.Join(root, ".git", "config")); ok {
-		return url
+	if config, ok := gitConfigPath(root); ok {
+		if url, ok := gitRemoteURL(config); ok {
+			return url
+		}
 	}
+	root = ProjectStorageRoot(root)
 	return homeRelPath(root)
 }
 
@@ -132,14 +136,16 @@ func remoteSubsection(line string) string {
 //     rather than left stale. See relocateMovedProject for why a surviving old
 //     .engram (a genuine second copy) and multi-row identities are excluded.
 //   - Otherwise: upsert keyed by (identity, path), so a repo with several
-//     checkouts (clones / worktrees) keeps one row per copy instead of having a
-//     later copy overwrite an earlier one.
+//     independent clones keeps one row per copy instead of having a later copy
+//     overwrite an earlier one. Linked git worktrees share the main worktree's
+//     storage path and therefore share one row.
 //
 // Callers treat the error as advisory: manifest bookkeeping must never fail an
 // otherwise-successful DB open.
 func RegisterProject(ctx context.Context, globalDB *sql.DB, root string) error {
 	identity := ProjectIdentity(root)
-	path := homeRelPath(root)
+	storageRoot := ProjectStorageRoot(root)
+	path := homeRelPath(storageRoot)
 	now := time.Now().UnixMilli()
 
 	// Re-key: an existing entry for this path whose identity has since drifted.
@@ -151,6 +157,10 @@ func RegisterProject(ctx context.Context, globalDB *sql.DB, root string) error {
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
 		return nil
+	}
+
+	if err := collapseLinkedWorktreeRows(ctx, globalDB, path); err != nil {
+		return err
 	}
 
 	// Move: relocate a single stale row for this identity instead of inserting.
@@ -166,6 +176,49 @@ func RegisterProject(ctx context.Context, globalDB *sql.DB, root string) error {
 		 ON CONFLICT(identity, path) DO UPDATE SET last_seen = excluded.last_seen`,
 		identity, path, now); err != nil {
 		return fmt.Errorf("register project: %w", err)
+	}
+	return nil
+}
+
+// collapseLinkedWorktreeRows removes stale live rows for linked worktrees whose
+// writable project state now belongs to storagePath. Older engram versions
+// treated those worktrees as separate copies; leaving those rows around would
+// make save snapshot the shared main DB more than once.
+func collapseLinkedWorktreeRows(ctx context.Context, globalDB *sql.DB, storagePath string) error {
+	home, _ := os.UserHomeDir()
+
+	rows, err := globalDB.QueryContext(ctx, `SELECT identity, path FROM projects WHERE status = 'live'`)
+	if err != nil {
+		return fmt.Errorf("register project (worktree collapse): %w", err)
+	}
+	type staleRow struct {
+		identity string
+		path     string
+	}
+	var stale []staleRow
+	for rows.Next() {
+		var e staleRow
+		if err := rows.Scan(&e.identity, &e.path); err != nil {
+			rows.Close()
+			return err
+		}
+		if e.path == storagePath {
+			continue
+		}
+		absRoot := absProjectRoot(e.path, home)
+		if homeRelPath(ProjectStorageRoot(absRoot)) == storagePath {
+			stale = append(stale, e)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, e := range stale {
+		if _, err := globalDB.ExecContext(ctx,
+			`DELETE FROM projects WHERE identity = ? AND path = ? AND status = 'live'`, e.identity, e.path); err != nil {
+			return fmt.Errorf("register project (worktree collapse): %w", err)
+		}
 	}
 	return nil
 }
@@ -223,14 +276,15 @@ func relocateMovedProject(ctx context.Context, globalDB *sql.DB, identity, newPa
 // recorded as live in the global manifest. It is used by inject to skip the
 // registration side-effect for copies that are already known.
 //
-// The check is keyed by (identity, path), not identity alone: a second checkout
-// of an already-registered repo is a distinct working copy that still needs its
-// own row, so it must not be treated as already registered.
+// The check is keyed by (identity, path), not identity alone: a second
+// independent clone of an already-registered repo is a distinct working copy
+// that still needs its own row. Linked git worktrees share the main worktree's
+// storage path, so any worktree sees that same row as registered.
 func IsProjectRegistered(ctx context.Context, globalDB *sql.DB, root string) bool {
 	var n int
 	_ = globalDB.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM projects WHERE identity = ? AND path = ? AND status = 'live'`,
-		ProjectIdentity(root), homeRelPath(root)).Scan(&n)
+		ProjectIdentity(root), homeRelPath(ProjectStorageRoot(root))).Scan(&n)
 	return n > 0
 }
 

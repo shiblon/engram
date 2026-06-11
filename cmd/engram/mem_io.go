@@ -106,7 +106,7 @@ func resolveMemDir() string {
 	if err != nil {
 		return "context"
 	}
-	return filepath.Join(root, "context")
+	return filepath.Join(engram.ProjectStorageRoot(root), "context")
 }
 
 func init() {

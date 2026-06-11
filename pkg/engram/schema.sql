@@ -58,9 +58,10 @@ END;
 -- every DB for schema uniformity but stays empty in project DBs.
 --
 -- The key is (identity, path), NOT identity alone: a single repo can have
--- several working copies on one machine (separate clones or git worktrees on
--- parallel branches), all sharing one identity but living at different paths.
--- Each gets its own row so none silently evicts the others from the manifest.
+-- several independent clones on one machine, all sharing one identity but
+-- living at different paths. Each clone gets its own row so none silently evicts
+-- the others from the manifest. Linked git worktrees are different: they share
+-- the main checkout's path and project-local .engram state.
 CREATE TABLE IF NOT EXISTS projects (
     id         INTEGER PRIMARY KEY,
     identity   TEXT    NOT NULL,

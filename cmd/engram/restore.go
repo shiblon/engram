@@ -33,8 +33,9 @@ pending staged projects.
       tree. Runs from inside the project directory. If the target already has
       curated memories the snapshot is re-staged under a new slot name.
 
-      A repo can have several saved copies (separate clones or worktrees) under
-      one identity. When it does, --apply lists them and exits; pick one with
+      A repo can have several saved copies (separate clones) under one identity.
+      Linked git worktrees share the main checkout's project memory. When
+      multiple staged copies exist, --apply lists them and exits; pick one with
       --slot <name> (the slot from --status) or --from <original-path>.
 
   engram restore --discard <identity> [--slot <name> | --from <path>]

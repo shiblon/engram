@@ -57,16 +57,17 @@ func runRegister(_ *cobra.Command, _ []string) error {
 		return err
 	}
 	identity := engram.ProjectIdentity(root)
-	fmt.Fprintf(os.Stderr, "registered: %s (%s)\n", root, identity)
+	fmt.Fprintf(os.Stderr, "registered: %s (%s)\n", engram.ProjectStorageRoot(root), identity)
 	noteSiblingCopies(ctx, gdb, identity)
 	return nil
 }
 
 // noteSiblingCopies prints an informational note when the just-registered repo
 // shares its identity with other live working copies, so the user knows a
-// parallel copy (a separate clone or worktree) exists rather than assuming this
-// is the only checkout. Informational only -- registering a second copy is a
-// supported, non-error action, not something to gate behind a --force flag.
+// parallel copy (a separate clone) exists rather than assuming this is the only
+// checkout. Linked git worktrees share the main checkout's manifest row.
+// Informational only -- registering a second clone is a supported, non-error
+// action, not something to gate behind a --force flag.
 func noteSiblingCopies(ctx context.Context, gdb *sql.DB, identity string) {
 	rows, err := gdb.QueryContext(ctx,
 		`SELECT path FROM projects WHERE identity = ? AND status = 'live' ORDER BY last_seen DESC`, identity)
@@ -132,7 +133,7 @@ func runRegisterScan(ctx context.Context, gdb *sql.DB, scanRoot string) error {
 					fmt.Fprintf(os.Stderr, "warning: register %s: %v\n", root, err)
 					skipped++
 				} else {
-					fmt.Fprintf(os.Stderr, "registered: %s (%s)\n", root, engram.ProjectIdentity(root))
+					fmt.Fprintf(os.Stderr, "registered: %s (%s)\n", engram.ProjectStorageRoot(root), engram.ProjectIdentity(root))
 					registered++
 				}
 			}
