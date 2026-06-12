@@ -4,7 +4,7 @@
 
 Just want to install and get moving? [Jump to installation.](#installation)
 
-*NOTE 2: Claude Code has full hook support (session start + file tracking). Gemini CLI, AntiGravity, GitHub Copilot, Cursor, and Codex are supported via init file instructions. Any agent with a markdown init file can use `bootstrap initfile`.*
+*NOTE 2: Claude Code, Gemini CLI, and Codex CLI have hook support for session start and file tracking. AntiGravity, GitHub Copilot, Cursor, and any agent with a markdown init file use startup instructions via `bootstrap antigravity`, `bootstrap copilot`, `bootstrap cursor`, or `bootstrap initfile`.*
 
 Memory affects everything about people. It affects personality, the ability to hold a conversation, and the ability to get things done. This is also true for AI agents, but the story there is fragmented and memory does not always behave as we expect.
 
@@ -126,8 +126,8 @@ engram bootstrap claude -g   # or without -g for project-only hooks
 
 Bootstrap writes workflow instructions into global memory, sets up
 session-start injection, and queues a personality setup todo for your first
-session. For Claude Code it also adds file tracking hooks. Open a new session
-when done and your agent will know what to do.
+session. On hook-capable platforms it also adds file tracking hooks. Open a new
+session when done and your agent will know what to do.
 
 ### Commit your memory to git (optional but recommended)
 
@@ -171,7 +171,7 @@ You:   remember that we're using modernc.org/sqlite to avoid CGo
 Agent: stored in project long-term memory: sqlite-rationale
 
 You:   remember that for all my projects
-Agent: stored in global long-term memory: sqlite-rationale
+Agent: stored in global preference memory: sqlite-cgo-preference
 ```
 
 The agent will always tell you where it put something. If you want a specific tier:

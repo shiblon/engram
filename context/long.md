@@ -2,6 +2,9 @@
 
 # Long
 
+## engram-design-portability
+PORTABILITY RULE (updated 2026-06-12): design engram features across the current platform classes, not one agent. Hook-capable CLIs are Claude Code, Codex CLI, and Gemini CLI; their hook schemas are similar but event names, matchers, and trust/config locations still differ. Startup-file-only targets are currently AntiGravity, Copilot, and Cursor unless verified otherwise. Do not build shared mechanics on one platform's hook-only metadata (for example Claude's SessionStart source) unless the feature is explicitly scoped to that platform; prefer portable signals such as file mtime/age, file presence, explicit commands, and agent-driven judgment surfaced in injected instructions. Lifecycle-specific features should either have per-platform adapters or degrade cleanly through the startup instruction path. Supersedes older platform notes from 2026-06-04.
+
 ## context-memory
 Project memory in version control: context/long.md is the canonical committed location for long-term project memories. engram inject auto-loads it when the file is newer than the DB (or DB has no long-term entries). At natural commit points, offer to run: engram mem dump --tier long -- user reviews and includes in commit. This covers fresh clones, new machines, and teammate sharing. Short-term, events, and cold are never committed.
 
@@ -31,43 +34,6 @@ Session-count pruning (keep 100). Prune runs at session start alongside inject. 
 ## global-db
 Global memories (invariants, preferences) in ~/.engram/mem.db. Project memories (long, short) + events in .engram/mem.db (relative to project root). Legacy paths (.claude/engram.db) supported via read fallback. Inject reads both global and project DBs.
 
-## mcp-resource-architecture
-MCP v2 architecture (design drafted; UNBUILT and DEPRIORITIZED -- read GATE first).
-
-GATE -- DO NOT BUILD YET (decided 2026-06-10 with Chris): MCP is NOT a priority until we have confirmed the engram CLI does NOT work for the target IDE plugins. TRIGGER QUESTION: can the agent in AntiGravity / Cursor / Copilot execute the engram binary (run `engram inject --text`, `engram mem ...`) via a shell/command surface? If YES -> no MCP server needed: those platforms drive the verbs through the CLI exactly like the hook CLIs do, and injection rides their native always-loaded instruction file (see INJECTION below). Only where the CLI is genuinely unavailable in a target does MCP earn its build. Verify per target BEFORE any MCP work; everything below is the deferred plan for that contingency.
-
-WHY / TARGET CLASS: MCP, if ever built, serves the NON-HOOK platform class -- IDE/GUI plugins (AntiGravity, Cursor, Copilot) where CLI-style lifecycle hooks are not exposed. The hook CLIs (Claude Code, Codex, Gemini) already cover BOTH inject + record via hooks and need none of this.
-
-INJECTION DOES NOT NEED MCP (corrected 2026-06-10): MCP resources are APPLICATION-controlled -- the spec does NOT mandate the client auto-include a resource at session start; the reference UX is explicit user attachment. So "client auto-pulls engram://inject" is a per-client bet, NOT a protocol guarantee (verify per target -- e.g. if AntiGravity auto-includes resources, the URI becomes viable there). The one reliably auto-injected MCP channel is the server `instructions` field, but it is ADVISORY (staying-power, [[injected-memory-staying-power]]) and static-at-initialize. THEREFORE injection should ride each platform NATIVE always-loaded instruction file (.cursorrules / .cursor/rules/*.mdc, copilot-instructions.md, AntiGravity KI metadata): engram WRITES its rendered content there, the same lever as CLAUDE.md @-imports in [[personality-channel-strategy]]. That file is genuinely auto-loaded -- it is the CORRECT channel, not a degraded hack.
-
-RECORD: low-priority / per-host. Base MCP has no passive post-tool event and record must stay passive ([[engram-architecture-invariants]]); IDEs already have ambient file context (open tabs, recent files), so the breadcrumb matters LESS here than on a CLI. Per-host bonus, not a requirement.
-
-SESSION-START COAXING -- NON-GOAL: a tool description only matters if/when the agent decides to call it, so it cannot drive a startup ritual. The `instructions` field is the only description-only channel and it is advisory, not a deterministic trigger. Do not coax; rely on the native instruction file for injection.
-
-IF BUILT, the AGENT TOOL SURFACE is the actual (and possibly sole) MCP value -- inject, record, and coaxing all have non-MCP answers above:
-STATELESS PER-CALL (load-bearing): every MCP tool takes cwd and resolves the project root dynamically via FindProjectRoot; the server NEVER caches project state. The multi-repo problem is a bad implementation pattern, not an MCP limitation. A2A rejected (its statefulness serves long-running agent task lifecycle, not knowing which project you are in).
-MCP TOOLS (agent-invoked, stateless per-call, each takes cwd):
-- engram://mem -- write/read/list/search/delete
-- engram://tool -- stage/promote/discard/list
-- engram://restore -- apply/discard/status
-- engram://register -- one-time project registration in the manifest
-CONTEXT URIS (ONLY where a target client is confirmed to auto-include them):
-- engram://inject -- personality, memories, recent files
-- engram://agentinfo -- static agent instructions (same text as `engram agentinfo`)
-
-SCOPE NOTE: design originally covered only mem; tool + restore verbs added post-v0.6.0 and need surfaces mapped before any build. Related: [[engram-architecture-invariants]], [[injected-memory-staying-power]], [[personality-channel-strategy]].
-
-## personality-channel-strategy
-STANDING-MEMORY CHANNEL STRATEGY (Claude Code SHIPPED 2026-06-09; other platforms deferred). Implements the [[priority-ladder]] P1/P2 rungs on the authoritative always-loaded channel. Problem: injected memory has weak staying power, loses to harness defaults at point-of-action and is flattened at compaction ([[injected-memory-staying-power]]); soft/non-checkable content cannot be config/hook-enforced ([[enforce-checkable-prefs-via-hooks]]), so the only lever is CHANNEL -- ride the platform authoritative always-loaded instruction file.
-
-WHAT RIDES IT: BOTH global tiers, at their priority rungs. P1 invariants (binding identity, "same weight as operating instructions") and P2 preferences (standing defaults, framed to YIELD to the user current instruction -- one rung below invariants). P0 (config/hooks) is outside memory; project tiers (long/short/cold) are cwd-tied and never go on the global channel.
-
-IMPLEMENTATION (pkg/engram/standing.go): global DB stays source of truth. RenderInvariantsText + RenderPreferencesText render each tier with priority-appropriate framing; standingRenders is the data-driven {tier, fileBase, render} set; SyncStandingMemory writes each tier to its own engram-owned file per bootstrapped platform (Claude Code: ~/.claude/engram-invariants.md and engram-preferences.md, each @-imported from CLAUDE.md alongside @engram.md). Detection = engram.md present. Skips unchanged writes (no mtime churn). StandingFileBases() drives bootstrap @-imports and uninstall removal.
-
-RENDER TIMING (settled by research + architecture): RENDER ON WRITE -- engram mem write/delete/move of a global invariant OR preference re-renders (cmd/engram/mem_crud.go syncStandingIfTouched). Plus bootstrap seeds the files + adds the @-imports, and restore re-renders after applying global memory (the one out-of-band mutator). inject does NOT render: (a) CLAUDE.md @-imports load BEFORE the SessionStart hook so a hook-time render cannot help the current session, and (b) inject must stay read-out only ([[engram-architecture-invariants]]). CLAUDE.md + @-imports are re-read every session AND after compaction, so the @-import gets compaction survival natively.
-
-BREVITY IS UNIVERSAL: keep entries short/behavioral in the DB; terse holds better on every channel, no separate rendered form. OTHER PLATFORMS (Gemini/Cursor/Copilot) lack a separate-include mechanism -> need embed-with-section-markers + safer bootstrap; deferred, architecture extensible via standingTargets. CLEANUP NOTE (DONE 2026-06-10): [[no-coauthored-by-trailer]] is now curated to a terse pointer naming the config knob + keeping the cross-agent fallback; the config-first triage is applied. NB the triage targets a config-enforced rule keeping only a POINTER (not its full text) in the canonical DB -- it is NOT about DB->md render duplication, which is by design (DB canonical, rendered into the @-imported files). Related: [[priority-ladder]], [[engram-design-portability]].
-
 ## bin-tool-library-inject-feature
 AGENT TOOL CATALOG -- SHIPPED v0.5.0 (global tools dir moved $HOME/.local/agenttools -> $HOME/.engram/agenttools in v0.5.1). CODE is the source of truth now; design detail + rationale live in code comments + git history, not here.
 
@@ -85,13 +51,6 @@ cmd/engram historically had NO test files. PARTIAL PAYDOWN 2026-06-04: cmd/engra
 REMAINING GAP: runInject assembly (scan order, path relativization, candidate age formatting wiring) is still only smoke-tested. PROPOSED APPROACH for that: extract a testable core (e.g. assembleInjectText(ctx, cwd) string) that runInject wraps, then table-test it with temp project + temp HOME. House style: stdlib-only, table-driven, fixture helpers, no testify.
 
 WHY recorded: noticed during agenttools review; cmd-level glue bugs (like the original eviction-on-compact) are exactly what these tests catch.
-
-## engram-design-portability
-When designing engram features, portability across ALL supported agent platforms is a first-class constraint -- not just Claude Code. Claude Code uses a SessionStart hook (with a "source" field: startup/resume/clear/compact). But Gemini, Cursor, Copilot, AntiGravity, and Codex run "engram inject --text" manually "after first interaction" -- NO hook source, no reliable session-boundary signal, and inject may run per-interaction. 
-
-RULE: do not build mechanics on Claude-Code-only signals (e.g. hook source). Prefer portable signals: file mtime/age, file presence, and AGENT-driven judgment via injected instructions. 
-
-Origin: 2026-06-04 -- while fixing the agenttools candidate-eviction bug I proposed gating eviction on the SessionStart "source" field; that is Claude-Code-only and would break the other platforms. The portable redesign moves candidate maturation to age + second-invocation, surfaced for the agent to act on. See [[bin-tool-library-inject-feature]].
 
 ## dump-restore-all-design
 DUMP/RESTORE-ALL design (drafted 2026-06-04 with Chris; SHIPPED v0.6.0-v0.6.3). Goal: `engram save` -> one tgz on box A; move it; `engram restore` on box B -> all engram state back. One save, one restore. Replaces hand-copying mem.db files. Related: [[bin-tool-library-inject-feature]], [[engram-design-portability]], [[engram-architecture-invariants]].
@@ -153,6 +112,17 @@ INJECTED MEMORY HAS WEAK STAYING POWER WITH CLAUDE (observed 2026-06-09, Chris).
 ## enforce-checkable-prefs-via-hooks
 DESIGN DIRECTION (2026-06-09, refined). For any preference that maps to a concrete, checkable action, structural enforcement beats injected memory -- because injected memory loses to harness defaults at point-of-action ([[injected-memory-staying-power]]). Reach for the HIGHEST available rung, not the flashiest: (1) NATIVE CONFIG knob if one exists -- removes the harness default at its source, leaving nothing to revert TO; (2) DETERMINISTIC HOOK (PreToolUse, the mirror of the existing PostToolUse record hook) for checkable prefs with no native knob -- e.g. a hook matched to Bash(git commit ...) that strips/blocks an unwanted trailer; (3) injected MEMORY only as a last resort, and really only for things that are not checkable at all. PROOF the ranking is right: the Co-Authored-By trailer was unreliable as a memory, would have worked as a hook, but was fixed cleanest by the native includeCoAuthoredBy:false setting (Chris set it 2026-06-09). So do NOT hook everything -- prefer config, hook only what config cannot reach. SOFT prefs (tone, personality) are not checkable against any single action, so none of these rungs apply; their one real lever is CHANNEL -- get them onto the platform authoritative always-loaded instruction file rather than the fading hook-injected blob (see [[personality-channel-strategy]]). Portability: PreToolUse hooks are Claude-Code-specific ([[engram-design-portability]]).
 
+## personality-channel-strategy
+STANDING-MEMORY CHANNEL STRATEGY (Claude Code SHIPPED 2026-06-09; other platforms deferred). Implements the [[priority-ladder]] P1/P2 rungs on the authoritative always-loaded channel. Problem: injected memory has weak staying power, loses to harness defaults at point-of-action and is flattened at compaction ([[injected-memory-staying-power]]); soft/non-checkable content cannot be config/hook-enforced ([[enforce-checkable-prefs-via-hooks]]), so the only lever is CHANNEL -- ride the platform authoritative always-loaded instruction file.
+
+WHAT RIDES IT: BOTH global tiers, at their priority rungs. P1 invariants (binding identity, "same weight as operating instructions") and P2 preferences (standing defaults, framed to YIELD to the user current instruction -- one rung below invariants). P0 (config/hooks) is outside memory; project tiers (long/short/cold) are cwd-tied and never go on the global channel.
+
+IMPLEMENTATION (pkg/engram/standing.go): global DB stays source of truth. RenderInvariantsText + RenderPreferencesText render each tier with priority-appropriate framing; standingRenders is the data-driven {tier, fileBase, render} set; SyncStandingMemory writes each tier to its own engram-owned file per bootstrapped platform (Claude Code: ~/.claude/engram-invariants.md and engram-preferences.md, each @-imported from CLAUDE.md alongside @engram.md). Detection = engram.md present. Skips unchanged writes (no mtime churn). StandingFileBases() drives bootstrap @-imports and uninstall removal.
+
+RENDER TIMING (settled by research + architecture): RENDER ON WRITE -- engram mem write/delete/move of a global invariant OR preference re-renders (cmd/engram/mem_crud.go syncStandingIfTouched). Plus bootstrap seeds the files + adds the @-imports, and restore re-renders after applying global memory (the one out-of-band mutator). inject does NOT render: (a) CLAUDE.md @-imports load BEFORE the SessionStart hook so a hook-time render cannot help the current session, and (b) inject must stay read-out only ([[engram-architecture-invariants]]). CLAUDE.md + @-imports are re-read every session AND after compaction, so the @-import gets compaction survival natively.
+
+BREVITY IS UNIVERSAL: keep entries short/behavioral in the DB; terse holds better on every channel, no separate rendered form. OTHER PLATFORMS (Gemini/Cursor/Copilot) lack a separate-include mechanism -> need embed-with-section-markers + safer bootstrap; deferred, architecture extensible via standingTargets. CLEANUP NOTE (DONE 2026-06-10): [[no-coauthored-by-trailer]] is now curated to a terse pointer naming the config knob + keeping the cross-agent fallback; the config-first triage is applied. NB the triage targets a config-enforced rule keeping only a POINTER (not its full text) in the canonical DB -- it is NOT about DB->md render duplication, which is by design (DB canonical, rendered into the @-imported files). Related: [[priority-ladder]], [[engram-design-portability]].
+
 ## priority-ladder
 PRIORITY LADDER P0/P1/P2 -- the keystone model (2026-06-09) behind this session work. Engram-managed standing guidance sits in a precedence ladder where precedence and ENFORCEMENT-STRENGTH climb together:
 - P0 = CONFIG (settings.json flags, hooks, managed policy): enforced STRUCTURALLY by the harness/tooling, removed from the agent discretion -- the only rung that cannot be forgotten or out-weighed at point-of-action. Highest.
@@ -176,9 +146,3 @@ DISPATCH IS DATA-DRIVEN, NO FLAG: `engram record` reads tool_name off the hook s
 
 ## status-line-questions
 Status line + orientation resolved (2026-06-03). engram status reads the 'codename' invariant and renders 'codename · project · N long · M short' via the pure helper FormatStatusLine (pkg/engram). inject leads with a '## Orientation' header (orientationHeader) stating codename + memory counts, before the Identity dump. agentinfo asks the agent to open with a brief in-character orientation sentence and keep its codename in voice all session. Codename IS a canonical invariant key (not gone). Remaining gap: status line still does not render in VS Code (platform limitation).
-
-## mcp-design
-MCP server for engram must be stateless per-call: every tool takes cwd, resolves project root dynamically via FindProjectRoot, never caches project state at server level. The multi-repo problem is not an MCP limitation -- it is a bad implementation pattern. A2A rejected for engram: its statefulness is for long-running agent task lifecycle, not for knowing which project you are in. MCP + stateless design is correct. Cursor is the first target: .cursorrules handles injection (per-project by definition), MCP server handles recording and mem operations.
-
-## bash-events
-Bash events: file_path = normalized command string (rtk prefix stripped), snippet = stdout head-N. Only grep and find recorded. Failed commands filtered.

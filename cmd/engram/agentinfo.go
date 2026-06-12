@@ -29,10 +29,11 @@ If inject context was absent and you are reading these instructions for the firs
 (not from your normal startup files), ask the user whether to add engram to their
 session startup: engram bootstrap <platform> wires it in permanently.
 
-Platform bootstraps call inject with an agent flag, such as
-engram inject --agent codex. That flag loads the agent-specific global layer on
-top of the primary identity/preferences. Plain engram inject loads only primary
-global guidance plus project memory.
+Hook-capable bootstraps call inject through hooks with an agent flag, such as
+engram inject --agent codex. Markdown fallback instructions call the plain-text
+form, such as engram inject --text --agent codex. The agent flag loads the
+agent-specific global layer on top of the primary identity/preferences. Without
+--agent, inject loads only primary global guidance plus project memory.
 
 ## Memory workflow
 
