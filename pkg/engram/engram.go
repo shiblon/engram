@@ -702,6 +702,17 @@ type injectHookOutput struct {
 	AdditionalContext string `json:"additionalContext"`
 }
 
+// mergeMemories concatenates global entries ahead of project entries into a new
+// slice, leaving both inputs' backing arrays untouched. Inject merges the two
+// databases for every tier it surfaces from both (long, short, cold): a global
+// long-term fact then loads in every project, while project facts stay local.
+func mergeMemories(global, project []Memory) []Memory {
+	merged := make([]Memory, 0, len(global)+len(project))
+	merged = append(merged, global...)
+	merged = append(merged, project...)
+	return merged
+}
+
 // InjectContextText formats global and project inject results as the plain-text
 // session context (the markdown body injected at session start).
 func InjectContextText(global, project InjectResult, nSessions int) string {
@@ -735,7 +746,7 @@ func InjectContextText(global, project InjectResult, nSessions int) string {
 		parts = append(parts, fmt.Sprintf("## Agent layer (%s)\n%s", global.Agent, strings.Join(lines, "\n")))
 	}
 
-	coldEntries := append(global.Cold, project.Cold...)
+	coldEntries := mergeMemories(global.Cold, project.Cold)
 	if len(coldEntries) > 0 {
 		lines := make([]string, len(coldEntries))
 		for i, m := range coldEntries {
@@ -772,17 +783,19 @@ func InjectContextText(global, project InjectResult, nSessions int) string {
 		parts = append(parts, "## Staged tool candidates (review by age: bring matured ones to the user to promote into context/agenttools/, or discard)\n"+strings.Join(lines, "\n"))
 	}
 
-	if len(project.LongTerm) > 0 {
-		lines := make([]string, len(project.LongTerm))
-		for i, m := range project.LongTerm {
+	longTerm := mergeMemories(global.LongTerm, project.LongTerm)
+	if len(longTerm) > 0 {
+		lines := make([]string, len(longTerm))
+		for i, m := range longTerm {
 			lines[i] = fmt.Sprintf("- **%s**: %s", m.Key, m.Content)
 		}
 		parts = append(parts, "## Long-term memory\n"+strings.Join(lines, "\n"))
 	}
 
-	if len(project.ShortTerm) > 0 {
-		lines := make([]string, len(project.ShortTerm))
-		for i, m := range project.ShortTerm {
+	shortTerm := mergeMemories(global.ShortTerm, project.ShortTerm)
+	if len(shortTerm) > 0 {
+		lines := make([]string, len(shortTerm))
+		for i, m := range shortTerm {
 			lines[i] = fmt.Sprintf("%d. [%s] %s", i+1, m.Key, m.Content)
 		}
 		parts = append(parts, "## Short-term stack\n"+strings.Join(lines, "\n"))
@@ -817,7 +830,8 @@ func orientationHeader(global, project InjectResult) string {
 		who = fmt.Sprintf("Oriented as %s.", codename)
 	}
 	counts := fmt.Sprintf("Memory loaded: %d identity, %d preferences, %d long-term, %d short-term.",
-		len(global.Invariants), len(global.Preferences), len(project.LongTerm), len(project.ShortTerm))
+		len(global.Invariants), len(global.Preferences),
+		len(global.LongTerm)+len(project.LongTerm), len(global.ShortTerm)+len(project.ShortTerm))
 	if global.Agent != "" {
 		counts += fmt.Sprintf(" Agent layer %s: %d identity, %d preferences.",
 			global.Agent, len(global.AgentInvariants), len(global.AgentPreferences))

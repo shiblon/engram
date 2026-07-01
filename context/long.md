@@ -2,8 +2,14 @@
 
 # Long
 
-## engram-design-portability
-PORTABILITY RULE (updated 2026-06-12): design engram features across the current platform classes, not one agent. Hook-capable CLIs are Claude Code, Codex CLI, and Gemini CLI; their hook schemas are similar but event names, matchers, and trust/config locations still differ. Startup-file-only targets are currently AntiGravity, Copilot, and Cursor unless verified otherwise. Do not build shared mechanics on one platform's hook-only metadata (for example Claude's SessionStart source) unless the feature is explicitly scoped to that platform; prefer portable signals such as file mtime/age, file presence, explicit commands, and agent-driven judgment surfaced in injected instructions. Lifecycle-specific features should either have per-platform adapters or degrade cleanly through the startup instruction path. Supersedes older platform notes from 2026-06-04.
+## inject-surfacing-model
+How engram decides what loads at session start.
+
+Storage: tier and database are ORTHOGONAL. The memories table has no scope column; the only uniqueness is (tier, key). The -g/--global flag chooses which DB file opens (~/.engram/mem.db) vs the project .engram/mem.db; -t chooses the tier. Any tier can be stored in either DB.
+
+Surfacing (pkg/engram/engram.go InjectContextText): invariant + preference come from the GLOBAL db only; long + short are MERGED from global AND project (global first, via mergeMemories); cold is merged from both but rendered as an index only (keys + first line). orientationHeader sums global+project for the long/short counts.
+
+History: before 2026-07-01, Inject read global long/short into the struct but InjectContextText rendered only project long/short, so global long/short were silently dropped (global cold was already merged). Chris ruled inject SHOULD surface global long/short too; only cold stays index-only. Implemented 2026-07-01: added mergeMemories, merged long/short, fixed counts, added tests. Docs corrected in cmd/engram/mem.go (mem --help) and cmd/engram/agentinfo.go (agentInfoText); a GENERATED-FILE banner was added to agentInfoText so the bootstrap-written engram.md is not hand-edited.
 
 ## context-memory
 Project memory in version control: context/long.md is the canonical committed location for long-term project memories. engram inject auto-loads it when the file is newer than the DB (or DB has no long-term entries). At natural commit points, offer to run: engram mem dump --tier long -- user reviews and includes in commit. This covers fresh clones, new machines, and teammate sharing. Short-term, events, and cold are never committed.
@@ -51,6 +57,9 @@ cmd/engram historically had NO test files. PARTIAL PAYDOWN 2026-06-04: cmd/engra
 REMAINING GAP: runInject assembly (scan order, path relativization, candidate age formatting wiring) is still only smoke-tested. PROPOSED APPROACH for that: extract a testable core (e.g. assembleInjectText(ctx, cwd) string) that runInject wraps, then table-test it with temp project + temp HOME. House style: stdlib-only, table-driven, fixture helpers, no testify.
 
 WHY recorded: noticed during agenttools review; cmd-level glue bugs (like the original eviction-on-compact) are exactly what these tests catch.
+
+## engram-design-portability
+PORTABILITY RULE (updated 2026-06-12): design engram features across the current platform classes, not one agent. Hook-capable CLIs are Claude Code, Codex CLI, and Gemini CLI; their hook schemas are similar but event names, matchers, and trust/config locations still differ. Startup-file-only targets are currently AntiGravity, Copilot, and Cursor unless verified otherwise. Do not build shared mechanics on one platform's hook-only metadata (for example Claude's SessionStart source) unless the feature is explicitly scoped to that platform; prefer portable signals such as file mtime/age, file presence, explicit commands, and agent-driven judgment surfaced in injected instructions. Lifecycle-specific features should either have per-platform adapters or degrade cleanly through the startup instruction path. Supersedes older platform notes from 2026-06-04.
 
 ## dump-restore-all-design
 DUMP/RESTORE-ALL design (drafted 2026-06-04 with Chris; SHIPPED v0.6.0-v0.6.3). Goal: `engram save` -> one tgz on box A; move it; `engram restore` on box B -> all engram state back. One save, one restore. Replaces hand-copying mem.db files. Related: [[bin-tool-library-inject-feature]], [[engram-design-portability]], [[engram-architecture-invariants]].
@@ -146,3 +155,4 @@ DISPATCH IS DATA-DRIVEN, NO FLAG: `engram record` reads tool_name off the hook s
 
 ## status-line-questions
 Status line + orientation resolved (2026-06-03). engram status reads the 'codename' invariant and renders 'codename · project · N long · M short' via the pure helper FormatStatusLine (pkg/engram). inject leads with a '## Orientation' header (orientationHeader) stating codename + memory counts, before the Identity dump. agentinfo asks the agent to open with a brief in-character orientation sentence and keep its codename in voice all session. Codename IS a canonical invariant key (not gone). Remaining gap: status line still does not render in VS Code (platform limitation).
+

@@ -20,15 +20,20 @@ var memCmd = &cobra.Command{
   short                      In-flight context, conversation stack, backlog.
   cold                       Low-priority archive. Injected as index only.
 
-Global standing memories (invariant, preference) are stored in ~/.engram/mem.db
-and injected at the start of every session across all projects. Agent-specific
-layers are also global and are selected with --agent <name>; they apply on top
-of the primary invariant/preference tiers only when inject is called with the
-same agent. Durable global guidance belongs in invariant/preference, not in the
-project tiers.
+The -g/--global flag selects which database a memory lives in, independent of its
+tier: with -g, memories live in ~/.engram/mem.db; without it, in .engram/mem.db at
+the current project root. Tier and database are orthogonal -- any tier can be
+stored in either.
 
-Project memories (long, short, cold) are stored in .engram/mem.db at the project
-root and injected only for that project.
+At session start inject surfaces invariant and preference from the global database,
+long and short from both the global and project databases (merged, global first),
+and cold from both as an index only (keys and one-line summaries; fetch full
+contents on demand). So a global long-term memory loads in every project, while a
+project long-term memory loads only in that project.
+
+Agent-specific layers are also global and are selected with --agent <name>; they
+apply on top of the primary invariant/preference tiers only when inject is called
+with the same agent.
 
 Common operations:
   engram mem -g -t invariant list          list all global invariants

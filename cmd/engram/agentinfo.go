@@ -6,7 +6,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const agentInfoText = `# Engram - Memory and Personality for AI Agents
+const agentInfoText = `<!-- GENERATED FILE -- do not edit directly. This file is written by
+"engram bootstrap"; edits here are overwritten on the next run. To change it, edit
+the source in the engram tool (cmd/engram/agentinfo.go, const agentInfoText) and
+re-run engram bootstrap. -->
+
+# Engram - Memory and Personality for AI Agents
 
 Engram manages your identity, preferences, and project memory across sessions.
 
@@ -92,6 +97,14 @@ Run: engram mem --help for full command reference.
 - long:                  settled decisions, facts, and durable backlog
 - short:                 truly transient working state, the live stack
 - cold:                  low-priority archive -- injected as index only
+
+The -g/--global flag picks the DATABASE, not the tier: any tier can live in either
+the global (~/.engram) or project (.engram) database. Inject merges the two and
+surfaces invariant and preference from global, long and short from both (global
+first), and cold from both as an index only. So a global long/short memory loads in
+every project, while a project long/short memory loads only in its own project.
+Durable cross-project facts belong in invariant/preference or global long; reserve
+global short for genuinely transient cross-project state.
 
 Choose the tier by LONGEVITY, not by whether the work is finished: backlog or
 context that must persist across sessions belongs in long (it is a durable fact

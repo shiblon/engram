@@ -272,6 +272,44 @@ func TestInjectContextText(t *testing.T) {
 		}
 	})
 
+	t.Run("global_long_term_surfaced", func(t *testing.T) {
+		global := InjectResult{LongTerm: []Memory{{Key: "infra", Content: "global-long-fact"}}}
+		got := InjectContextText(global, InjectResult{}, 5)
+		if !strings.Contains(got, "## Long-term memory") {
+			t.Errorf("global long-term should surface a long-term section: %q", got)
+		}
+		if !strings.Contains(got, "global-long-fact") {
+			t.Errorf("global long-term entry missing: %q", got)
+		}
+	})
+
+	t.Run("global_short_term_surfaced", func(t *testing.T) {
+		global := InjectResult{ShortTerm: []Memory{{Key: "wip", Content: "global-short-state"}}}
+		got := InjectContextText(global, InjectResult{}, 5)
+		if !strings.Contains(got, "## Short-term stack") {
+			t.Errorf("global short-term should surface a short-term section: %q", got)
+		}
+		if !strings.Contains(got, "global-short-state") {
+			t.Errorf("global short-term entry missing: %q", got)
+		}
+	})
+
+	t.Run("long_term_merges_global_then_project", func(t *testing.T) {
+		global := InjectResult{LongTerm: []Memory{{Key: "g", Content: "global-fact"}}}
+		project := InjectResult{LongTerm: []Memory{{Key: "p", Content: "project-fact"}}}
+		got := InjectContextText(global, project, 5)
+		gi, pi := strings.Index(got, "global-fact"), strings.Index(got, "project-fact")
+		if gi < 0 || pi < 0 {
+			t.Fatalf("both long-term entries should surface: %q", got)
+		}
+		if gi > pi {
+			t.Errorf("global long-term should precede project (global=%d project=%d)", gi, pi)
+		}
+		if !strings.Contains(got, "2 long-term") {
+			t.Errorf("orientation count should sum global+project long-term: %q", got)
+		}
+	})
+
 	t.Run("agent_tools_section", func(t *testing.T) {
 		global := InjectResult{AgentTools: []ToolDesc{
 			{Name: "g.sh", Desc: "global tool", Run: "bash", Path: "/home/u/.engram/agenttools/g.sh"},
