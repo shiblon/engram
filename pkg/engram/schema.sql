@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS memories (
     tier       TEXT    NOT NULL,
     key        TEXT    NOT NULL,
     content    TEXT    NOT NULL DEFAULT '',
+    tldr       TEXT    NOT NULL DEFAULT '',
     session_id TEXT
 );
 

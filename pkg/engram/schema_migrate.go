@@ -8,7 +8,7 @@ import (
 
 // schemaVersion is the current schema version. Bump this and add an entry to
 // schemaMigrations whenever the schema changes.
-const schemaVersion = 3
+const schemaVersion = 4
 
 // schemaMigrations maps from-version to the SQL that advances to from+1.
 // Version 0 means "newly created or pre-versioning DB with the baseline schema
@@ -54,6 +54,53 @@ var schemaMigrations = []string{
 	 ALTER TABLE events_new RENAME TO events;
 	 CREATE INDEX IF NOT EXISTS idx_events_session ON events (session_id);
 	 CREATE INDEX IF NOT EXISTS idx_events_ts      ON events (ts DESC);`,
+	// 3 -> 4: add memories.tldr, the one-line summary inject surfaces in place of
+	// full content for every tier but invariants (which stay full because they are
+	// the agent's voice). Empty is valid: readers fall back to the first line of
+	// content, so old rows and un-summarized writes keep working.
+	//
+	// We rebuild rather than ALTER ... ADD COLUMN because every migration replays
+	// from version 0 even on a fresh DB whose schema.sql already has tldr, and
+	// SQLite has no ADD COLUMN IF NOT EXISTS -- a plain ALTER would fail there with
+	// "duplicate column". The canonical rebuild (copy the kept columns into a new
+	// table that names tldr with a default, swap names) is correct whether the
+	// column exists yet or not, so it is replay-safe. The three memories_fts sync
+	// triggers are defined ON memories and so are dropped with it; we recreate them
+	// and rebuild the external-content index from the swapped-in table. Existing
+	// rows keep their tldr = '' and fall back to content's first line at inject.
+	`DROP TRIGGER IF EXISTS memories_ai;
+	 DROP TRIGGER IF EXISTS memories_ad;
+	 DROP TRIGGER IF EXISTS memories_au;
+	 CREATE TABLE memories_new (
+	     id         INTEGER PRIMARY KEY,
+	     ts         INTEGER NOT NULL,
+	     tier       TEXT    NOT NULL,
+	     key        TEXT    NOT NULL,
+	     content    TEXT    NOT NULL DEFAULT '',
+	     tldr       TEXT    NOT NULL DEFAULT '',
+	     session_id TEXT
+	 );
+	 INSERT INTO memories_new (id, ts, tier, key, content, session_id)
+	     SELECT id, ts, tier, key, content, session_id FROM memories;
+	 DROP TABLE memories;
+	 ALTER TABLE memories_new RENAME TO memories;
+	 CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_tier_key ON memories (tier, key);
+	 CREATE INDEX IF NOT EXISTS idx_memories_tier_ts ON memories (tier, ts DESC);
+	 CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+	     INSERT INTO memories_fts(rowid, key, content)
+	     VALUES (new.id, new.key, new.content);
+	 END;
+	 CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+	     INSERT INTO memories_fts(memories_fts, rowid, key, content)
+	     VALUES ('delete', old.id, old.key, old.content);
+	 END;
+	 CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+	     INSERT INTO memories_fts(memories_fts, rowid, key, content)
+	     VALUES ('delete', old.id, old.key, old.content);
+	     INSERT INTO memories_fts(rowid, key, content)
+	     VALUES (new.id, new.key, new.content);
+	 END;
+	 INSERT INTO memories_fts(memories_fts) VALUES ('rebuild');`,
 }
 
 // applyMigrations reads PRAGMA user_version, runs any pending migration steps

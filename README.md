@@ -20,6 +20,8 @@ If memory is well structured and easily accessed in a database, then you can act
 
 Engram imposes structure, and it does so in a way that feels more seamless than normal, raw interactions without it.
 
+Part of that structure is summaries. Every memory keeps a short `tldr`, and session-start injection surfaces those one-liners rather than full entries — identity is the deliberate exception, since personality only works when it's present in full. The agent sees the whole shape of what it knows for very few tokens and reads an entry's full text only when it turns out to be relevant.
+
 ## Personality as a Context Canary
 
 The credit goes to [Kevin Harris](https://www.linkedin.com/in/pwnx0r/) for the ideas behind this one (I actually never found out *how* he did any of it, I just got the concept). If you decided to give your agent a personality, you are deciding to give it a characteristic that humans have evolved highly tuned sensitivity to. You *notice* when personality shifts in the middle of a conversation. You evolved to understand when something is "off". Making the context window something less like "85% full" and something more like "suddenly this quirky agent got more serious" makes it easier to know when something is about to get weird.
@@ -38,7 +40,9 @@ Whether agents store memory in .md files or just in session context is not neces
 
 Or, the agent can write a markdown file with info in it, but the format is all over the map, and that can make the agent confused. "What do you mean by 'backlog', exactly?" is a question I got once, and we had to go the rounds figuring out that it meant something like long-term memory, and that it should be checked and updated every time we finished a task. This is simply not built in, and it can burn a pile of tokens just figuring it out together.
 
-Engram makes memory explicit, editable, and searchable. It imposes a pretty flexible structure on the idea of remembering things. It's important that it be flexible, and it's also important that it be structured. There is a difference between long-term and short-term memory; between global invariants (identity, which applies everywhere) and global preferences (rules, which also apply everywhere but yield to what you ask for in the moment); and project-scoped memory tied to the working directory. And you can specify your own.
+Engram makes memory explicit, editable, and searchable. It imposes a pretty flexible structure on the idea of remembering things. It's important that it be flexible, and it's also important that it be structured. There is a difference between long-term and short-term memory; between invariants (identity, which applies everywhere) and preferences (rules that yield to what you ask for in the moment) — which can be global when they should hold everywhere, or scoped to a single project; and project memory tied to the working directory. And you can specify your own.
+
+Long-term versus short-term is the distinction people trip over most, so engram settles it with one test that requires no fortune-telling: can you name, right now, the event that will make this memory obsolete? If you can ("once this plan ships", "when the checklist is empty"), it's short-term, and it carries that retirement trigger with it so it gets cleaned up on its own. If you can't — a principle, a settled decision — it's long-term.
 
 The agent can also describe to you how its memory works. You can ask it what it can do, and it can tell you how it treats memory.
 

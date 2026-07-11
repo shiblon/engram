@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	_ "embed"
 
@@ -75,12 +76,56 @@ const (
 
 // Memory holds a single intentional memory entry.
 type Memory struct {
-	ID        int64
-	TS        int64
-	Tier      Tier
-	Key       string
-	Content   string
+	ID      int64
+	TS      int64
+	Tier    Tier
+	Key     string
+	Content string
+	// Tldr is the one-line summary inject surfaces in place of Content for every
+	// tier but invariants. Empty is valid; InjectSummary falls back to the first
+	// line of Content. Capped at MaxTldrLen runes by WriteMemory.
+	Tldr      string
 	SessionID string // non-empty for short-tier auto-expiry
+}
+
+// MaxTldrLen is the hard character (rune) ceiling on a memory's tldr. It is a
+// character count, not a word count, on purpose: a word limit is trivially gamed
+// with run-on compounds, whereas characters force genuine compression. Inject
+// leans on this bound to keep session-start context small and predictable.
+const MaxTldrLen = 200
+
+// InjectSummary returns the one-line form of a memory for session-start context:
+// its tldr when set, else the first line of its content, truncated to MaxTldrLen
+// runes either way. Inject surfaces this for every tier except invariants; the
+// agent fetches full content on demand with `engram mem read <key>`.
+func (m Memory) InjectSummary() string {
+	s := m.Tldr
+	if s == "" {
+		s = firstLine(m.Content)
+	}
+	return truncateRunes(s, MaxTldrLen)
+}
+
+// validateTldr rejects a tldr longer than MaxTldrLen runes. Enforced in
+// WriteMemory so every write path (CLI, import, restore) shares one ceiling.
+func validateTldr(tldr string) error {
+	if n := utf8.RuneCountInString(tldr); n > MaxTldrLen {
+		return fmt.Errorf("tldr too long: %d characters (max %d)", n, MaxTldrLen)
+	}
+	return nil
+}
+
+// truncateRunes shortens s to at most n runes, appending an ellipsis when it cut
+// anything, so a stray un-summarized firstLine can never blow the inject budget.
+func truncateRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	r := []rune(s)
+	if n <= 1 {
+		return string(r[:n])
+	}
+	return string(r[:n-1]) + "…"
 }
 
 const (
@@ -536,17 +581,21 @@ func Prune(ctx context.Context, db *sql.DB, keepSessions int) (int64, error) {
 // WriteMemory upserts a memory entry. If a memory with the same tier and key
 // exists it is replaced.
 func WriteMemory(ctx context.Context, db *sql.DB, m Memory) error {
+	if err := validateTldr(m.Tldr); err != nil {
+		return fmt.Errorf("write memory: %w", err)
+	}
 	if m.TS == 0 {
 		m.TS = time.Now().UnixMilli()
 	}
 	_, err := db.ExecContext(ctx, `
-		INSERT INTO memories (ts, tier, key, content, session_id)
-		VALUES (?, ?, ?, ?, ?)
+		INSERT INTO memories (ts, tier, key, content, tldr, session_id)
+		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(tier, key) DO UPDATE SET
 			ts = excluded.ts,
 			content = excluded.content,
+			tldr = excluded.tldr,
 			session_id = excluded.session_id
-	`, m.TS, m.Tier, m.Key, m.Content, m.SessionID)
+	`, m.TS, m.Tier, m.Key, m.Content, m.Tldr, m.SessionID)
 	if err != nil {
 		return fmt.Errorf("write memory: %w", err)
 	}
@@ -556,7 +605,7 @@ func WriteMemory(ctx context.Context, db *sql.DB, m Memory) error {
 // queryMemories is the shared implementation for ReadMemory, ReadMemoryTop, ListMemories, and FindMemoryByKey.
 // An empty tier matches all tiers.
 func queryMemories(ctx context.Context, db *sql.DB, tier Tier, key string, limit int) ([]Memory, error) {
-	q := `SELECT id, ts, tier, key, content, COALESCE(session_id, '') FROM memories WHERE true`
+	q := `SELECT id, ts, tier, key, content, tldr, COALESCE(session_id, '') FROM memories WHERE true`
 	var args []any
 	if tier != "" {
 		q += ` AND tier = ?`
@@ -579,14 +628,14 @@ func queryMemories(ctx context.Context, db *sql.DB, tier Tier, key string, limit
 }
 
 // scanMemories collects every row of the canonical memories projection
-// (id, ts, tier, key, content, session_id) and closes the rows. Shared by
+// (id, ts, tier, key, content, tldr, session_id) and closes the rows. Shared by
 // queryMemories and SearchMemories, which return identically-shaped rows.
 func scanMemories(rows *sql.Rows) ([]Memory, error) {
 	defer rows.Close()
 	var out []Memory
 	for rows.Next() {
 		var m Memory
-		if err := rows.Scan(&m.ID, &m.TS, &m.Tier, &m.Key, &m.Content, &m.SessionID); err != nil {
+		if err := rows.Scan(&m.ID, &m.TS, &m.Tier, &m.Key, &m.Content, &m.Tldr, &m.SessionID); err != nil {
 			return nil, fmt.Errorf("scan memory row: %w", err)
 		}
 		out = append(out, m)
@@ -650,6 +699,31 @@ func MoveMemory(ctx context.Context, db *sql.DB, key string, from, to Tier) erro
 	return DeleteMemory(ctx, db, from, key)
 }
 
+// MoveMemoryAcrossDB relocates a memory from the src database to the dst
+// database, reading it from tier `from` under srcKey and writing it to tier `to`
+// under dstKey, then deleting the source. It is how a memory crosses the
+// global<->project boundary (a same-database move is MoveMemory); dstKey lets the
+// caller de-scope an agent-layer key when it lands in a project, which has no
+// layers. The write happens before the delete so a failure leaves the source
+// intact rather than losing the memory.
+func MoveMemoryAcrossDB(ctx context.Context, src, dst *sql.DB, srcKey, dstKey string, from, to Tier) error {
+	m, err := ReadMemory(ctx, src, from, srcKey)
+	if err != nil {
+		return err
+	}
+	if m == nil {
+		return fmt.Errorf("memory %q not found in tier %q", srcKey, from)
+	}
+	m.ID = 0 // dst assigns its own rowid
+	m.Key = dstKey
+	m.Tier = to
+	m.TS = time.Now().UnixMilli()
+	if err := WriteMemory(ctx, dst, *m); err != nil {
+		return err
+	}
+	return DeleteMemory(ctx, src, from, srcKey)
+}
+
 // PopMemory reads and deletes the most recent short-tier memory. Returns nil
 // if the tier is empty.
 func PopMemory(ctx context.Context, db *sql.DB, tier Tier) (*Memory, error) {
@@ -675,7 +749,7 @@ func ReadMemoryTop(ctx context.Context, db *sql.DB, tier Tier) (*Memory, error) 
 // SearchMemories performs a full-text search over memories. If tier is
 // non-empty, results are filtered to that tier.
 func SearchMemories(ctx context.Context, db *sql.DB, query string, tier Tier) ([]Memory, error) {
-	q := `SELECT m.id, m.ts, m.tier, m.key, m.content, COALESCE(m.session_id, '')
+	q := `SELECT m.id, m.ts, m.tier, m.key, m.content, m.tldr, COALESCE(m.session_id, '')
 		FROM memories_fts f
 		JOIN memories m ON m.id = f.rowid
 		WHERE memories_fts MATCH ?`
@@ -726,10 +800,17 @@ func InjectContextText(global, project InjectResult, nSessions int) string {
 		parts = append(parts, "## Identity\n"+strings.Join(lines, "\n"))
 	}
 
-	if len(global.Preferences) > 0 {
-		lines := make([]string, len(global.Preferences))
-		for i, m := range global.Preferences {
-			lines[i] = "- " + m.Content
+	// Preferences merge global and project entries (global first), the same way
+	// long/short/cold already do: a global preference applies everywhere, a project
+	// preference only in its own repo. Identity stays global-only above -- who the
+	// agent is does not change per project. Each line is a one-line summary, not the
+	// full rule; the full text rides the @-imported standing file and `engram mem
+	// read <key>`.
+	prefs := mergeMemories(global.Preferences, project.Preferences)
+	if len(prefs) > 0 {
+		lines := make([]string, len(prefs))
+		for i, m := range prefs {
+			lines[i] = fmt.Sprintf("- **%s**: %s", m.Key, m.InjectSummary())
 		}
 		parts = append(parts, "## Preferences\n"+strings.Join(lines, "\n"))
 	}
@@ -741,7 +822,7 @@ func InjectContextText(global, project InjectResult, nSessions int) string {
 			lines = append(lines, fmt.Sprintf("**%s**: %s", m.Key, m.Content))
 		}
 		for _, m := range global.AgentPreferences {
-			lines = append(lines, "- "+m.Content)
+			lines = append(lines, fmt.Sprintf("- **%s**: %s", m.Key, m.InjectSummary()))
 		}
 		parts = append(parts, fmt.Sprintf("## Agent layer (%s)\n%s", global.Agent, strings.Join(lines, "\n")))
 	}
@@ -750,7 +831,7 @@ func InjectContextText(global, project InjectResult, nSessions int) string {
 	if len(coldEntries) > 0 {
 		lines := make([]string, len(coldEntries))
 		for i, m := range coldEntries {
-			lines[i] = fmt.Sprintf("- %s: %s", m.Key, firstLine(m.Content))
+			lines[i] = fmt.Sprintf("- %s: %s", m.Key, m.InjectSummary())
 		}
 		parts = append(parts, "## Cold storage (index only -- fetch with: engram mem --tier cold read <key>)\n"+strings.Join(lines, "\n"))
 	}
@@ -787,7 +868,7 @@ func InjectContextText(global, project InjectResult, nSessions int) string {
 	if len(longTerm) > 0 {
 		lines := make([]string, len(longTerm))
 		for i, m := range longTerm {
-			lines[i] = fmt.Sprintf("- **%s**: %s", m.Key, m.Content)
+			lines[i] = fmt.Sprintf("- **%s**: %s", m.Key, m.InjectSummary())
 		}
 		parts = append(parts, "## Long-term memory\n"+strings.Join(lines, "\n"))
 	}
@@ -796,7 +877,7 @@ func InjectContextText(global, project InjectResult, nSessions int) string {
 	if len(shortTerm) > 0 {
 		lines := make([]string, len(shortTerm))
 		for i, m := range shortTerm {
-			lines[i] = fmt.Sprintf("%d. [%s] %s", i+1, m.Key, m.Content)
+			lines[i] = fmt.Sprintf("%d. [%s] %s", i+1, m.Key, m.InjectSummary())
 		}
 		parts = append(parts, "## Short-term stack\n"+strings.Join(lines, "\n"))
 	}
@@ -830,7 +911,7 @@ func orientationHeader(global, project InjectResult) string {
 		who = fmt.Sprintf("Oriented as %s.", codename)
 	}
 	counts := fmt.Sprintf("Memory loaded: %d identity, %d preferences, %d long-term, %d short-term.",
-		len(global.Invariants), len(global.Preferences),
+		len(global.Invariants), len(global.Preferences)+len(project.Preferences),
 		len(global.LongTerm)+len(project.LongTerm), len(global.ShortTerm)+len(project.ShortTerm))
 	if global.Agent != "" {
 		counts += fmt.Sprintf(" Agent layer %s: %d identity, %d preferences.",
@@ -839,7 +920,10 @@ func orientationHeader(global, project InjectResult) string {
 	return "## Orientation\n" + who + " " + counts + "\n" +
 		"First reply this session: open with a brief, in-character orientation sentence that " +
 		"names your codename and confirms what loaded, then answer. Keep your codename present " +
-		"in your voice throughout the session, not just at the start."
+		"in your voice throughout the session, not just at the start.\n" +
+		"Preferences, long-term, short-term, and cold entries below are one-line summaries; " +
+		"run `engram mem read <key>` for an entry's full text when it looks relevant to what " +
+		"you are doing. Identity is shown in full."
 }
 
 // invariantValue returns the content of the invariant with the given key, or "".
@@ -909,7 +993,13 @@ func FormatMemoryMD(tier Tier, memories []Memory) string {
 	fmt.Fprintf(&b, "<!-- GENERATED by engram -- do not edit directly; use `engram mem` commands -->\n\n")
 	fmt.Fprintf(&b, "# %s%s\n\n", strings.ToUpper(t[:1]), t[1:])
 	for _, m := range memories {
-		fmt.Fprintf(&b, "## %s\n%s\n\n", m.Key, m.Content)
+		fmt.Fprintf(&b, "## %s\n", m.Key)
+		// The tldr rides an HTML comment: invisible in rendered markdown, but
+		// round-trips through ParseMemoryMD so a dump/load does not drop it.
+		if m.Tldr != "" {
+			fmt.Fprintf(&b, "<!-- tldr: %s -->\n", m.Tldr)
+		}
+		fmt.Fprintf(&b, "%s\n\n", m.Content)
 	}
 	return b.String()
 }
@@ -918,7 +1008,7 @@ func FormatMemoryMD(tier Tier, memories []Memory) string {
 // Memory entries for the given tier.
 func ParseMemoryMD(tier Tier, data string) ([]Memory, error) {
 	var out []Memory
-	var key string
+	var key, tldr string
 	var contentLines []string
 	now := time.Now().UnixMilli()
 
@@ -931,20 +1021,27 @@ func ParseMemoryMD(tier Tier, data string) ([]Memory, error) {
 			Tier:    tier,
 			Key:     key,
 			Content: strings.TrimSpace(strings.Join(contentLines, "\n")),
+			Tldr:    tldr,
 		})
 		key = ""
+		tldr = ""
 		contentLines = nil
 	}
 
 	scanner := bufio.NewScanner(strings.NewReader(data))
 	for scanner.Scan() {
 		line := scanner.Text()
+		trimmed := strings.TrimSpace(line)
 		switch {
 		case strings.HasPrefix(line, "## "):
 			flush()
 			key = strings.TrimPrefix(line, "## ")
 		case strings.HasPrefix(line, "# "):
 			// tier header, skip
+		case key != "" && len(contentLines) == 0 &&
+			strings.HasPrefix(trimmed, "<!-- tldr:") && strings.HasSuffix(trimmed, "-->"):
+			// The tldr comment sits between an entry's heading and its content.
+			tldr = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(trimmed, "<!-- tldr:"), "-->"))
 		case key != "":
 			contentLines = append(contentLines, line)
 		}

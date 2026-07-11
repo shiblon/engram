@@ -15,105 +15,95 @@ re-run engram bootstrap. -->
 
 Engram manages your identity, preferences, and project memory across sessions.
 
-## Finding engram
-
-If engram is not in PATH, check: $(brew --prefix)/bin/engram or $(go env GOBIN)/engram.
-
 ## Session startup
 
-Check whether inject context appears in your system prompt (look for sections like
-"## Identity", "## Preferences", "## Long-term memory"). This means inject already ran.
+Check whether inject context appears in your system prompt (sections like
+"## Identity", "## Preferences", "## Long-term memory"). If it does, inject already
+ran and you arrived oriented.
 
-On your first reply this session, open with a brief, in-character orientation sentence:
-name your codename, say whether you arrived oriented (inject context present) or loaded
-context manually (absent), and note what memory loaded. Keep it to one natural sentence,
-then answer. Carry your codename and personality through the whole session in how you
-speak, not just at the start.
+On your first reply, open with a brief, in-character orientation sentence: your
+codename, whether you arrived oriented (inject present) or loaded context by hand
+(absent), and what memory loaded. Then answer. Carry your codename and personality
+through the whole session, in how you speak, not just the greeting.
 
-If inject context was absent and you are reading these instructions for the first time
-(not from your normal startup files), ask the user whether to add engram to their
-session startup: engram bootstrap <platform> wires it in permanently.
-
-Hook-capable bootstraps call inject through hooks with an agent flag, such as
-engram inject --agent codex. Markdown fallback instructions call the plain-text
-form, such as engram inject --text --agent codex. The agent flag loads the
-agent-specific global layer on top of the primary identity/preferences. Without
---agent, inject loads only primary global guidance plus project memory.
+If inject was absent and you are reading this for the first time (not from your
+normal startup files), offer to wire engram into session startup with
+engram bootstrap <platform> (details in engram bootstrap --help). If engram is
+not on PATH, check $(brew --prefix)/bin/engram or $(go env GOBIN)/engram.
 
 ## Memory workflow
 
-Memory writes are scoped to the current project. Do not write to memory or files
-in other repos or projects without explicit user approval.
+Memory writes are scoped to the current project. Do not write memory or files in
+other repos or projects without explicit user approval, and ask before writing or
+updating global memory.
 
-When the user asks you to remember something: infer the right tier, write it with
-engram mem, and tell the user where it went and why.
+When the user asks you to remember something, decide first whether it belongs in
+memory at all. If a config flag, hook, or managed policy can ENFORCE it, propose
+that structural change and store only a terse pointer to where it is enforced --
+memory alone loses to harness/config defaults at the point of action. Otherwise
+choose the tier and database (below), write it with engram mem, give it a tldr,
+and tell the user where it went and why.
 
-First, decide whether the rule belongs in memory at all. If a native config flag,
-hook, or managed policy can enforce it, propose that structural change and store
-only a terse memory pointer to where it is enforced. Memory alone loses to
-harness/config defaults at point of action.
+When starting a digression, or when the user says "come back to this": save the
+current context to short-term first, confirm it is saved, then proceed. Re-read
+short-term when you return and resume.
 
-Then choose project vs. global: if it matters in a completely different project,
-it is global; if it belongs to this repo or team, it is project memory. Ask before
-writing or updating global memory.
+When a task finishes: check short-term for anything to promote
+(engram mem move <key> --to long) or delete.
 
-For global personality, invariants, and preferences, choose primary vs. agent
-layer:
-- Primary global memory is for cross-agent guidance the user wants everywhere.
-  Examples: codename, base personality, general code style, durable workflow
-  preferences. Use: engram mem -g -t invariant|preference write <key> <content>
-- Agent-layer memory is for guidance caused by one agent's harness defaults,
-  instruction channel, tool shape, or recurring failure mode. Use the current
-  agent slug, for example: engram mem -g --agent codex -t preference write <key> <content>
-
-When the user asks to adjust personality or behavior, do not guess primary vs.
-layer silently. If the adjustment compensates for this agent's defaults, say so
-and write it to the layer; if it is general, write it to the primary tier.
-
-Useful inspections:
-  engram mem -g list personality          # primary personality plus all layers
-  engram mem -g --agent codex list        # primary standing memory plus Codex layer
-  engram inject --text --agent codex      # verify the effective injected context
-
-If session start context appears twice or seems duplicated, first check whether
-a markdown init file still has an unconditional "engram inject --text" startup
-instruction, then check whether engram hooks are configured in more than one
-place. Ask the user which to keep and help remove the duplicate.
-
-When starting a digression or the user says "come back to this": save current context
-to short-term memory first, confirm it is saved, then proceed. Re-read short-term
-when done and resume.
-
-When a task finishes: check short-term for anything worth promoting to long-term
-or deleting. Use engram mem move <key> --to long to promote.
+Inspect memory any time with engram mem -g list, engram mem list,
+engram mem search <query>, or engram inject --text to see the effective injected
+context. If session-start context appears twice, a markdown init file probably
+still has an unconditional engram inject startup line while hooks also inject; ask
+the user which to keep.
 
 ## Memory tiers
 
-Run: engram mem --help for full command reference.
+Two axes: TIER (what kind of memory) and DATABASE (-g/--global for ~/.engram, else
+the project's .engram). They are orthogonal -- any tier can live in either database.
+Run engram mem --help for the full command reference.
 
-- invariant  (--global): personality -- applies to all projects
-- preference (--global): rules -- applies to all projects
-- --agent <name>:      global invariant/preference layer for one agent
-- long:                  settled decisions, facts, and durable backlog
-- short:                 truly transient working state, the live stack
-- cold:                  low-priority archive -- injected as index only
+- invariant  (global): identity -- codename, personality. Rarely changes.
+- preference (global or project): behavioral rules and standing defaults.
+- long:  settled decisions, facts, durable backlog.
+- short: in-flight working state, the live stack.
+- cold:  archive; injected as an index only. Do not read cold entries unprompted --
+         fetch on demand with engram mem --tier cold read <key>.
 
-The -g/--global flag picks the DATABASE, not the tier: any tier can live in either
-the global (~/.engram) or project (.engram) database. Inject merges the two and
-surfaces invariant and preference from global, long and short from both (global
-first), and cold from both as an index only. So a global long/short memory loads in
-every project, while a project long/short memory loads only in its own project.
-Durable cross-project facts belong in invariant/preference or global long; reserve
-global short for genuinely transient cross-project state.
+Global vs project database. Identity is global by nature; who you are does not
+change per repo. A preference is global if it should hold in every project, project
+if it belongs to this repo or team. Inject merges both databases (global first):
+global preference/long/short load everywhere, project ones only in their own repo.
+To relocate a memory later: engram mem move <key> --to <tier> --to-db global|project.
 
-Choose the tier by LONGEVITY, not by whether the work is finished: backlog or
-context that must persist across sessions belongs in long (it is a durable fact
-about the work, even if unfinished). Reserve short for transient working state you
-would be fine losing when the session ends.
+Long vs short -- one test, no forecasting. Ask: can you name, right now, the event
+that will make this memory obsolete? If yes, it is SHORT -- write that trigger into
+it ("Retire when: the plan is executed / the checklist is empty / this ships"). If
+no -- it is a principle or a settled decision whose end you cannot schedule -- it is
+LONG. Any concrete todo list is short: it dies when its items are all checked. This
+is a present-tense test, not a guess about how long you will care.
 
-Cold tier: for things worth keeping but not worth loading every session. Injected
-as a one-line catalog only -- fetch on demand with: engram mem --tier cold read <key>.
-Do not read cold entries unprompted. First line of a cold entry is the catalog summary.
+Short-term carries an obligation: each session, read the "Retire when:" line on
+every short entry, delete the ones whose condition is met, and resume from the rest.
+Burn it down. An uncertain trigger ("Retire when the user confirms X") is valid --
+it just routes to the user instead of straight to delete.
+
+Global personality and preferences can also be layered per agent with --agent
+<name>. Use a layer only when the guidance compensates for one agent's defaults,
+tool shape, or recurring failure mode -- not for something general. Do not guess
+primary vs layer silently: say which and why.
+
+## Memory summaries (tldr)
+
+Every memory carries a one-line tldr, and inject surfaces that summary -- not the
+full content -- for every tier except invariants (identity always shows in full,
+because it is your voice). When a summary looks relevant to what you are doing, read
+the whole entry with engram mem read <key>.
+
+Write a tldr with every memory:
+  engram mem ... write <key> <content> --tldr "<one-line summary>"
+It has a hard character limit, so compress deliberately -- the tldr is what future
+sessions see first. Omit it and inject falls back to the first line of the content.
 
 ## Project memory and version control
 

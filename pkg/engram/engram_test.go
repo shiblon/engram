@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func testDB(t *testing.T) *sql.DB {
@@ -476,7 +477,7 @@ func TestFormatStatusLine(t *testing.T) {
 
 func TestMemoryMDRoundTrip(t *testing.T) {
 	original := []Memory{
-		{Tier: TierLong, Key: "alpha", Content: "content alpha"},
+		{Tier: TierLong, Key: "alpha", Content: "content alpha", Tldr: "the alpha summary"},
 		{Tier: TierLong, Key: "beta", Content: "multi\nline\ncontent"},
 		{Tier: TierLong, Key: "gamma", Content: "  trimmed  "},
 	}
@@ -499,6 +500,33 @@ func TestMemoryMDRoundTrip(t *testing.T) {
 		if m.Content != wantContent {
 			t.Errorf("[%d] content %q, want %q", i, m.Content, wantContent)
 		}
+		if m.Tldr != original[i].Tldr {
+			t.Errorf("[%d] tldr %q, want %q", i, m.Tldr, original[i].Tldr)
+		}
+	}
+}
+
+// A markdown file predating the tldr column (no tldr comment) must still parse,
+// leaving Tldr empty rather than swallowing the first content line.
+func TestParseMemoryMDWithoutTldrIsBackwardCompatible(t *testing.T) {
+	legacy := "# Long\n\n## alpha\ncontent alpha\n\n## beta\nfirst line\nsecond line\n"
+	parsed, err := ParseMemoryMD(TierLong, legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed) != 2 {
+		t.Fatalf("got %d memories, want 2", len(parsed))
+	}
+	for _, m := range parsed {
+		if m.Tldr != "" {
+			t.Errorf("entry %q got tldr %q, want empty for a legacy file", m.Key, m.Tldr)
+		}
+	}
+	if parsed[0].Content != "content alpha" {
+		t.Errorf("alpha content = %q, want %q", parsed[0].Content, "content alpha")
+	}
+	if parsed[1].Content != "first line\nsecond line" {
+		t.Errorf("beta content = %q, want full body", parsed[1].Content)
 	}
 }
 
@@ -976,4 +1004,225 @@ func TestFindProjectRootClaudeMarker(t *testing.T) {
 	if !samePath(got, dir) {
 		t.Errorf("got %q, want %q", got, dir)
 	}
+}
+
+// --- tldr ---
+
+func TestWriteMemoryTldr(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+
+	t.Run("round_trip", func(t *testing.T) {
+		if err := WriteMemory(ctx, db, Memory{Tier: TierLong, Key: "k", Content: "full text", Tldr: "the summary"}); err != nil {
+			t.Fatal(err)
+		}
+		m, err := ReadMemory(ctx, db, TierLong, "k")
+		if err != nil || m == nil {
+			t.Fatalf("read: %v", err)
+		}
+		if m.Tldr != "the summary" {
+			t.Errorf("Tldr = %q, want %q", m.Tldr, "the summary")
+		}
+	})
+
+	t.Run("limit_counts_characters_not_bytes", func(t *testing.T) {
+		// "é" is two bytes but one character. MaxTldrLen of them is at the ceiling
+		// (400 bytes, MaxTldrLen runes) and must be accepted; one more is rejected.
+		// A byte limit would wrongly reject the first case.
+		atMax := strings.Repeat("é", MaxTldrLen)
+		if err := WriteMemory(ctx, db, Memory{Tier: TierLong, Key: "atmax", Tldr: atMax}); err != nil {
+			t.Errorf("tldr at exactly MaxTldrLen characters should be accepted, got %v", err)
+		}
+		overMax := strings.Repeat("é", MaxTldrLen+1)
+		if err := WriteMemory(ctx, db, Memory{Tier: TierLong, Key: "over", Tldr: overMax}); err == nil {
+			t.Error("tldr over MaxTldrLen characters should be rejected")
+		}
+	})
+}
+
+func TestInjectSummary(t *testing.T) {
+	t.Run("prefers_tldr_over_content", func(t *testing.T) {
+		m := Memory{Content: "the whole long content", Tldr: "short summary"}
+		if got := m.InjectSummary(); got != "short summary" {
+			t.Errorf("InjectSummary = %q, want tldr %q", got, "short summary")
+		}
+	})
+	t.Run("falls_back_to_first_line", func(t *testing.T) {
+		m := Memory{Content: "first line\nsecond line\nthird"}
+		if got := m.InjectSummary(); got != "first line" {
+			t.Errorf("InjectSummary = %q, want first line only", got)
+		}
+	})
+	t.Run("truncates_to_budget", func(t *testing.T) {
+		m := Memory{Content: strings.Repeat("x", MaxTldrLen+50)}
+		got := m.InjectSummary()
+		if n := utf8.RuneCountInString(got); n > MaxTldrLen {
+			t.Errorf("summary is %d chars, want <= %d", n, MaxTldrLen)
+		}
+		if !strings.HasSuffix(got, "…") {
+			t.Errorf("truncated summary should end with an ellipsis, got %q", got)
+		}
+	})
+}
+
+func TestMoveMemoryAcrossDB(t *testing.T) {
+	ctx := context.Background()
+	src := testDB(t)
+	dst := testDB(t)
+
+	// A global claude-layer preference relocating into a project, de-scoped to its
+	// base key (projects have no layers). Content and tldr must survive.
+	if err := WriteMemory(ctx, src, Memory{Tier: TierPreference, Key: "agent/claude/worktree", Content: "the rule", Tldr: "worktree-only edits"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := MoveMemoryAcrossDB(ctx, src, dst, "agent/claude/worktree", "worktree", TierPreference, TierPreference); err != nil {
+		t.Fatal(err)
+	}
+
+	if gone, _ := ReadMemory(ctx, src, TierPreference, "agent/claude/worktree"); gone != nil {
+		t.Error("source entry should be gone after cross-DB move")
+	}
+	got, err := ReadMemory(ctx, dst, TierPreference, "worktree")
+	if err != nil || got == nil {
+		t.Fatalf("destination entry missing: %v", err)
+	}
+	if got.Content != "the rule" || got.Tldr != "worktree-only edits" {
+		t.Errorf("moved entry = {content:%q tldr:%q}, want content+tldr preserved", got.Content, got.Tldr)
+	}
+}
+
+func TestMoveMemoryAcrossDBNotFound(t *testing.T) {
+	ctx := context.Background()
+	src := testDB(t)
+	dst := testDB(t)
+	if err := MoveMemoryAcrossDB(ctx, src, dst, "ghost", "ghost", TierShort, TierLong); err == nil {
+		t.Error("expected error moving a nonexistent memory across databases")
+	}
+}
+
+// A v3 DB has a memories table without a tldr column. Migrating to v4 must add it,
+// preserve every row (with tldr defaulting to empty), and keep full-text search
+// working over the rebuilt table.
+func TestSchemaMigrationV3ToV4AddsTldr(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	// Recreate the v3 memories shape (no tldr): rebuild the table without the
+	// column, restore its indexes and FTS triggers, then stamp the DB back to v3.
+	v3setup := []string{
+		`DROP TRIGGER IF EXISTS memories_ai`,
+		`DROP TRIGGER IF EXISTS memories_ad`,
+		`DROP TRIGGER IF EXISTS memories_au`,
+		`CREATE TABLE memories_v3 (
+		    id INTEGER PRIMARY KEY, ts INTEGER NOT NULL, tier TEXT NOT NULL,
+		    key TEXT NOT NULL, content TEXT NOT NULL DEFAULT '', session_id TEXT)`,
+		`INSERT INTO memories_v3 (id, ts, tier, key, content, session_id)
+		    SELECT id, ts, tier, key, content, session_id FROM memories`,
+		`DROP TABLE memories`,
+		`ALTER TABLE memories_v3 RENAME TO memories`,
+		`CREATE UNIQUE INDEX idx_memories_tier_key ON memories (tier, key)`,
+		`CREATE INDEX idx_memories_tier_ts ON memories (tier, ts DESC)`,
+		`CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN
+		    INSERT INTO memories_fts(rowid, key, content) VALUES (new.id, new.key, new.content);
+		 END`,
+		`CREATE TRIGGER memories_ad AFTER DELETE ON memories BEGIN
+		    INSERT INTO memories_fts(memories_fts, rowid, key, content) VALUES ('delete', old.id, old.key, old.content);
+		 END`,
+		`CREATE TRIGGER memories_au AFTER UPDATE ON memories BEGIN
+		    INSERT INTO memories_fts(memories_fts, rowid, key, content) VALUES ('delete', old.id, old.key, old.content);
+		    INSERT INTO memories_fts(rowid, key, content) VALUES (new.id, new.key, new.content);
+		 END`,
+		`INSERT INTO memories (id, ts, tier, key, content, session_id) VALUES (1, 100, 'long', 'infra', 'stateless decomposition wins', NULL)`,
+		`INSERT INTO memories_fts(memories_fts) VALUES ('rebuild')`,
+		`PRAGMA user_version = 3`,
+	}
+	for _, stmt := range v3setup {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("set up v3 state (%q): %v", stmt, err)
+		}
+	}
+
+	if err := applyMigrations(ctx, db); err != nil {
+		t.Fatalf("applyMigrations v3->: %v", err)
+	}
+
+	var v int
+	if err := db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&v); err != nil {
+		t.Fatal(err)
+	}
+	if v != schemaVersion {
+		t.Errorf("user_version = %d, want %d", v, schemaVersion)
+	}
+
+	var tldrCols int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name = 'tldr'`).Scan(&tldrCols); err != nil {
+		t.Fatal(err)
+	}
+	if tldrCols != 1 {
+		t.Error("tldr column missing after migration")
+	}
+
+	// The row survives, with tldr defaulting to empty.
+	m, err := ReadMemory(ctx, db, TierLong, "infra")
+	if err != nil || m == nil {
+		t.Fatalf("row lost across migration: %v", err)
+	}
+	if m.Content != "stateless decomposition wins" || m.Tldr != "" {
+		t.Errorf("migrated row = {content:%q tldr:%q}, want content preserved and tldr empty", m.Content, m.Tldr)
+	}
+
+	// Full-text search still works over the rebuilt table.
+	hits, err := SearchMemories(ctx, db, "decomposition", TierLong)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].Key != "infra" {
+		t.Errorf("FTS after migration returned %v, want the single 'infra' row", hits)
+	}
+}
+
+func TestInjectContextTextTldrAndProjectPreferences(t *testing.T) {
+	t.Run("preferences_merge_global_then_project", func(t *testing.T) {
+		global := InjectResult{Preferences: []Memory{{Key: "g", Content: "global pref"}}}
+		project := InjectResult{Preferences: []Memory{{Key: "p", Content: "project pref"}}}
+		got := InjectContextText(global, project, 5)
+		gi, pi := strings.Index(got, "global pref"), strings.Index(got, "project pref")
+		if gi < 0 || pi < 0 {
+			t.Fatalf("both preferences should surface: %q", got)
+		}
+		if gi > pi {
+			t.Errorf("global preference should precede project (global=%d project=%d)", gi, pi)
+		}
+		if !strings.Contains(got, "2 preferences") {
+			t.Errorf("orientation count should sum global+project preferences: %q", got)
+		}
+	})
+
+	t.Run("non_identity_tiers_show_tldr_not_full_content", func(t *testing.T) {
+		global := InjectResult{
+			LongTerm: []Memory{{Key: "k", Content: "THE ENTIRE LONG BODY", Tldr: "the one-liner"}},
+		}
+		got := InjectContextText(global, InjectResult{}, 5)
+		if !strings.Contains(got, "the one-liner") {
+			t.Errorf("long-term should surface its tldr: %q", got)
+		}
+		if strings.Contains(got, "THE ENTIRE LONG BODY") {
+			t.Errorf("long-term should surface only the tldr, not full content: %q", got)
+		}
+	})
+
+	t.Run("identity_renders_full_even_with_tldr", func(t *testing.T) {
+		global := InjectResult{
+			Invariants: []Memory{{Key: "personality", Content: "THE FULL PERSONALITY PROSE", Tldr: "brief"}},
+		}
+		got := InjectContextText(global, InjectResult{}, 5)
+		if !strings.Contains(got, "THE FULL PERSONALITY PROSE") {
+			t.Errorf("identity must render in full regardless of tldr: %q", got)
+		}
+	})
 }

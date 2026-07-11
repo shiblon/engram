@@ -12,36 +12,38 @@ var memCmd = &cobra.Command{
 	Short: "Manage agent memory (invariants, preferences, long-term, short-term, cold)",
 	Long: `Manage engram memories across five tiers:
 
-  invariant  (-g, --global)  Identity, codename, personality. Rarely changed.
-                             Applies to all projects.
-  preference (-g, --global)  Code and behavior rules. Add and remove over time.
-                             Applies to all projects.
-  long                       Settled project decisions and facts.
-  short                      In-flight context, conversation stack, backlog.
-  cold                       Low-priority archive. Injected as index only.
+  invariant   Identity: codename, personality. Global; rarely changes.
+  preference  Behavioral rules and standing defaults. Global (every project) or
+              project-scoped.
+  long        Settled decisions, facts, durable backlog.
+  short       In-flight working state, the live stack.
+  cold        Low-priority archive. Injected as an index only.
 
-The -g/--global flag selects which database a memory lives in, independent of its
-tier: with -g, memories live in ~/.engram/mem.db; without it, in .engram/mem.db at
-the current project root. Tier and database are orthogonal -- any tier can be
-stored in either.
+Tier and database are orthogonal. The -g/--global flag selects the DATABASE:
+with -g a memory lives in ~/.engram, without it in the project's .engram. Any tier
+can live in either; move one between them with 'move --to-db global|project'.
 
-At session start inject surfaces invariant and preference from the global database,
-long and short from both the global and project databases (merged, global first),
-and cold from both as an index only (keys and one-line summaries; fetch full
-contents on demand). So a global long-term memory loads in every project, while a
-project long-term memory loads only in that project.
+Long vs short is one test, not a forecast: can you name the event that makes the
+memory obsolete? If yes it is short (record it: "Retire when: ..."); if no it is
+long. Any concrete todo list is short.
 
-Agent-specific layers are also global and are selected with --agent <name>; they
-apply on top of the primary invariant/preference tiers only when inject is called
-with the same agent.
+At session start inject merges both databases (global first): invariant from global
+only; preference, long, and short from both; cold from both as an index. A global
+memory loads in every project, a project memory only in its own.
+
+Every entry carries a one-line tldr (set with --tldr on write; falls back to the
+first line of content). Inject surfaces the tldr for every tier except invariants,
+which show in full; read an entry's full text with 'engram mem read <key>'.
+
+Agent layers are global and selected with --agent <name>; they apply on top of the
+primary invariant/preference tiers only when inject runs with the same agent.
 
 Common operations:
   engram mem -g -t invariant list          list all global invariants
   engram mem -g list personality           list primary + agent personality layers
-  engram mem -g -t invariant read <key>    read a specific invariant
-  engram mem -g -t preference write <key> <content>
-  engram mem -g --agent codex -t preference write <key> <content>
+  engram mem -g -t preference write <key> <content> --tldr "<summary>"
   engram mem -t long write <key> <content> write to project long-term memory
+  engram mem move <key> --to long --to-db global   relocate across tier and database
   engram mem search <query>                full-text search across all tiers
   engram inject                            print session-start context as JSON
 
@@ -58,7 +60,15 @@ func memUsesGlobal() bool {
 }
 
 func openMemDB(ctx context.Context) (*engram.DBHandle, error) {
-	if memUsesGlobal() {
+	return openScopeDB(ctx, memUsesGlobal())
+}
+
+// openScopeDB opens either the global (~/.engram) or the project (.engram)
+// database explicitly, independent of the command's flags. The move command uses
+// it to open a second, cross-scope handle when relocating a memory between the two
+// databases.
+func openScopeDB(ctx context.Context, global bool) (*engram.DBHandle, error) {
+	if global {
 		db, err := engram.OpenGlobalDB(ctx)
 		if err != nil {
 			return nil, err
@@ -75,6 +85,14 @@ func openMemDB(ctx context.Context) (*engram.DBHandle, error) {
 		return nil, err
 	}
 	return &engram.DBHandle{DB: db, Path: engram.DBPath(root)}, nil
+}
+
+// scopeName is the user-facing word for a database scope.
+func scopeName(global bool) string {
+	if global {
+		return "global"
+	}
+	return "project"
 }
 
 func init() {

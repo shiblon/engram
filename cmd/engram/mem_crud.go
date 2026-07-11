@@ -77,6 +77,8 @@ func printMemories(memories []engram.Memory) {
 	}
 }
 
+var memTldr string
+
 var memWriteCmd = &cobra.Command{
 	Use:   "write <key> <content>",
 	Short: "Write (upsert) a memory entry",
@@ -100,6 +102,7 @@ var memWriteCmd = &cobra.Command{
 			Tier:    tier,
 			Key:     key,
 			Content: content,
+			Tldr:    strings.TrimSpace(memTldr),
 		}
 		if err := engram.WriteMemory(ctx, h.DB, m); err != nil {
 			return err
@@ -262,33 +265,46 @@ var memDeleteCmd = &cobra.Command{
 var (
 	moveFrom string
 	moveTo   string
+	moveToDB string
 )
 
 var memMoveCmd = &cobra.Command{
 	Use:   "move <key>",
-	Short: "Move a memory to a different tier",
-	Long: `Move a memory from one tier to another within the same database.
+	Short: "Move a memory to a different tier, or to the other database",
+	Long: `Move a memory to a different tier, and optionally to the other database.
 
 The source tier is inferred automatically unless --from is specified.
 Use --to to specify the destination tier (required).
+
+By default the move stays within the same database (global with -g/--agent,
+otherwise the project DB). Pass --to-db to relocate across databases:
+
+  --to-db global    move into ~/.engram        (e.g. promote a project rule)
+  --to-db project   move into ./.engram        (e.g. scope a global rule to
+                                                 this repo only)
+
+An agent-layer key is de-scoped to its base key when it lands in a project,
+which has no layers.
 
 Tiers: invariant, preference, long, short, cold`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
-		h, err := openMemDB(ctx)
+		src, err := openMemDB(ctx)
 		if err != nil {
 			return err
 		}
-		defer h.DB.Close()
+		defer src.DB.Close()
 
 		if moveTo == "" {
 			return fmt.Errorf("--to is required")
 		}
-		if memAgent != "" && !engram.IsStandingTier(engram.Tier(moveTo)) {
+		toTier := engram.Tier(moveTo)
+		if memAgent != "" && !engram.IsStandingTier(toTier) {
 			return fmt.Errorf("--agent only applies to global invariant/preference memory; --to must be invariant or preference")
 		}
 
+		// Resolve the source tier and its stored key against the source DB.
 		from := engram.Tier(moveFrom)
 		key := args[0]
 		if !cmd.Flag("from").Changed {
@@ -296,7 +312,7 @@ Tiers: invariant, preference, long, short, cold`,
 			if err != nil {
 				return err
 			}
-			matches, err := engram.ListMemoriesForView(ctx, h.DB, tiers, memAgent, args[0])
+			matches, err := engram.ListMemoriesForView(ctx, src.DB, tiers, memAgent, args[0])
 			if err != nil {
 				return err
 			}
@@ -313,19 +329,65 @@ Tiers: invariant, preference, long, short, cold`,
 			from = matches[0].Tier
 			key = matches[0].Key
 		} else {
-			var err error
 			key, err = memStoredKey(args[0], from)
 			if err != nil {
 				return err
 			}
 		}
 
-		if err := engram.MoveMemory(ctx, h.DB, key,
-			from, engram.Tier(moveTo)); err != nil {
+		// Decide the destination database. Default: stay put.
+		srcGlobal := memUsesGlobal()
+		destGlobal := srcGlobal
+		if cmd.Flag("to-db").Changed {
+			switch moveToDB {
+			case "global":
+				destGlobal = true
+			case "project":
+				destGlobal = false
+			default:
+				return fmt.Errorf(`--to-db must be "global" or "project"`)
+			}
+		}
+
+		// Same-database move: the common case, unchanged behavior.
+		if destGlobal == srcGlobal {
+			if err := engram.MoveMemory(ctx, src.DB, key, from, toTier); err != nil {
+				return err
+			}
+			syncStandingIfTouched(ctx, src, from, toTier)
+			fmt.Printf("moved %q from %s to %s\n", args[0], from, toTier)
+			return nil
+		}
+
+		// Cross-database move.
+		dst, err := openScopeDB(ctx, destGlobal)
+		if err != nil {
 			return err
 		}
-		syncStandingIfTouched(ctx, h, from, engram.Tier(moveTo))
-		fmt.Printf("moved %q from %s to %s\n", args[0], from, moveTo)
+		defer dst.DB.Close()
+
+		// A project has no agent layers, so de-scope a layer key on the way in.
+		dstKey := key
+		if !destGlobal {
+			if _, base, ok := engram.ParseAgentLayerKey(key); ok {
+				dstKey = base
+			}
+		}
+		if err := engram.MoveMemoryAcrossDB(ctx, src.DB, dst.DB, key, dstKey, from, toTier); err != nil {
+			return err
+		}
+		// Re-render the global standing files if a standing tier crossed the global
+		// channel in either direction (a preference left global, or arrived there).
+		if engram.IsStandingTier(from) || engram.IsStandingTier(toTier) {
+			globalDB := src.DB
+			if destGlobal {
+				globalDB = dst.DB
+			}
+			if err := engram.SyncStandingMemory(ctx, globalDB); err != nil {
+				fmt.Fprintf(os.Stderr, "engram: sync standing memory: %v\n", err)
+			}
+		}
+		fmt.Printf("moved %q from %s %s to %s %s\n", args[0], scopeName(srcGlobal), from, scopeName(destGlobal), toTier)
 		return nil
 	},
 }
@@ -358,9 +420,11 @@ var memPopCmd = &cobra.Command{
 }
 
 func init() {
+	memWriteCmd.Flags().StringVar(&memTldr, "tldr", "", fmt.Sprintf("one-line summary shown at inject time (max %d chars; falls back to the first line of content)", engram.MaxTldrLen))
 	memListCmd.Flags().BoolVar(&memListJSON, "json", false, "output as JSON array")
 	memMoveCmd.Flags().StringVar(&moveFrom, "from", "", "source tier (inferred if omitted)")
 	memMoveCmd.Flags().StringVar(&moveTo, "to", "", "destination tier (required)")
+	memMoveCmd.Flags().StringVar(&moveToDB, "to-db", "", `destination database: "global" or "project" (default: same as source)`)
 
 	memCmd.AddCommand(memWriteCmd, memReadCmd, memListCmd, memDeleteCmd, memMoveCmd, memPopCmd)
 }
