@@ -14,7 +14,7 @@ func TestRenderAgentInfoSubstitutesVersion(t *testing.T) {
 		t.Errorf("rendered guidance missing the substituted version %q", engramVersion())
 	}
 	// The drift instruction must survive rendering so agents know to act on a mismatch.
-	if !strings.Contains(got, "engram bootstrap") || !strings.Contains(got, "session-start") {
-		t.Errorf("rendered guidance missing the version-drift re-bootstrap instruction")
+	if !strings.Contains(got, "predates the installed engram") {
+		t.Errorf("rendered guidance missing the version-drift paragraph")
 	}
 }
