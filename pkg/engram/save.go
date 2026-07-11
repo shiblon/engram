@@ -32,18 +32,13 @@ type SaveProject struct {
 
 // SaveResult summarises what was written.
 type SaveResult struct {
-	ProjectCount    int // projects actually snapshotted into the archive
-	PrunedCount     int
-	Skipped         []string // projects dropped from the archive (open/vacuum failure), with reason
-	ContextWarnings []string // non-empty when context/ exists but --include-context was false
+	ProjectCount int // projects actually snapshotted into the archive
+	PrunedCount  int
+	Skipped      []string // projects dropped from the archive (open/vacuum failure), with reason
 }
 
 // SaveOptions controls optional behaviour of Save.
 type SaveOptions struct {
-	// IncludeContext, when true, bundles each project's context/ directory
-	// (long.md + agenttools) into the archive. Defaults to false because these
-	// files are version-controlled and already survive across machines.
-	IncludeContext bool
 	// EngramVersion is the binary version string embedded in meta.json.
 	// Pass runtime/debug.ReadBuildInfo() result; empty string is fine.
 	EngramVersion string
@@ -133,15 +128,6 @@ func Save(ctx context.Context, w io.Writer, opts SaveOptions) (SaveResult, error
 			continue
 		}
 		snaps = append(snaps, projectSnap{entry: p, snapPath: snapPath})
-
-		// Context warning: exists but not included.
-		if !opts.IncludeContext {
-			contextDir := filepath.Join(absRoot, "context")
-			if _, err := os.Stat(contextDir); err == nil {
-				res.ContextWarnings = append(res.ContextWarnings,
-					fmt.Sprintf("%s has context/ — use --include-context to bundle it", p.path))
-			}
-		}
 	}
 
 	// Count and describe only what actually made it into the archive, so
@@ -181,16 +167,9 @@ func Save(ctx context.Context, w io.Writer, opts SaveOptions) (SaveResult, error
 	// projects/<n>/
 	for i, ps := range snaps {
 		prefix := fmt.Sprintf("projects/%d", i)
-		absRoot := absProjectRoot(ps.entry.path, home)
 
 		if err := tarWriteFile(tw, prefix+"/mem.db", ps.snapPath); err != nil {
 			return res, err
-		}
-		// context/ (opt-in)
-		if opts.IncludeContext {
-			if err := tarWriteDir(tw, prefix+"/context", filepath.Join(absRoot, "context")); err != nil {
-				return res, err
-			}
 		}
 		// identity sidecar so restore knows which project this is
 		sidecar, _ := json.Marshal(SaveProject{Identity: ps.entry.identity, Path: ps.entry.path})
