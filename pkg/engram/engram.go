@@ -19,6 +19,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -135,6 +136,25 @@ const (
 	// DefaultPruneSessions is the default number of sessions to keep when
 	// pruning old events.
 	DefaultPruneSessions = 100
+	// InjectSplitThreshold is the touched-file count above which a directory in
+	// the recently-active rollup is broken into its subdirectories, so hot areas
+	// resolve while quiet ones stay a single line.
+	InjectSplitThreshold = 10
+	// InjectExpandThreshold is the touched-file count at or below which a rollup
+	// directory is expanded to its individual file paths. It is 1 deliberately: a
+	// single-file directory costs one line whether rendered as `dir/ ×1` or as the
+	// filename, so showing the name is free and strictly more useful. Above 1,
+	// expansion would spend extra lines to undo the rollup's own collapsing.
+	InjectExpandThreshold = 1
+	// InjectLongBudgetChars and InjectShortBudgetChars bound how many characters
+	// the long-term and short-term sections may spend at session start. Entries
+	// arrive most-recent-first, so the budget keeps recent memories and drops the
+	// stalest, then the section reports "showing N of M" rather than letting the
+	// harness silently truncate the middle. Identity, preferences, and cold stay
+	// uncapped: identity is the agent's voice, preferences are always-on rules,
+	// and cold is already an index. These are the tunable policy knobs.
+	InjectLongBudgetChars  = 10000
+	InjectShortBudgetChars = 3000
 )
 
 //go:embed schema.sql
@@ -787,6 +807,142 @@ func mergeMemories(global, project []Memory) []Memory {
 	return merged
 }
 
+// countPhrase renders "N of M label" when a budget dropped some entries
+// (shown < total), else "M label". The orientation header uses it so its stated
+// counts never overstate what actually rendered in the sections below.
+func countPhrase(shown, total int, label string) string {
+	if shown < total {
+		return fmt.Sprintf("%d of %d %s", shown, total, label)
+	}
+	return fmt.Sprintf("%d %s", total, label)
+}
+
+// budgetNote returns the parenthetical appended to a capped section's header,
+// or "" when the budget dropped nothing. It states what was cut and how to see
+// the rest, turning a silent truncation into a prompt to prune.
+func budgetNote(shown, total int) string {
+	if shown >= total {
+		return ""
+	}
+	return fmt.Sprintf(" (showing %d of %d; %d over budget, prune with `engram mem list`)", shown, total, total-shown)
+}
+
+// budgetLines keeps the leading lines whose cumulative length (including the
+// newline separators that join them) fits within budget, returning the kept
+// prefix and its length. A non-positive budget means unlimited. Callers pass
+// lines most-recent-first, so the dropped remainder is always the stalest.
+func budgetLines(lines []string, budget int) (kept []string, shown int) {
+	if budget <= 0 {
+		return lines, len(lines)
+	}
+	total := 0
+	for i, ln := range lines {
+		add := len(ln)
+		if i > 0 {
+			add++ // newline separator between lines
+		}
+		if total+add > budget {
+			break
+		}
+		total += add
+		kept = append(kept, ln)
+	}
+	return kept, len(kept)
+}
+
+// rollupFiles collapses a recency-ordered list of touched file paths into a
+// compact directory activity summary. It never enumerates files by default:
+// each directory renders as one `dir/ ×count` line, so a folder holding hundreds
+// of generated files costs one line, not hundreds. A directory whose touched-file
+// count exceeds splitThreshold is broken one level deeper and the rule reapplied,
+// so resolution follows churn -- quiet corners stay coarse, hot areas resolve to
+// their subdirectories. A leaf bucket at or below expandThreshold expands to its
+// actual file paths, because at that size the names are cheap and carry more
+// signal than a count. Buckets are ordered by the recency of their most-recent
+// file, which the input ordering already encodes.
+func rollupFiles(files []string, splitThreshold, expandThreshold int) []string {
+	return rollupBucket(files, 0, splitThreshold, expandThreshold)
+}
+
+// rollupBucket renders one directory bucket: the files sharing the first `depth`
+// path components. It is the recursive core of rollupFiles. Inputs stay in
+// recency order (most-recent first) throughout, so emitting groups in
+// first-appearance order preserves the recency sort for free.
+func rollupBucket(files []string, depth, splitThreshold, expandThreshold int) []string {
+	// A file is "deeper" than this bucket when it has a subdirectory below the
+	// shared prefix; only then can splitting reduce anything. A bucket of files
+	// that all sit directly in the prefix dir cannot be split, so an over-count
+	// leaf just reports its count rather than enumerating filenames.
+	deeperExists := false
+	for _, f := range files {
+		if len(strings.Split(f, "/")) > depth+1 {
+			deeperExists = true
+			break
+		}
+	}
+	// depth 0 is the repo root, not a real directory bucket: always partition by
+	// top-level component so a single-directory set recurses to depth 1 and leafs
+	// with its true prefix rather than a bare ".".
+	if depth > 0 && (len(files) <= splitThreshold || !deeperExists) {
+		return rollupLeaf(files, depth, expandThreshold)
+	}
+
+	// Split: group deeper files by their next path component (the subdirectory),
+	// and collect files sitting directly in this dir as a residual. Track each
+	// group's first-appearance index so the emitted blocks keep recency order.
+	type group struct {
+		firstIdx int
+		files    []string
+		subdir   string // "" for the direct-file residual
+	}
+	groups := []*group{}
+	index := map[string]int{}
+	for i, f := range files {
+		comps := strings.Split(f, "/")
+		key, subdir := "", ""
+		if len(comps) > depth+1 {
+			subdir = comps[depth]
+			key = "d:" + subdir
+		} else {
+			key = "residual"
+		}
+		gi, ok := index[key]
+		if !ok {
+			gi = len(groups)
+			index[key] = gi
+			groups = append(groups, &group{firstIdx: i, subdir: subdir})
+		}
+		groups[gi].files = append(groups[gi].files, f)
+	}
+	sort.SliceStable(groups, func(a, b int) bool {
+		return groups[a].firstIdx < groups[b].firstIdx
+	})
+
+	var out []string
+	for _, g := range groups {
+		if g.subdir == "" {
+			out = append(out, rollupLeaf(g.files, depth, expandThreshold)...)
+		} else {
+			out = append(out, rollupBucket(g.files, depth+1, splitThreshold, expandThreshold)...)
+		}
+	}
+	return out
+}
+
+// rollupLeaf renders a terminal bucket: the file paths themselves when the count
+// is small enough to be worth naming (at or below expandThreshold), otherwise a
+// single `dir/ ×count` line keyed on the shared prefix.
+func rollupLeaf(files []string, depth, expandThreshold int) []string {
+	if len(files) <= expandThreshold {
+		return append([]string(nil), files...)
+	}
+	prefix := strings.Join(strings.Split(files[0], "/")[:depth], "/")
+	if prefix == "" {
+		prefix = "."
+	}
+	return []string{fmt.Sprintf("%s/ ×%d", prefix, len(files))}
+}
+
 // InjectContextText formats global and project inject results as the plain-text
 // session context (the markdown body injected at session start).
 func InjectContextText(global, project InjectResult, nSessions int) string {
@@ -865,27 +1021,34 @@ func InjectContextText(global, project InjectResult, nSessions int) string {
 	}
 
 	longTerm := mergeMemories(global.LongTerm, project.LongTerm)
+	shownLong, totalLong := 0, len(longTerm)
 	if len(longTerm) > 0 {
 		lines := make([]string, len(longTerm))
 		for i, m := range longTerm {
 			lines[i] = fmt.Sprintf("- **%s**: %s", m.Key, m.InjectSummary())
 		}
-		parts = append(parts, "## Long-term memory\n"+strings.Join(lines, "\n"))
+		kept, shown := budgetLines(lines, InjectLongBudgetChars)
+		shownLong = shown
+		parts = append(parts, "## Long-term memory"+budgetNote(shown, totalLong)+"\n"+strings.Join(kept, "\n"))
 	}
 
 	shortTerm := mergeMemories(global.ShortTerm, project.ShortTerm)
+	shownShort, totalShort := 0, len(shortTerm)
 	if len(shortTerm) > 0 {
 		lines := make([]string, len(shortTerm))
 		for i, m := range shortTerm {
 			lines[i] = fmt.Sprintf("%d. [%s] %s", i+1, m.Key, m.InjectSummary())
 		}
-		parts = append(parts, "## Short-term stack\n"+strings.Join(lines, "\n"))
+		kept, shown := budgetLines(lines, InjectShortBudgetChars)
+		shownShort = shown
+		parts = append(parts, "## Short-term stack"+budgetNote(shown, totalShort)+"\n"+strings.Join(kept, "\n"))
 	}
 
 	if len(project.Files) > 0 {
+		rollup := rollupFiles(project.Files, InjectSplitThreshold, InjectExpandThreshold)
 		parts = append(parts,
-			fmt.Sprintf("## Recently active files (last %d sessions)\n  %s",
-				nSessions, strings.Join(project.Files, "\n  ")))
+			fmt.Sprintf("## Recently active areas (last %d sessions)\n  %s",
+				nSessions, strings.Join(rollup, "\n  ")))
 	}
 
 	if len(parts) == 0 {
@@ -896,23 +1059,24 @@ func InjectContextText(global, project InjectResult, nSessions int) string {
 	// Lead with an explicit orientation header so the agent knows, without
 	// parsing the personality prose below, that it arrived oriented and how to
 	// open its first reply.
-	return orientationHeader(global, project) + "\n\n" + strings.Join(parts, "\n\n")
+	return orientationHeader(global, project, shownLong, totalLong, shownShort, totalShort) + "\n\n" + strings.Join(parts, "\n\n")
 }
 
 // orientationHeader renders the leading "## Orientation" block: who the agent is
 // (codename), what memory loaded, and how to open the first reply. It exists so
 // orientation is a stated fact in the injected context rather than something the
-// agent must infer.
-func orientationHeader(global, project InjectResult) string {
+// agent must infer. The shown/total long and short counts come from the budgeted
+// sections so the header never claims more memory than actually rendered below.
+func orientationHeader(global, project InjectResult, shownLong, totalLong, shownShort, totalShort int) string {
 	who := "Oriented (no codename set)."
 	if codename := displayCodename(invariantValue(global.AgentInvariants, "codename")); codename != "" {
 		who = fmt.Sprintf("Oriented as %s.", codename)
 	} else if codename := displayCodename(invariantValue(global.Invariants, "codename")); codename != "" {
 		who = fmt.Sprintf("Oriented as %s.", codename)
 	}
-	counts := fmt.Sprintf("Memory loaded: %d identity, %d preferences, %d long-term, %d short-term.",
+	counts := fmt.Sprintf("Memory loaded: %d identity, %d preferences, %s, %s.",
 		len(global.Invariants), len(global.Preferences)+len(project.Preferences),
-		len(global.LongTerm)+len(project.LongTerm), len(global.ShortTerm)+len(project.ShortTerm))
+		countPhrase(shownLong, totalLong, "long-term"), countPhrase(shownShort, totalShort, "short-term"))
 	if global.Agent != "" {
 		counts += fmt.Sprintf(" Agent layer %s: %d identity, %d preferences.",
 			global.Agent, len(global.AgentInvariants), len(global.AgentPreferences))
@@ -923,7 +1087,10 @@ func orientationHeader(global, project InjectResult) string {
 		"in your voice throughout the session, not just at the start.\n" +
 		"Preferences, long-term, short-term, and cold entries below are one-line summaries; " +
 		"run `engram mem read <key>` for an entry's full text when it looks relevant to what " +
-		"you are doing. Identity is shown in full."
+		"you are doing. Identity is shown in full.\n" +
+		"If a section shows fewer entries than its header states, the rest were truncated " +
+		"upstream: tell the user, suggest pruning that tier, and read what is missing with " +
+		"`engram mem list` / `engram mem read <key>` so you are not acting on a partial memory."
 }
 
 // invariantValue returns the content of the invariant with the given key, or "".

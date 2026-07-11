@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -250,16 +251,54 @@ func TestInjectContextText(t *testing.T) {
 		}
 	})
 
-	t.Run("files_section", func(t *testing.T) {
+	t.Run("long_term_over_budget_caps_and_reports_honestly", func(t *testing.T) {
+		var lt []Memory
+		for i := 0; i < 300; i++ {
+			lt = append(lt, Memory{Key: fmt.Sprintf("k%03d", i), Tldr: strings.Repeat("x", 90)})
+		}
+		got := InjectContextText(InjectResult{LongTerm: lt}, InjectResult{}, 5)
+		if !strings.Contains(got, "## Long-term memory (showing ") {
+			t.Errorf("expected capped long-term header with a showing-note")
+		}
+		if !strings.Contains(got, "of 300;") {
+			t.Errorf("expected section note to report 'of 300'")
+		}
+		if !strings.Contains(got, "of 300 long-term") {
+			t.Errorf("expected orientation header to say 'N of 300 long-term'")
+		}
+	})
+
+	t.Run("orientation_includes_culling_nudge_with_read_the_rest", func(t *testing.T) {
+		global := InjectResult{LongTerm: []Memory{{Key: "x", Content: "y"}}}
+		got := InjectContextText(global, InjectResult{}, 5)
+		for _, want := range []string{"fewer entries than", "truncated", "engram mem list", "engram mem read"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("orientation missing culling-nudge phrase %q", want)
+			}
+		}
+	})
+
+	t.Run("long_term_under_budget_has_no_note", func(t *testing.T) {
+		global := InjectResult{LongTerm: []Memory{{Key: "infra", Content: "small"}}}
+		got := InjectContextText(global, InjectResult{}, 5)
+		if !strings.Contains(got, "## Long-term memory\n") {
+			t.Errorf("small long-term should have a plain header, no note: %q", got)
+		}
+		if strings.Contains(got, "showing") {
+			t.Errorf("small long-term should not carry a budget note")
+		}
+	})
+
+	t.Run("active_areas_section_rolls_up_directories", func(t *testing.T) {
 		project := InjectResult{
-			Files: []string{"main.go", "pkg/foo.go"},
+			Files: []string{"pkg/a.go", "pkg/b.go", "pkg/c.go", "pkg/d.go", "pkg/e.go"},
 		}
 		got := InjectContextText(InjectResult{}, project, 3)
-		if !strings.Contains(got, "## Recently active files (last 3 sessions)") {
-			t.Errorf("missing files section in %q", got)
+		if !strings.Contains(got, "## Recently active areas (last 3 sessions)") {
+			t.Errorf("missing active-areas section in %q", got)
 		}
-		if !strings.Contains(got, "main.go") {
-			t.Errorf("missing file entry in %q", got)
+		if !strings.Contains(got, "pkg/ ×5") {
+			t.Errorf("directory rollup missing in %q", got)
 		}
 	})
 
@@ -538,6 +577,140 @@ func TestParseMemoryMDEmpty(t *testing.T) {
 	if len(parsed) != 0 {
 		t.Errorf("got %d memories from empty input, want 0", len(parsed))
 	}
+}
+
+func TestRollupFiles(t *testing.T) {
+	t.Run("directory_under_threshold_is_one_counted_line", func(t *testing.T) {
+		files := []string{"pkg/a.go", "pkg/b.go", "pkg/c.go"}
+		got := rollupFiles(files, 10, 0)
+		want := []string{"pkg/ ×3"}
+		if !equalStrings(got, want) {
+			t.Errorf("rollupFiles = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("over_threshold_splits_one_level_deeper_in_recency_order", func(t *testing.T) {
+		// pkg holds 11 files (>10), so it must not render as "pkg/ ×11"; it
+		// splits into its subdirs. The most-recent file is under pkg/y, so the
+		// pkg/y bucket sorts ahead of pkg/x.
+		files := []string{
+			"pkg/y/1.go", // most recent
+			"pkg/x/1.go", "pkg/x/2.go", "pkg/x/3.go",
+			"pkg/x/4.go", "pkg/x/5.go", "pkg/x/6.go",
+			"pkg/y/2.go", "pkg/y/3.go", "pkg/y/4.go", "pkg/y/5.go",
+		}
+		got := rollupFiles(files, 10, 0)
+		want := []string{"pkg/y/ ×5", "pkg/x/ ×6"}
+		if !equalStrings(got, want) {
+			t.Errorf("rollupFiles = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("direct_files_of_a_split_dir_form_a_residual_line", func(t *testing.T) {
+		// pkg has 12 touched files: 4 sit directly in pkg/, 8 under pkg/sub/. The
+		// direct ones can't be pushed deeper, so they aggregate into one residual
+		// "pkg/ ×4" line rather than being enumerated.
+		files := []string{
+			"pkg/root1.go", // most recent -> residual sorts first
+			"pkg/sub/a.go", "pkg/sub/b.go", "pkg/sub/c.go", "pkg/sub/d.go",
+			"pkg/sub/e.go", "pkg/sub/f.go", "pkg/sub/g.go", "pkg/sub/h.go",
+			"pkg/root2.go", "pkg/root3.go", "pkg/root4.go",
+		}
+		got := rollupFiles(files, 10, 0)
+		want := []string{"pkg/ ×4", "pkg/sub/ ×8"}
+		if !equalStrings(got, want) {
+			t.Errorf("rollupFiles = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("recurses_past_one_level_when_a_subdir_is_still_over_threshold", func(t *testing.T) {
+		// Everything is under a/b/, and a/b/ itself holds 11 files, so resolution
+		// has to keep descending to a/b/c and a/b/d.
+		files := []string{
+			"a/b/c/1.go", "a/b/c/2.go", "a/b/c/3.go", "a/b/c/4.go",
+			"a/b/c/5.go", "a/b/c/6.go",
+			"a/b/d/1.go", "a/b/d/2.go", "a/b/d/3.go", "a/b/d/4.go", "a/b/d/5.go",
+		}
+		got := rollupFiles(files, 10, 0)
+		want := []string{"a/b/c/ ×6", "a/b/d/ ×5"}
+		if !equalStrings(got, want) {
+			t.Errorf("rollupFiles = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("small_bucket_expands_to_filenames", func(t *testing.T) {
+		// With expandThreshold 3, a directory at or below 3 touched files lists
+		// them by name; a larger one keeps the count.
+		files := []string{"x/a.go", "x/b.go", "y/1.go", "y/2.go", "y/3.go", "y/4.go"}
+		got := rollupFiles(files, 10, 3)
+		want := []string{"x/a.go", "x/b.go", "y/ ×4"}
+		if !equalStrings(got, want) {
+			t.Errorf("rollupFiles = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("root_level_files_do_not_render_a_bare_slash", func(t *testing.T) {
+		files := []string{"README.md", "LICENSE"}
+		got := rollupFiles(files, 10, 0)
+		want := []string{"./ ×2"}
+		if !equalStrings(got, want) {
+			t.Errorf("rollupFiles = %v, want %v", got, want)
+		}
+	})
+}
+
+func TestBudgetLines(t *testing.T) {
+	lines := []string{"aaaa", "bbbb", "cccc"} // joined as "aaaa\nbbbb\ncccc" = 14 chars
+
+	t.Run("all_fit_under_budget", func(t *testing.T) {
+		kept, shown := budgetLines(lines, 100)
+		if shown != 3 || !equalStrings(kept, lines) {
+			t.Errorf("budgetLines = %v (shown %d), want all 3", kept, shown)
+		}
+	})
+
+	t.Run("non_positive_budget_means_unlimited", func(t *testing.T) {
+		kept, shown := budgetLines(lines, 0)
+		if shown != 3 || !equalStrings(kept, lines) {
+			t.Errorf("budgetLines = %v (shown %d), want all 3 unbounded", kept, shown)
+		}
+	})
+
+	t.Run("keeps_the_prefix_that_fits_and_drops_the_stale_tail", func(t *testing.T) {
+		// budget 9: "aaaa"(4) + "\nbbbb"(5) = 9 fits; adding "\ncccc" (5) would hit 14.
+		kept, shown := budgetLines(lines, 9)
+		want := []string{"aaaa", "bbbb"}
+		if shown != 2 || !equalStrings(kept, want) {
+			t.Errorf("budgetLines = %v (shown %d), want %v", kept, shown, want)
+		}
+	})
+}
+
+func TestCountPhrase(t *testing.T) {
+	t.Run("plain_count_when_nothing_dropped", func(t *testing.T) {
+		if got := countPhrase(91, 91, "long-term"); got != "91 long-term" {
+			t.Errorf("countPhrase = %q, want %q", got, "91 long-term")
+		}
+	})
+	t.Run("shows_shown_of_total_when_capped", func(t *testing.T) {
+		if got := countPhrase(42, 91, "long-term"); got != "42 of 91 long-term" {
+			t.Errorf("countPhrase = %q, want %q", got, "42 of 91 long-term")
+		}
+	})
+}
+
+func TestBudgetNote(t *testing.T) {
+	t.Run("empty_when_nothing_dropped", func(t *testing.T) {
+		if got := budgetNote(91, 91); got != "" {
+			t.Errorf("budgetNote = %q, want empty", got)
+		}
+	})
+	t.Run("reports_overflow_and_how_to_prune", func(t *testing.T) {
+		got := budgetNote(42, 91)
+		if !strings.Contains(got, "showing 42 of 91") || !strings.Contains(got, "49 over budget") {
+			t.Errorf("budgetNote = %q, want showing/over-budget detail", got)
+		}
+	})
 }
 
 // --- DB tests ---
