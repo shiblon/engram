@@ -289,6 +289,20 @@ func TestInjectContextText(t *testing.T) {
 		}
 	})
 
+	t.Run("active_areas_over_budget_is_capped_and_noted", func(t *testing.T) {
+		var files []string
+		for i := 0; i < 250; i++ {
+			files = append(files, fmt.Sprintf("dir%03d/f.go", i))
+		}
+		got := InjectContextText(InjectResult{}, InjectResult{Files: files}, 5)
+		if !strings.Contains(got, "## Recently active areas (last 5 sessions) (showing ") {
+			t.Errorf("expected a capped active-areas header with a showing-note")
+		}
+		if !strings.Contains(got, "older activity omitted") {
+			t.Errorf("expected the areas note to flag omitted activity")
+		}
+	})
+
 	t.Run("active_areas_section_rolls_up_directories", func(t *testing.T) {
 		project := InjectResult{
 			Files: []string{"pkg/a.go", "pkg/b.go", "pkg/c.go", "pkg/d.go", "pkg/e.go"},
@@ -701,14 +715,14 @@ func TestCountPhrase(t *testing.T) {
 
 func TestBudgetNote(t *testing.T) {
 	t.Run("empty_when_nothing_dropped", func(t *testing.T) {
-		if got := budgetNote(91, 91); got != "" {
+		if got := budgetNote(91, 91, "prune it"); got != "" {
 			t.Errorf("budgetNote = %q, want empty", got)
 		}
 	})
-	t.Run("reports_overflow_and_how_to_prune", func(t *testing.T) {
-		got := budgetNote(42, 91)
-		if !strings.Contains(got, "showing 42 of 91") || !strings.Contains(got, "49 over budget") {
-			t.Errorf("budgetNote = %q, want showing/over-budget detail", got)
+	t.Run("wraps_shown_of_total_around_the_remedy", func(t *testing.T) {
+		got := budgetNote(42, 91, "prune with `engram mem list`")
+		if !strings.Contains(got, "showing 42 of 91") || !strings.Contains(got, "prune with `engram mem list`") {
+			t.Errorf("budgetNote = %q, want showing-of-total plus remedy", got)
 		}
 	})
 }

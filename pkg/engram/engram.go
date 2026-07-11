@@ -141,20 +141,25 @@ const (
 	// resolve while quiet ones stay a single line.
 	InjectSplitThreshold = 10
 	// InjectExpandThreshold is the touched-file count at or below which a rollup
-	// directory is expanded to its individual file paths. It is 1 deliberately: a
-	// single-file directory costs one line whether rendered as `dir/ ×1` or as the
-	// filename, so showing the name is free and strictly more useful. Above 1,
-	// expansion would spend extra lines to undo the rollup's own collapsing.
-	InjectExpandThreshold = 1
-	// InjectLongBudgetChars and InjectShortBudgetChars bound how many characters
-	// the long-term and short-term sections may spend at session start. Entries
-	// arrive most-recent-first, so the budget keeps recent memories and drops the
-	// stalest, then the section reports "showing N of M" rather than letting the
-	// harness silently truncate the middle. Identity, preferences, and cold stay
-	// uncapped: identity is the agent's voice, preferences are always-on rules,
-	// and cold is already an index. These are the tunable policy knobs.
+	// directory is expanded to its individual file paths instead of a `dir/ ×count`
+	// line. The count is touched files (Read/Edit/Write/apply_patch events), not
+	// files on disk, so naming them tells the agent exactly which files it worked
+	// on in that directory -- high-value signal. Kept small so the rollup still
+	// collapses busy directories; InjectAreasBudgetChars backstops the spread-thin
+	// case where many low-touch directories would each name their files.
+	InjectExpandThreshold = 3
+	// InjectLongBudgetChars, InjectShortBudgetChars, and InjectAreasBudgetChars
+	// bound how many characters the long-term, short-term, and recently-active
+	// sections may spend at session start. Entries arrive most-recent-first, so a
+	// budget keeps recent items and drops the stalest, then the section reports
+	// "showing N of M" rather than letting the harness silently truncate the
+	// middle. Identity, preferences, and cold stay uncapped: identity is the
+	// agent's voice, preferences are always-on rules, and cold is already an
+	// index. These are the tunable policy knobs. The areas budget is small on
+	// purpose -- it rarely bites, catching only runaway spread-thin repos.
 	InjectLongBudgetChars  = 10000
 	InjectShortBudgetChars = 3000
+	InjectAreasBudgetChars = 2000
 )
 
 //go:embed schema.sql
@@ -818,13 +823,14 @@ func countPhrase(shown, total int, label string) string {
 }
 
 // budgetNote returns the parenthetical appended to a capped section's header,
-// or "" when the budget dropped nothing. It states what was cut and how to see
-// the rest, turning a silent truncation into a prompt to prune.
-func budgetNote(shown, total int) string {
+// or "" when the budget dropped nothing. It reports what rendered versus the
+// total and appends a section-specific remedy, turning a silent truncation into
+// a visible "showing N of M" with a hint about the rest.
+func budgetNote(shown, total int, remedy string) string {
 	if shown >= total {
 		return ""
 	}
-	return fmt.Sprintf(" (showing %d of %d; %d over budget, prune with `engram mem list`)", shown, total, total-shown)
+	return fmt.Sprintf(" (showing %d of %d; %s)", shown, total, remedy)
 }
 
 // budgetLines keeps the leading lines whose cumulative length (including the
@@ -1029,7 +1035,8 @@ func InjectContextText(global, project InjectResult, nSessions int) string {
 		}
 		kept, shown := budgetLines(lines, InjectLongBudgetChars)
 		shownLong = shown
-		parts = append(parts, "## Long-term memory"+budgetNote(shown, totalLong)+"\n"+strings.Join(kept, "\n"))
+		remedy := fmt.Sprintf("%d over budget, prune with `engram mem list`", totalLong-shown)
+		parts = append(parts, "## Long-term memory"+budgetNote(shown, totalLong, remedy)+"\n"+strings.Join(kept, "\n"))
 	}
 
 	shortTerm := mergeMemories(global.ShortTerm, project.ShortTerm)
@@ -1041,14 +1048,16 @@ func InjectContextText(global, project InjectResult, nSessions int) string {
 		}
 		kept, shown := budgetLines(lines, InjectShortBudgetChars)
 		shownShort = shown
-		parts = append(parts, "## Short-term stack"+budgetNote(shown, totalShort)+"\n"+strings.Join(kept, "\n"))
+		remedy := fmt.Sprintf("%d over budget, prune with `engram mem list`", totalShort-shown)
+		parts = append(parts, "## Short-term stack"+budgetNote(shown, totalShort, remedy)+"\n"+strings.Join(kept, "\n"))
 	}
 
 	if len(project.Files) > 0 {
 		rollup := rollupFiles(project.Files, InjectSplitThreshold, InjectExpandThreshold)
-		parts = append(parts,
-			fmt.Sprintf("## Recently active areas (last %d sessions)\n  %s",
-				nSessions, strings.Join(rollup, "\n  ")))
+		kept, shown := budgetLines(rollup, InjectAreasBudgetChars)
+		header := fmt.Sprintf("## Recently active areas (last %d sessions)", nSessions) +
+			budgetNote(shown, len(rollup), "older activity omitted")
+		parts = append(parts, header+"\n  "+strings.Join(kept, "\n  "))
 	}
 
 	if len(parts) == 0 {
