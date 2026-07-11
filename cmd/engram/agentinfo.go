@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -12,6 +13,11 @@ the source in the engram tool (cmd/engram/agentinfo.go, const agentInfoText) and
 re-run engram bootstrap. -->
 
 # Engram - Memory and Personality for AI Agents
+
+> Guidance version: ENGRAM_GUIDANCE_VERSION. Session-start inject reports the
+> running engram version; if it differs from the version on this line, this file
+> is stale (its guidance predates the installed engram). Offer to run
+> ` + "`engram bootstrap <platform>`" + ` to refresh it, then re-read the updated guidance.
 
 Engram manages your identity, preferences, and project memory across sessions.
 
@@ -214,6 +220,14 @@ Never apply or discard a staged restore without the user's explicit consent.
 Engram never auto-applies; that judgment is yours.
 `
 
+// renderAgentInfo returns agentInfoText with the guidance-version token replaced
+// by the running engram version, so the file written to disk records which
+// engram produced it. inject reports the live version; a mismatch means the
+// on-disk guidance is stale and the user should re-bootstrap.
+func renderAgentInfo() string {
+	return strings.ReplaceAll(agentInfoText, "ENGRAM_GUIDANCE_VERSION", engramVersion())
+}
+
 var agentInfoCmd = &cobra.Command{
 	Use:   "agentinfo",
 	Short: "Print instructions for AI agents on how to use engram",
@@ -222,7 +236,7 @@ var agentInfoCmd = &cobra.Command{
 }
 
 func runAgentInfo(_ *cobra.Command, _ []string) error {
-	fmt.Print(agentInfoText)
+	fmt.Print(renderAgentInfo())
 	return nil
 }
 

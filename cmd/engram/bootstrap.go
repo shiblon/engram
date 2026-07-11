@@ -146,11 +146,12 @@ func bootstrapEngramMd(t *bootstrapTally) error {
 		return err
 	}
 	path := filepath.Join(home, ".claude", "engram.md")
-	if cur, err := os.ReadFile(path); err == nil && string(cur) == agentInfoText {
+	content := renderAgentInfo()
+	if cur, err := os.ReadFile(path); err == nil && string(cur) == content {
 		t.skipLine("skip (unchanged): " + path)
 		return nil
 	}
-	if err := os.WriteFile(path, []byte(agentInfoText), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		return err
 	}
 	t.wroteLine("wrote: " + path)
