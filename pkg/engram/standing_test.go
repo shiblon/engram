@@ -83,8 +83,12 @@ func TestSyncStandingMemory(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if err := SyncStandingMemory(ctx, gdb); err != nil {
+		written, err := SyncStandingMemory(ctx, gdb)
+		if err != nil {
 			t.Fatalf("SyncStandingMemory: %v", err)
+		}
+		if len(written) != 2 {
+			t.Errorf("first sync reported %d writes, want 2 (invariants + preferences)", len(written))
 		}
 
 		inv, err := os.ReadFile(filepath.Join(claudeDir, "engram-invariants.md"))
@@ -101,6 +105,17 @@ func TestSyncStandingMemory(t *testing.T) {
 		if !strings.Contains(string(pref), "Default to concise answers.") {
 			t.Errorf("preferences file missing entry:\n%s", pref)
 		}
+
+		// A second sync with unchanged content must report zero writes, so
+		// bootstrap can honestly say "skip (unchanged)" rather than claiming a
+		// write it never made.
+		again, err := SyncStandingMemory(ctx, gdb)
+		if err != nil {
+			t.Fatalf("second SyncStandingMemory: %v", err)
+		}
+		if len(again) != 0 {
+			t.Errorf("second sync reported %d writes, want 0 (content unchanged)", len(again))
+		}
 	})
 
 	t.Run("no-op when not bootstrapped", func(t *testing.T) {
@@ -116,7 +131,7 @@ func TestSyncStandingMemory(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if err := SyncStandingMemory(ctx, gdb); err != nil {
+		if _, err := SyncStandingMemory(ctx, gdb); err != nil {
 			t.Fatalf("SyncStandingMemory: %v", err)
 		}
 		for _, base := range StandingFileBases() {

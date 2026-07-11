@@ -136,7 +136,7 @@ func Restore(ctx context.Context, r io.Reader) (RestoreResult, error) {
 			// channel. This is render-on-write's explicit-subcommand counterpart --
 			// the mutation lives in the restore verb, never in inject. Best-effort:
 			// a stale rendered file must not fail an otherwise-successful restore.
-			if err := SyncStandingMemory(ctx, globalDB); err != nil {
+			if _, err := SyncStandingMemory(ctx, globalDB); err != nil {
 				log.Printf("engram: restore sync standing memory: %v", err)
 			}
 		} else {

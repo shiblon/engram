@@ -174,12 +174,17 @@ func standingTargets(home string) []standingTarget {
 //
 // Targets whose platform footprint is absent are skipped, so this is a no-op
 // until a platform is bootstrapped.
-func SyncStandingMemory(ctx context.Context, globalDB *sql.DB) error {
+//
+// It returns the paths it actually wrote, omitting files left untouched because
+// their content was already current. Bootstrap uses this to report wrote-vs-skip
+// truthfully instead of claiming a write for every standing file unconditionally.
+func SyncStandingMemory(ctx context.Context, globalDB *sql.DB) ([]string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return nil // can't locate home; nothing to render to
+		return nil, nil // can't locate home; nothing to render to
 	}
 
+	var written []string
 	for _, t := range standingTargets(home) {
 		if !t.bootstrapped() {
 			continue
@@ -187,7 +192,7 @@ func SyncStandingMemory(ctx context.Context, globalDB *sql.DB) error {
 		for _, s := range standingRenders {
 			mems, err := ListMemories(ctx, globalDB, s.tier)
 			if err != nil {
-				return fmt.Errorf("sync standing: read %s: %w", s.tier, err)
+				return written, fmt.Errorf("sync standing: read %s: %w", s.tier, err)
 			}
 			text := s.render(PrimaryMemories(mems), AgentLayerMemories(mems, t.agent), t.agent)
 			path := filepath.Join(t.dir, s.fileBase)
@@ -195,9 +200,10 @@ func SyncStandingMemory(ctx context.Context, globalDB *sql.DB) error {
 				continue // already current
 			}
 			if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
-				return fmt.Errorf("sync standing (%s): %w", path, err)
+				return written, fmt.Errorf("sync standing (%s): %w", path, err)
 			}
+			written = append(written, path)
 		}
 	}
-	return nil
+	return written, nil
 }

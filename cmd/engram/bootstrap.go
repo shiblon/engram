@@ -108,45 +108,52 @@ Existing keys and entries are never overwritten -- safe to re-run.`,
 func runBootstrapClaude(cmd *cobra.Command, _ []string) error {
 	ctx := context.Background()
 
-	wrote, skipped, err := bootstrapGlobalDB(ctx)
+	dbWrote, dbSkipped, err := bootstrapGlobalDB(ctx)
 	if err != nil {
 		return err
 	}
+	// Seed the tally with the global-DB setup counts, then let every file step
+	// add to it, so the footer reflects everything the user just watched happen.
+	t := &bootstrapTally{wrote: dbWrote, skipped: dbSkipped}
 
 	exe, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	if err := bootstrapEngramMd(); err != nil {
+	if err := bootstrapEngramMd(t); err != nil {
 		return err
 	}
-	if err := bootstrapStandingMd(ctx); err != nil {
+	if err := bootstrapStandingMd(ctx, t); err != nil {
 		return err
 	}
-	if err := bootstrapClaudeMd(); err != nil {
+	if err := bootstrapClaudeMd(t); err != nil {
 		return err
 	}
-	if err := bootstrapStatusLine(exe); err != nil {
+	if err := bootstrapStatusLine(exe, t); err != nil {
 		return err
 	}
-	if err := bootstrapHooks(exe, bootstrapClaudeGlobal); err != nil {
+	if err := bootstrapHooks(exe, bootstrapClaudeGlobal, t); err != nil {
 		return err
 	}
 
-	printBootstrapSummary(wrote, skipped)
+	printBootstrapSummary(t.wrote, t.skipped)
 	return nil
 }
 
-func bootstrapEngramMd() error {
+func bootstrapEngramMd(t *bootstrapTally) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
 	}
 	path := filepath.Join(home, ".claude", "engram.md")
+	if cur, err := os.ReadFile(path); err == nil && string(cur) == agentInfoText {
+		t.skipLine("skip (unchanged): " + path)
+		return nil
+	}
 	if err := os.WriteFile(path, []byte(agentInfoText), 0644); err != nil {
 		return err
 	}
-	fmt.Printf("wrote: %s\n", path)
+	t.wroteLine("wrote: " + path)
 	return nil
 }
 
@@ -155,23 +162,33 @@ func bootstrapEngramMd() error {
 // SyncStandingMemory treats the presence of engram.md as the signal that this
 // platform is bootstrapped. On a fresh install with empty tiers it writes
 // placeholders; render-on-write fills them in later.
-func bootstrapStandingMd(ctx context.Context) error {
+func bootstrapStandingMd(ctx context.Context, t *bootstrapTally) error {
 	gdb, err := engram.OpenGlobalDB(ctx)
 	if err != nil {
 		return err
 	}
 	defer gdb.Close()
-	if err := engram.SyncStandingMemory(ctx, gdb); err != nil {
+	written, err := engram.SyncStandingMemory(ctx, gdb)
+	if err != nil {
 		return err
+	}
+	wroteSet := make(map[string]bool, len(written))
+	for _, p := range written {
+		wroteSet[p] = true
 	}
 	home, _ := os.UserHomeDir()
 	for _, base := range engram.StandingFileBases() {
-		fmt.Printf("wrote: %s\n", filepath.Join(home, ".claude", base))
+		path := filepath.Join(home, ".claude", base)
+		if wroteSet[path] {
+			t.wroteLine("wrote: " + path)
+		} else {
+			t.skipLine("skip (unchanged): " + path)
+		}
 	}
 	return nil
 }
 
-func bootstrapClaudeMd() error {
+func bootstrapClaudeMd(t *bootstrapTally) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
@@ -185,7 +202,7 @@ func bootstrapClaudeMd() error {
 	content := string(data)
 
 	if strings.Contains(content, "<!-- engram:start -->") {
-		fmt.Printf("skip (has old marker-style engram section): %s\n", path)
+		t.skipLine("skip (has old marker-style engram section): " + path)
 		fmt.Println("  Run 'engram uninstall' first to remove it, then re-run bootstrap.")
 		return nil
 	}
@@ -201,7 +218,7 @@ func bootstrapClaudeMd() error {
 	var toAdd []string
 	for _, inc := range includes {
 		if strings.Contains(content, inc) {
-			fmt.Printf("skip (already present): %s in %s\n", inc, path)
+			t.skipLine(fmt.Sprintf("skip (already present): %s in %s", inc, path))
 			continue
 		}
 		toAdd = append(toAdd, inc)
@@ -219,12 +236,12 @@ func bootstrapClaudeMd() error {
 		if _, err := f.WriteString("\n" + inc + "\n"); err != nil {
 			return err
 		}
-		fmt.Printf("wrote: %s in %s\n", inc, path)
+		t.wroteLine(fmt.Sprintf("wrote: %s in %s", inc, path))
 	}
 	return nil
 }
 
-func bootstrapStatusLine(exe string) error {
+func bootstrapStatusLine(exe string, t *bootstrapTally) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
@@ -237,7 +254,7 @@ func bootstrapStatusLine(exe string) error {
 	}
 
 	if _, exists := settings["statusLine"]; exists {
-		fmt.Printf("skip (exists): statusLine in %s\n", path)
+		t.skipLine("skip (exists): statusLine in " + path)
 		return nil
 	}
 
@@ -250,11 +267,11 @@ func bootstrapStatusLine(exe string) error {
 	if err := writeSettingsJSON(path, settings); err != nil {
 		return err
 	}
-	fmt.Printf("wrote: statusLine in %s\n", path)
+	t.wroteLine("wrote: statusLine in " + path)
 	return nil
 }
 
-func bootstrapHooks(exe string, global bool) error {
+func bootstrapHooks(exe string, global bool, t *bootstrapTally) error {
 	var path string
 	if global {
 		home, err := os.UserHomeDir()
@@ -265,7 +282,7 @@ func bootstrapHooks(exe string, global bool) error {
 	} else {
 		root, err := engram.FindProjectRoot(effectiveCWD())
 		if err != nil {
-			fmt.Println("skip (no project root found): hooks")
+			t.skipLine("skip (no project root found): hooks")
 			return nil
 		}
 		path = filepath.Join(root, ".claude", "settings.json")
@@ -273,12 +290,12 @@ func bootstrapHooks(exe string, global bool) error {
 
 	data, _ := os.ReadFile(path)
 	if strings.Contains(string(data), "engram record") {
-		fmt.Printf("skip (hooks already present): %s\n", path)
+		t.skipLine("skip (hooks already present): " + path)
 	} else {
 		if err := addEngramHooks(path, exe); err != nil {
 			return err
 		}
-		fmt.Printf("wrote: engram hooks in %s\n", path)
+		t.wroteLine("wrote: engram hooks in " + path)
 	}
 	if err := ensureClaudeInjectAgent(path); err != nil {
 		return err
@@ -286,7 +303,7 @@ func bootstrapHooks(exe string, global bool) error {
 
 	// Ensure the engram allowlist independently of the hooks check above, so
 	// re-running bootstrap repairs older installs that predate it.
-	if err := ensureEngramAllowlist(path); err != nil {
+	if err := ensureEngramAllowlist(path, t); err != nil {
 		return err
 	}
 	return nil
@@ -320,7 +337,7 @@ var engramAllowlist = []string{
 
 // ensureEngramAllowlist adds the engramAllowlist patterns to
 // settings.permissions.allow if absent. Idempotent: a no-op when all present.
-func ensureEngramAllowlist(path string) error {
+func ensureEngramAllowlist(path string, t *bootstrapTally) error {
 	settings, err := readSettingsJSON(path)
 	if err != nil {
 		return err
@@ -335,9 +352,9 @@ func ensureEngramAllowlist(path string) error {
 		if err := writeSettingsJSON(path, settings); err != nil {
 			return err
 		}
-		fmt.Printf("wrote: engram allowlist in %s\n", path)
+		t.wroteLine("wrote: engram allowlist in " + path)
 	} else {
-		fmt.Printf("skip (allowlist already present): %s\n", path)
+		t.skipLine("skip (allowlist already present): " + path)
 	}
 	return nil
 }
@@ -642,6 +659,29 @@ func countWroteSkipped(appended bool, wrote, skipped *int) {
 	} else {
 		*skipped++
 	}
+}
+
+// bootstrapTally records file operations as they are reported, so the summary
+// footer cannot drift from the wrote:/skip: lines above it. The original bug was
+// exactly that drift: the footer counted only the two global setup memories,
+// while every file was written (or left unchanged) without being counted, so a
+// re-run printed "0 written" beneath a list of "wrote:" lines.
+type bootstrapTally struct {
+	wrote   int
+	skipped int
+}
+
+// wroteLine reports a write and counts it. msg is the full line, no trailing
+// newline (e.g. "wrote: /path").
+func (t *bootstrapTally) wroteLine(msg string) {
+	fmt.Println(msg)
+	t.wrote++
+}
+
+// skipLine reports a skip and counts it.
+func (t *bootstrapTally) skipLine(msg string) {
+	fmt.Println(msg)
+	t.skipped++
 }
 
 // printBootstrapSummary prints the shared "N written, M skipped" footer plus the

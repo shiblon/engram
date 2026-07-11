@@ -22,7 +22,7 @@ func syncStandingIfTouched(ctx context.Context, h *engram.DBHandle, tiers ...eng
 	}
 	for _, t := range tiers {
 		if t == engram.TierInvariant || t == engram.TierPreference {
-			if err := engram.SyncStandingMemory(ctx, h.DB); err != nil {
+			if _, err := engram.SyncStandingMemory(ctx, h.DB); err != nil {
 				fmt.Fprintf(os.Stderr, "engram: sync standing memory: %v\n", err)
 			}
 			return
@@ -383,7 +383,7 @@ Tiers: invariant, preference, long, short, cold`,
 			if destGlobal {
 				globalDB = dst.DB
 			}
-			if err := engram.SyncStandingMemory(ctx, globalDB); err != nil {
+			if _, err := engram.SyncStandingMemory(ctx, globalDB); err != nil {
 				fmt.Fprintf(os.Stderr, "engram: sync standing memory: %v\n", err)
 			}
 		}
