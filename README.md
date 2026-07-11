@@ -147,6 +147,11 @@ stack is transient working state that isn't meant to travel. Where you put the
 output is up to you and your team's existing docs conventions -- engram
 doesn't own a file for it.
 
+Note the `--global` default differs between the two directions by design:
+`engram mem dump` always writes to stdout unless you redirect it with `--dir`,
+while `engram mem load` has no default location and requires `--dir` (or
+`~/.claude/memory` when you pass `--global`).
+
 For carrying memory itself (not a markdown export) across machines, see
 `engram save` / `engram restore` below.
 

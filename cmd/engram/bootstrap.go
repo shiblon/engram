@@ -327,13 +327,12 @@ func ensureClaudeInjectAgent(path string) error {
 }
 
 // engramAllowlist is the set of engram command families an agent invokes
-// directly. bootstrap pre-approves exactly these so the memory and tool
-// workflows never trip a per-call permission prompt. Hooks (record/inject/
-// status) run via the harness and need no allowlisting; uninstall/bootstrap are
-// deliberately NOT auto-granted.
+// directly. bootstrap pre-approves exactly these so the memory workflow never
+// trips a per-call permission prompt. Hooks (record/inject/status) run via the
+// harness and need no allowlisting; uninstall/bootstrap are deliberately NOT
+// auto-granted.
 var engramAllowlist = []string{
 	"Bash(engram mem:*)",
-	"Bash(engram tool:*)",
 }
 
 // ensureEngramAllowlist adds the engramAllowlist patterns to

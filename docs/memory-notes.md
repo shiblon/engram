@@ -16,18 +16,17 @@ not take consequential action on its own.
   or note that a project exists, but it must never apply, place, or overwrite
   project memory or tools.
 - **Heavy lifting lives in explicit subcommands.** Anything that
-  consequentially mutates state (`save`, applying a `restore`, tool
-  promotion, `discard`) is a verb the agent calls on purpose, never a hidden
-  side effect of `inject` or `record`.
+  consequentially mutates state (`save`, applying a `restore`) is a verb the
+  agent calls on purpose, never a hidden side effect of `inject` or `record`.
 - **Division of labor.** Engram reports information deterministically; the
-  agent exercises judgment (near-miss project matching, whether to promote a
-  tool, whether to apply a restore). Those judgment calls are written into the
-  agent-facing guidance, not baked into engram's own logic.
+  agent exercises judgment (near-miss project matching, whether to apply a
+  restore). Those judgment calls are written into the agent-facing guidance,
+  not baked into engram's own logic.
 - **Allowlist policy follows the same split.** Bootstrap pre-approves only the
-  routine, high-frequency curation verbs (`engram mem`, `engram tool`).
-  Infrequent, heavy verbs (`save`, `restore`) stay outside the allowlist on
-  purpose -- a permission prompt on a rare, consequential operation is
-  appropriate friction, not something to remove.
+  routine, high-frequency curation verb (`engram mem`). Infrequent, heavy
+  verbs (`save`, `restore`) stay outside the allowlist on purpose -- a
+  permission prompt on a rare, consequential operation is appropriate
+  friction, not something to remove.
 
 ## Design across platform classes, not one agent
 

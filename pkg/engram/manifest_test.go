@@ -127,9 +127,6 @@ func TestProjectStorageRootLinkedWorktree(t *testing.T) {
 	if got := DBPath(worktreeRoot); got != filepath.Join(mainRoot, ".engram", "mem.db") {
 		t.Errorf("DBPath = %q, want main checkout DB", got)
 	}
-	if got := ProjectToolCandidatesDir(worktreeRoot); got != filepath.Join(mainRoot, ".engram", "toolcandidates") {
-		t.Errorf("ProjectToolCandidatesDir = %q, want main checkout candidates", got)
-	}
 	if got := ProjectIdentity(worktreeRoot); got != remote {
 		t.Errorf("ProjectIdentity = %q, want common git remote", got)
 	}

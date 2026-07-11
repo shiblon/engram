@@ -12,20 +12,15 @@ import (
 )
 
 var saveOutput string
-var saveIncludeContext bool
 
 var saveCmd = &cobra.Command{
 	Use:   "save",
 	Short: "Save all engram state to a portable archive",
 	Long: `Save snapshots all machine-local engram state into a single gzipped tar:
-global memory + agenttools, every registered project's memory + tool candidates,
-and any in-flight project-stage entries (pending restores).
+global memory + agenttools, every registered project's memory, and any
+in-flight project-stage entries (pending restores).
 
-The archive can be moved to another machine and unpacked with: engram restore <file>
-
-By default, context/ directories (committed long.md + agenttools) are excluded
-because they are version-controlled and survive across machines. Use
---include-context to include them.`,
+The archive can be moved to another machine and unpacked with: engram restore <file>`,
 	RunE: runSave,
 }
 
@@ -46,8 +41,7 @@ func runSave(_ *cobra.Command, _ []string) error {
 	version := engramVersion()
 
 	result, saveErr := engram.Save(ctx, f, engram.SaveOptions{
-		IncludeContext: saveIncludeContext,
-		EngramVersion:  version,
+		EngramVersion: version,
 	})
 
 	// Always close the file; if save failed, remove the partial output.
@@ -74,14 +68,10 @@ func runSave(_ *cobra.Command, _ []string) error {
 	for _, s := range result.Skipped {
 		fmt.Fprintf(os.Stderr, "warning: skipped (not in archive): %s\n", s)
 	}
-	for _, w := range result.ContextWarnings {
-		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
-	}
 	return nil
 }
 
 func init() {
 	saveCmd.Flags().StringVarP(&saveOutput, "output", "o", "", "output path (default: engram-save-<timestamp>.tgz in current directory)")
-	saveCmd.Flags().BoolVar(&saveIncludeContext, "include-context", false, "include context/ directories (long.md + agenttools)")
 	rootCmd.AddCommand(saveCmd)
 }

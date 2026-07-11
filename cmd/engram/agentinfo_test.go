@@ -33,6 +33,7 @@ func TestGuidanceDropsContextLongMd(t *testing.T) {
 		"engram mem dump",           // still the export helper
 		"Do not dump automatically", // only in the project memory and sharing section
 		"no longer",                 // auto-import no longer supported
+		"Do not recreate",           // pins the migration-nudge paragraph uniquely
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("guidance missing expected phrase %q", want)

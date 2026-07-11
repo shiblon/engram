@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 )
 
 // ToolDesc describes a single agent tool discovered in an agenttools directory.
@@ -18,12 +17,13 @@ type ToolDesc struct {
 	Desc  string // from "engram-desc:" (required)
 	Usage string // from "engram-usage:" (optional)
 	Run   string // resolved interpreter command, e.g. "bash"
-	Path  string // path passed to the runner, e.g. "context/agenttools/render-dataflow.sh"
+	Path  string // path passed to the runner, e.g. "$HOME/.engram/agenttools/render-dataflow.sh"
 }
 
 // Command returns the full invocation string, e.g.
-// "bash context/agenttools/render-dataflow.sh". Tools are never run directly
-// (no reliance on the executable bit); they are invoked through their runner.
+// "bash $HOME/.engram/agenttools/render-dataflow.sh". Tools are never run
+// directly (no reliance on the executable bit); they are invoked through
+// their runner.
 func (t ToolDesc) Command() string {
 	if t.Run == "" {
 		return t.Path
@@ -41,82 +41,6 @@ func GlobalAgentToolsDir() (string, error) {
 		return "", fmt.Errorf("global agenttools dir: %w", err)
 	}
 	return filepath.Join(home, ".engram", "agenttools"), nil
-}
-
-// ProjectAgentToolsDir returns the committed, project-local tool directory. It
-// sits next to context/long.md so promoted tools share the same durability as
-// long-term memory: committed, shared, surviving fresh clones.
-func ProjectAgentToolsDir(root string) string {
-	return filepath.Join(root, "context", "agenttools")
-}
-
-// ProjectToolCandidatesDir returns the staging scratch directory. It lives under
-// .engram/ (already gitignored by construction) so candidates are captured
-// freely without ever entering the committed tree. Linked git worktrees share
-// the main worktree's scratch dir, matching the shared project memory DB.
-func ProjectToolCandidatesDir(root string) string {
-	root = ProjectStorageRoot(root)
-	return filepath.Join(root, ".engram", "toolcandidates")
-}
-
-// ToolCandidate is a staged candidate awaiting a promote-or-discard decision.
-// Candidates persist (no automatic eviction): maturation is judged by the agent
-// from the candidate's age, a signal that is portable across every agent platform
-// (mtime works everywhere, unlike a Claude-Code-only session-start hook source).
-type ToolCandidate struct {
-	Name    string
-	ModTime time.Time
-}
-
-// ListToolCandidates returns the candidates staged in the project, sorted by
-// name. An absent staging dir is normal and yields no candidates and no error.
-func ListToolCandidates(root string) ([]ToolCandidate, error) {
-	entries, err := os.ReadDir(ProjectToolCandidatesDir(root))
-	if err != nil {
-		return nil, nil
-	}
-	var cands []ToolCandidate
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		cands = append(cands, ToolCandidate{Name: e.Name(), ModTime: info.ModTime()})
-	}
-	sort.Slice(cands, func(i, j int) bool { return cands[i].Name < cands[j].Name })
-	return cands, nil
-}
-
-// FormatToolCandidate renders a candidate for the injected catalog, annotated with
-// its age relative to now, so the agent can judge whether it has matured enough to
-// raise with the user (e.g. "fuzzy-find.sh (staged 5 days ago)").
-func FormatToolCandidate(c ToolCandidate, now time.Time) string {
-	return fmt.Sprintf("%s (staged %s)", c.Name, humanizeAge(now.Sub(c.ModTime)))
-}
-
-// humanizeAge renders a coarse, human-readable age: "just now", "3 hours ago",
-// "5 days ago". Coarse on purpose; the agent only needs a rough maturity sense.
-func humanizeAge(d time.Duration) string {
-	switch {
-	case d < time.Minute:
-		return "just now"
-	case d < time.Hour:
-		return plural(int(d.Minutes()), "minute")
-	case d < 24*time.Hour:
-		return plural(int(d.Hours()), "hour")
-	default:
-		return plural(int(d.Hours()/24), "day")
-	}
-}
-
-func plural(n int, unit string) string {
-	if n == 1 {
-		return fmt.Sprintf("1 %s ago", unit)
-	}
-	return fmt.Sprintf("%d %ss ago", n, unit)
 }
 
 // extRunners maps a file extension to the command used to run it.

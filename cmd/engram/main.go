@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/shiblon/engram/pkg/engram"
 	"github.com/spf13/cobra"
@@ -215,16 +214,6 @@ func runInject(cmd *cobra.Command, _ []string) error {
 				db.Close()
 			}
 		}
-		// Agent tools and staged candidates (Plan B removes the project ones).
-		projectResult.AgentTools = scanProjectTools(root)
-		if cands, err := engram.ListToolCandidates(root); err != nil {
-			fmt.Fprintf(os.Stderr, "engram agenttools: %v\n", err)
-		} else {
-			now := time.Now()
-			for _, c := range cands {
-				projectResult.ToolCandidates = append(projectResult.ToolCandidates, engram.FormatToolCandidate(c, now))
-			}
-		}
 	}
 
 	contextText := engram.InjectContextText(globalResult, projectResult, injectSessions)
@@ -240,21 +229,6 @@ func runInject(cmd *cobra.Command, _ []string) error {
 	}
 	fmt.Println(string(engram.FormatInjectOutputText(contextText)))
 	return nil
-}
-
-// scanProjectTools scans the project's committed agenttools dir and rewrites each
-// tool's path to be relative to root, so the injected command reads as
-// "bash context/agenttools/foo.sh" (what the agent types from the repo root)
-// rather than an absolute path. Global tools keep their absolute paths.
-func scanProjectTools(root string) []engram.ToolDesc {
-	tools, warnings := engram.ScanAgentTools(engram.ProjectAgentToolsDir(root))
-	reportToolWarnings(warnings)
-	for i := range tools {
-		if rel, err := filepath.Rel(root, tools[i].Path); err == nil {
-			tools[i].Path = rel
-		}
-	}
-	return tools
 }
 
 // reportToolWarnings surfaces misconfigured-tool warnings on stderr so they do
