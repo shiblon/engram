@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
 func TestParseToolHeader(t *testing.T) {
@@ -171,80 +170,5 @@ func TestMergeAgentTools(t *testing.T) {
 func TestMergeAgentToolsEmpty(t *testing.T) {
 	if got := mergeAgentTools(nil, nil); got != nil {
 		t.Errorf("merge of nothing should be nil, got %v", got)
-	}
-}
-
-func TestListToolCandidates(t *testing.T) {
-	root := t.TempDir()
-	cand := ProjectToolCandidatesDir(root)
-	if err := os.MkdirAll(cand, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for _, n := range []string{"bravo.sh", "alpha.sh"} {
-		if err := os.WriteFile(filepath.Join(cand, n), []byte("# engram-desc: x\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.Mkdir(filepath.Join(cand, "subdir"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	cands, err := ListToolCandidates(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(cands) != 2 {
-		t.Fatalf("got %d candidates, want 2 (subdir skipped): %+v", len(cands), cands)
-	}
-	if cands[0].Name != "alpha.sh" || cands[1].Name != "bravo.sh" {
-		t.Errorf("not sorted by name: %+v", cands)
-	}
-	if cands[0].ModTime.IsZero() {
-		t.Errorf("ModTime not populated: %+v", cands[0])
-	}
-	// Listing must not remove anything (candidates persist).
-	if _, err := os.Stat(filepath.Join(cand, "alpha.sh")); err != nil {
-		t.Errorf("listing should not delete candidates: %v", err)
-	}
-}
-
-func TestListToolCandidatesAbsent(t *testing.T) {
-	cands, err := ListToolCandidates(t.TempDir()) // no candidates dir
-	if err != nil || cands != nil {
-		t.Errorf("absent dir = (%v, %v), want (nil, nil)", cands, err)
-	}
-}
-
-func TestFormatToolCandidate(t *testing.T) {
-	now := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
-	cases := []struct {
-		name string
-		age  time.Duration
-		want string
-	}{
-		{"fresh.sh", 10 * time.Second, "fresh.sh (staged just now)"},
-		{"min.sh", 1 * time.Minute, "min.sh (staged 1 minute ago)"},
-		{"mins.sh", 5 * time.Minute, "mins.sh (staged 5 minutes ago)"},
-		{"hour.sh", 1 * time.Hour, "hour.sh (staged 1 hour ago)"},
-		{"hours.sh", 3 * time.Hour, "hours.sh (staged 3 hours ago)"},
-		{"day.sh", 24 * time.Hour, "day.sh (staged 1 day ago)"},
-		{"days.sh", 5 * 24 * time.Hour, "days.sh (staged 5 days ago)"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got := FormatToolCandidate(ToolCandidate{Name: c.name, ModTime: now.Add(-c.age)}, now)
-			if got != c.want {
-				t.Errorf("FormatToolCandidate = %q, want %q", got, c.want)
-			}
-		})
-	}
-}
-
-func TestAgentToolsPaths(t *testing.T) {
-	if got := ProjectAgentToolsDir("/repo"); got != "/repo/context/agenttools" {
-		t.Errorf("ProjectAgentToolsDir = %q", got)
-	}
-	if got := ProjectToolCandidatesDir("/repo"); got != "/repo/.engram/toolcandidates" {
-		t.Errorf("ProjectToolCandidatesDir = %q", got)
 	}
 }

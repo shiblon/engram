@@ -52,7 +52,7 @@ type SaveOptions struct {
 // Save snapshots all machine-local engram state into a gzipped tar written to
 // w. It walks the global manifest, prunes dead entries, and for each surviving
 // project takes a WAL-safe SQLite snapshot via VACUUM INTO. The global DB,
-// agenttools, toolcandidates, and the project-stage directory are also included.
+// agenttools, and the project-stage directory are also included.
 //
 // Save never modifies any source database; the VACUUM INTO target is always a
 // fresh temp file.
@@ -184,10 +184,6 @@ func Save(ctx context.Context, w io.Writer, opts SaveOptions) (SaveResult, error
 		absRoot := absProjectRoot(ps.entry.path, home)
 
 		if err := tarWriteFile(tw, prefix+"/mem.db", ps.snapPath); err != nil {
-			return res, err
-		}
-		// toolcandidates/
-		if err := tarWriteDir(tw, prefix+"/toolcandidates", ProjectToolCandidatesDir(absRoot)); err != nil {
 			return res, err
 		}
 		// context/ (opt-in)
