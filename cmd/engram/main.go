@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"runtime/debug"
 	"time"
 
 	"github.com/shiblon/engram/pkg/engram"
@@ -15,8 +14,8 @@ import (
 )
 
 func main() {
-	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
-		rootCmd.Version = info.Main.Version
+	if v := engramVersion(); v != "(devel)" {
+		rootCmd.Version = v
 	}
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

@@ -3,6 +3,8 @@ version: 2
 builds:
   - main: ./cmd/engram
     binary: engram
+    ldflags:
+      - -s -w
     env:
       - CGO_ENABLED=0
     goos: [darwin, linux]
