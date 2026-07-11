@@ -17,12 +17,13 @@ type ToolDesc struct {
 	Desc  string // from "engram-desc:" (required)
 	Usage string // from "engram-usage:" (optional)
 	Run   string // resolved interpreter command, e.g. "bash"
-	Path  string // path passed to the runner, e.g. "context/agenttools/render-dataflow.sh"
+	Path  string // path passed to the runner, e.g. "$HOME/.engram/agenttools/render-dataflow.sh"
 }
 
 // Command returns the full invocation string, e.g.
-// "bash context/agenttools/render-dataflow.sh". Tools are never run directly
-// (no reliance on the executable bit); they are invoked through their runner.
+// "bash $HOME/.engram/agenttools/render-dataflow.sh". Tools are never run
+// directly (no reliance on the executable bit); they are invoked through
+// their runner.
 func (t ToolDesc) Command() string {
 	if t.Run == "" {
 		return t.Path
