@@ -174,6 +174,13 @@ func importContextFile(ctx context.Context, db *sql.DB, contextFile string) int 
 	return loaded
 }
 
+// injectVersionLine is the labeled version line inject leads with, so an agent
+// can compare it against the "Guidance version" stamp in ~/.claude/engram.md and
+// prompt a re-bootstrap when they diverge.
+func injectVersionLine(version string) string {
+	return fmt.Sprintf("engram version: %s", version)
+}
+
 func runInject(cmd *cobra.Command, _ []string) error {
 	ctx := context.Background()
 
@@ -257,6 +264,9 @@ func runInject(cmd *cobra.Command, _ []string) error {
 	}
 
 	contextText := engram.InjectContextText(globalResult, projectResult, injectSessions)
+	if contextText != "" {
+		contextText = injectVersionLine(engramVersion()) + "\n\n" + contextText
+	}
 	if bootstrapped > 0 {
 		contextText = fmt.Sprintf("(loaded %d long-term memories from context/long.md)\n\n", bootstrapped) + contextText
 	}
