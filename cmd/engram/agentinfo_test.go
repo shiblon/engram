@@ -18,3 +18,24 @@ func TestRenderAgentInfoSubstitutesVersion(t *testing.T) {
 		t.Errorf("rendered guidance missing the version-drift paragraph")
 	}
 }
+
+func TestGuidanceDropsContextLongMd(t *testing.T) {
+	got := renderAgentInfo()
+	for _, gone := range []string{
+		"auto-loads it when the file is newer",
+		"NEVER edit context/long.md",
+	} {
+		if strings.Contains(got, gone) {
+			t.Errorf("guidance still contains removed context/long.md prose: %q", gone)
+		}
+	}
+	for _, want := range []string{
+		"engram mem dump", // still the export helper
+		"context/",        // the migration nudge references a stray context/ dir
+		"no longer",       // auto-import no longer supported
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("guidance missing expected phrase %q", want)
+		}
+	}
+}
