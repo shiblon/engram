@@ -14,10 +14,9 @@ re-run engram bootstrap. -->
 
 # Engram - Memory and Personality for AI Agents
 
-> Guidance version: ENGRAM_GUIDANCE_VERSION. Session-start inject reports the
-> running engram version; if it differs from the version on this line, this file
-> is stale (its guidance predates the installed engram). Offer to run
-> ` + "`engram bootstrap <platform>`" + ` to refresh it, then re-read the updated guidance.
+> Guidance version: ENGRAM_GUIDANCE_VERSION. Session-start inject reports the running
+> engram version and flags this file as stale (it predates the installed engram) when
+> they differ or this line is absent; refresh with ` + "`engram bootstrap <platform>`" + `.
 
 Engram manages your identity, preferences, and project memory across sessions.
 
