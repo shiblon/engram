@@ -30,9 +30,9 @@ func TestGuidanceDropsContextLongMd(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"engram mem dump", // still the export helper
-		"context/",        // the migration nudge references a stray context/ dir
-		"no longer",       // auto-import no longer supported
+		"engram mem dump",           // still the export helper
+		"Do not dump automatically", // only in the project memory and sharing section
+		"no longer",                 // auto-import no longer supported
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("guidance missing expected phrase %q", want)
