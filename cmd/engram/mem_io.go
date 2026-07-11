@@ -130,10 +130,7 @@ func resolveMemDir() string {
 		home, _ := os.UserHomeDir()
 		return filepath.Join(home, ".claude", "memory")
 	}
-	cwd := effectiveCWD()
-	if _, err := engram.FindProjectRoot(cwd); err == nil {
-		return "" // no default location; load requires --dir for project scope
-	}
+	// Project scope has no default location; `mem load` requires --dir.
 	return ""
 }
 
