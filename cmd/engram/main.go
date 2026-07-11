@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log"
 	"os"
@@ -141,39 +140,6 @@ var injectCmd = &cobra.Command{
 	RunE:  runInject,
 }
 
-// importContextFile syncs contextFile into db's long-term memories if the file
-// is newer than the DB. Returns the number of memories loaded, or 0 if the
-// file is absent or already up to date.
-func importContextFile(ctx context.Context, db *sql.DB, contextFile string) int {
-	fi, err := os.Stat(contextFile)
-	if err != nil {
-		return 0
-	}
-	existing, _ := engram.ListMemories(ctx, db, engram.TierLong)
-	if len(existing) > 0 && !fi.ModTime().After(time.UnixMilli(existing[0].TS)) {
-		return 0
-	}
-	data, err := os.ReadFile(contextFile)
-	if err != nil {
-		return 0
-	}
-	memories, err := engram.ParseMemoryMD(engram.TierLong, string(data))
-	if err != nil {
-		return 0
-	}
-	// Count only memories that actually persisted; a swallowed write here would
-	// otherwise report context as loaded when it was lost (e.g. disk/corruption).
-	loaded := 0
-	for _, m := range memories {
-		if err := engram.WriteMemory(ctx, db, m); err != nil {
-			fmt.Fprintf(os.Stderr, "engram: load context/long.md %q: %v\n", m.Key, err)
-			continue
-		}
-		loaded++
-	}
-	return loaded
-}
-
 // injectVersionLine is the labeled version line inject leads with, so an agent
 // can compare it against the "Guidance version" stamp in ~/.claude/engram.md and
 // prompt a re-bootstrap when they diverge.
@@ -231,13 +197,9 @@ func runInject(cmd *cobra.Command, _ []string) error {
 
 	// Read project memories. Non-fatal if no project root or DB exists.
 	var projectResult engram.InjectResult
-	var bootstrapped int
 	if root, err := engram.FindProjectRoot(cwd); err == nil {
-		contextFile := filepath.Join(engram.ProjectStorageRoot(root), "context", "long.md")
-		_, contextErr := os.Stat(contextFile)
-		if engram.ProjectDBExists(root) || contextErr == nil {
+		if engram.ProjectDBExists(root) {
 			if db, err := engram.OpenProjectDB(ctx, root); err == nil {
-				bootstrapped = importContextFile(ctx, db, contextFile)
 				projectResult, err = engram.Inject(ctx, db, injectSessions)
 				if err != nil {
 					log.Printf("engram: inject project memory: %v", err)
@@ -248,11 +210,8 @@ func runInject(cmd *cobra.Command, _ []string) error {
 				db.Close()
 			}
 		}
-		// Agent tools and staged candidates are independent of the project DB.
+		// Agent tools and staged candidates (Plan B removes the project ones).
 		projectResult.AgentTools = scanProjectTools(root)
-		// Surface staged candidates annotated with age. Candidates persist (no
-		// auto-eviction); the agent judges maturity from age, a portable signal
-		// across every platform, unlike a Claude-Code-only session-start source.
 		if cands, err := engram.ListToolCandidates(root); err != nil {
 			fmt.Fprintf(os.Stderr, "engram agenttools: %v\n", err)
 		} else {
@@ -266,9 +225,6 @@ func runInject(cmd *cobra.Command, _ []string) error {
 	contextText := engram.InjectContextText(globalResult, projectResult, injectSessions)
 	if contextText != "" {
 		contextText = injectVersionLine(engramVersion()) + "\n\n" + contextText
-	}
-	if bootstrapped > 0 {
-		contextText = fmt.Sprintf("(loaded %d long-term memories from context/long.md)\n\n", bootstrapped) + contextText
 	}
 
 	if injectText {
