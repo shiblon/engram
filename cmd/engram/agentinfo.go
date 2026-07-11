@@ -9,7 +9,7 @@ import (
 
 const agentInfoText = `<!-- GENERATED FILE -- do not edit directly. This file is written by
 "engram bootstrap"; edits here are overwritten on the next run. To change it, edit
-the source in the engram tool (cmd/engram/agentinfo.go, const agentInfoText) and
+the source in the engram binary (cmd/engram/agentinfo.go, const agentInfoText) and
 re-run engram bootstrap. -->
 
 # Engram - Memory and Personality for AI Agents
@@ -130,40 +130,31 @@ context/.
 
 ## Agent tools
 
-Engram surfaces a catalog of reusable scripts at session start under "## Agent
-tools", each shown as the exact command to run it (e.g. bash
-context/agenttools/foo.sh). Invoke a listed tool with that command; read the
-script's header for usage detail. Two scopes are scanned: project-local
-(context/agenttools/, committed and shared with the repo) and global
-($HOME/.engram/agenttools/, your personal tools). A project tool shadows a global one
-of the same name. Tools run through a runner (bash foo.sh), never directly, so the
-executable bit does not matter.
+Engram surfaces a catalog of your GLOBAL reusable scripts
+($HOME/.engram/agenttools/) at session start under "## Agent tools", each shown
+as the exact command to run it. Invoke a listed tool with that command; read
+the script's header for usage detail. Tools run through a runner (bash
+foo.sh), never directly, so the executable bit does not matter.
 
-Graduate recurring shell patterns into tools instead of re-typing them. Trigger:
-any multi-command, echo-bundled invocation you had to get approved inline. When
-you write one, ask (a) what am I trying to accomplish at a high level? and (b) will
-I need to do this again? If plausibly yes, STAGE a candidate: pipe the script
-(with the header below) to "engram tool stage <name>". Staging is free -- a single
-pre-allowlisted command writing to scratch -- so do it without asking. See what is
-staged with "engram tool list".
+HOW TO DECIDE when a tool is worth creating: when a nontrivial command
+sequence recurs, or a common invocation needs many flags, consider extracting
+a readable script instead of re-typing or re-approving the same thing. When
+you write one, ask (a) what am I accomplishing at a high level? and (b) will I
+need this again? If plausibly yes, it is worth extracting.
 
-Promote a candidate when EITHER signal fires:
-- Second use: you are about to run the same pattern again and a candidate already
-  exists for it -- raise it with the user now.
-- Age: engram surfaces staged candidates with their age ("foo.sh (staged 5 days
-  ago)"); when one has lingered more than a few days and still looks useful, bring
-  it up.
-Never auto-promote. Before promoting, ASK the user about the tool's shape:
-abstraction level (how general?), language, and name. You are creating something
-that will live a long time, so do not guess. Then "engram tool promote <name>
---to project" (committed, shared with the repo) or "--to global"
-($HOME/.engram/agenttools, your personal tools). Project -> global is a COPY: the committed
-project copy stays in place. Not worth keeping? "engram tool discard <name>". Engram
-removes nothing on its own.
+WHERE it lives and HOW it gets used: engram no longer stages or promotes
+project tools -- that machinery is gone. If there's an obvious home in the
+repo (a scripts/ dir, a Makefile target), put it there. If not, PROMPT THE
+USER for where it should live and how they want the agent instructed to reach
+for it later (a docs note, an AGENTS.md entry, etc.). Be honest that a tool's
+mere presence does not trigger its use -- something must tell the agent to
+reach for it, or it will sit unused. Personal, cross-repo tools can go in
+$HOME/.engram/agenttools/ (with the header below), where engram will catalog
+them globally for you.
 
-Tool scripts are self-describing via a header (the single source of truth for the
-catalog, so docs never drift). One namespaced line-comment convention, the same in
-any language:
+Tool scripts are self-describing via a header (the single source of truth for
+the catalog, so docs never drift). One namespaced line-comment convention, the
+same in any language:
   # engram-desc: <one-line description>   (REQUIRED -- without it the file is not a tool)
   # engram-usage: <invocation example>    (optional)
   # engram-run: <runner command>          (optional; else inferred from extension or shebang)
