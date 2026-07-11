@@ -2,12 +2,10 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
-	"runtime/debug"
 	"time"
 
 	"github.com/shiblon/engram/pkg/engram"
@@ -15,8 +13,8 @@ import (
 )
 
 func main() {
-	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
-		rootCmd.Version = info.Main.Version
+	if v := engramVersion(); v != "(devel)" {
+		rootCmd.Version = v
 	}
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
@@ -142,37 +140,16 @@ var injectCmd = &cobra.Command{
 	RunE:  runInject,
 }
 
-// importContextFile syncs contextFile into db's long-term memories if the file
-// is newer than the DB. Returns the number of memories loaded, or 0 if the
-// file is absent or already up to date.
-func importContextFile(ctx context.Context, db *sql.DB, contextFile string) int {
-	fi, err := os.Stat(contextFile)
-	if err != nil {
-		return 0
-	}
-	existing, _ := engram.ListMemories(ctx, db, engram.TierLong)
-	if len(existing) > 0 && !fi.ModTime().After(time.UnixMilli(existing[0].TS)) {
-		return 0
-	}
-	data, err := os.ReadFile(contextFile)
-	if err != nil {
-		return 0
-	}
-	memories, err := engram.ParseMemoryMD(engram.TierLong, string(data))
-	if err != nil {
-		return 0
-	}
-	// Count only memories that actually persisted; a swallowed write here would
-	// otherwise report context as loaded when it was lost (e.g. disk/corruption).
-	loaded := 0
-	for _, m := range memories {
-		if err := engram.WriteMemory(ctx, db, m); err != nil {
-			fmt.Fprintf(os.Stderr, "engram: load context/long.md %q: %v\n", m.Key, err)
-			continue
-		}
-		loaded++
-	}
-	return loaded
+// injectVersionLine is the version-drift check inject leads with. It carries the
+// instruction itself, not just the number, because the check must fire even when
+// the loaded engram.md is old and version-less (it predates this feature) -- in
+// that case the guidance file cannot carry the instruction, but inject always
+// can. It covers both a version mismatch and a missing version line.
+func injectVersionLine(version string) string {
+	return fmt.Sprintf("engram version: %s. Check the engram guidance loaded in your "+
+		"context: if its \"Guidance version\" line differs from this, or there is no "+
+		"version line at all, that guidance predates this engram; tell the user and offer "+
+		"to run `engram bootstrap` to refresh it.", version)
 }
 
 func runInject(cmd *cobra.Command, _ []string) error {
@@ -225,13 +202,9 @@ func runInject(cmd *cobra.Command, _ []string) error {
 
 	// Read project memories. Non-fatal if no project root or DB exists.
 	var projectResult engram.InjectResult
-	var bootstrapped int
 	if root, err := engram.FindProjectRoot(cwd); err == nil {
-		contextFile := filepath.Join(engram.ProjectStorageRoot(root), "context", "long.md")
-		_, contextErr := os.Stat(contextFile)
-		if engram.ProjectDBExists(root) || contextErr == nil {
+		if engram.ProjectDBExists(root) {
 			if db, err := engram.OpenProjectDB(ctx, root); err == nil {
-				bootstrapped = importContextFile(ctx, db, contextFile)
 				projectResult, err = engram.Inject(ctx, db, injectSessions)
 				if err != nil {
 					log.Printf("engram: inject project memory: %v", err)
@@ -242,11 +215,8 @@ func runInject(cmd *cobra.Command, _ []string) error {
 				db.Close()
 			}
 		}
-		// Agent tools and staged candidates are independent of the project DB.
+		// Agent tools and staged candidates (Plan B removes the project ones).
 		projectResult.AgentTools = scanProjectTools(root)
-		// Surface staged candidates annotated with age. Candidates persist (no
-		// auto-eviction); the agent judges maturity from age, a portable signal
-		// across every platform, unlike a Claude-Code-only session-start source.
 		if cands, err := engram.ListToolCandidates(root); err != nil {
 			fmt.Fprintf(os.Stderr, "engram agenttools: %v\n", err)
 		} else {
@@ -258,8 +228,8 @@ func runInject(cmd *cobra.Command, _ []string) error {
 	}
 
 	contextText := engram.InjectContextText(globalResult, projectResult, injectSessions)
-	if bootstrapped > 0 {
-		contextText = fmt.Sprintf("(loaded %d long-term memories from context/long.md)\n\n", bootstrapped) + contextText
+	if contextText != "" {
+		contextText = injectVersionLine(engramVersion()) + "\n\n" + contextText
 	}
 
 	if injectText {

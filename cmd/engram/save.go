@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"runtime/debug"
 	"time"
 
 	"github.com/shiblon/engram/pkg/engram"
@@ -44,10 +43,7 @@ func runSave(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("save: create output file: %w", err)
 	}
 
-	var version string
-	if info, ok := debug.ReadBuildInfo(); ok {
-		version = info.Main.Version
-	}
+	version := engramVersion()
 
 	result, saveErr := engram.Save(ctx, f, engram.SaveOptions{
 		IncludeContext: saveIncludeContext,
