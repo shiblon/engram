@@ -133,19 +133,22 @@ session-start injection, and queues a personality setup todo for your first
 session. On hook-capable platforms it also adds file tracking hooks. Open a new
 session when done and your agent will know what to do.
 
-### Commit your memory to git (optional but recommended)
+### Sharing memory with your team
 
-Export memory to markdown so it can live in version control:
+`engram mem dump --tier long` prints your settled long-term memory as markdown
+to stdout:
 
 ```sh
-engram mem --global dump        # global identity + preferences -> ~/.claude/memory/*.md
-engram mem dump --tier long     # settled project memory -> context/long.md
+engram mem dump --tier long > docs/notes.md   # redirect into your own docs/wiki
 ```
 
-Use `--tier long` for the project export: long-term is the "wiki of settled
-knowledge" worth committing, whereas the short-term stack is transient working
-state you don't want in version control. `engram mem load` re-imports these
-markdown files (per scope) on another checkout.
+Long-term is the "wiki of settled knowledge" worth sharing; the short-term
+stack is transient working state that isn't meant to travel. Where you put the
+output is up to you and your team's existing docs conventions -- engram
+doesn't own a file for it.
+
+For carrying memory itself (not a markdown export) across machines, see
+`engram save` / `engram restore` below.
 
 ### Moving to another machine
 
