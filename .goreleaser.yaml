@@ -17,7 +17,7 @@ archives:
 checksum:
   name_template: checksums.txt
 
-brews:
+homebrew_casks:
   - name: engram
     repository:
       owner: shiblon
@@ -26,10 +26,17 @@ brews:
     homepage: "https://github.com/shiblon/engram"
     description: "Auto-memory system for AI coding agents"
     license: "Apache-2.0"
-    install: |-
-      bin.install "engram"
-    test: |-
-      system bin/"engram", "--version"
+    # The binary is unsigned/un-notarized, and casks quarantine what they
+    # download -- without this, macOS Gatekeeper blocks the first run with
+    # "engram is damaged and cannot be opened." The old brews formula never
+    # quarantined; casks do, so the migration has to strip the attribute itself.
+    # Proper signing + notarization would be the real fix.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/engram"]
+          end
 
 # Debian packages attached to each release for dpkg install. No apt repo yet --
 # these are download-and-install artifacts, not an auto-updating source. nFPM is

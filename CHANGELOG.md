@@ -24,6 +24,11 @@ in-repo companion.
   `dpkg -i` install, alongside the existing tarballs and Homebrew tap. No apt
   repository yet -- these are download-and-install artifacts.
 
+### Changed
+- packaging: the Homebrew tap is now published as a cask instead of a formula
+  (the `brews` config goreleaser deprecated). Installs strip the macOS quarantine
+  attribute so an unsigned binary still runs on first launch.
+
 ## [0.11.0] - 2026-07-11
 ### Added
 - inject: carry the version-drift check in inject, not just the guidance
