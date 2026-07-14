@@ -128,6 +128,12 @@ go install github.com/shiblon/engram/cmd/engram@latest
 engram bootstrap claude -g   # or without -g for project-only hooks
 ```
 
+> **Upgrading from a pre-0.11.1 Homebrew install?** engram is now published as a
+> Homebrew cask instead of a formula. If `brew upgrade` warns "Treating engram as
+> a formula" and won't update, switch once with
+> `brew uninstall engram && brew install engram`. New installs need nothing
+> special.
+
 Bootstrap writes workflow instructions into global memory, sets up
 session-start injection, and queues a personality setup todo for your first
 session. On hook-capable platforms it also adds file tracking hooks. Open a new
