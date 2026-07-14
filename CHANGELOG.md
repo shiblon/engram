@@ -10,6 +10,15 @@ independently from commit messages by goreleaser; this file is the curated,
 in-repo companion.
 
 ## [Unreleased]
+### Added
+- mem: `tldr <key>` with no summary now prints the current tldr (or the first-line
+  fallback when none is set), so you can review before overwriting.
+- mem: `list --missing-tldr` lists memories that have no tldr (invariants excluded)
+  -- a coverage view for finding summaries worth adding.
+
+### Fixed
+- mem: `write <key> <content>` without `--tldr` no longer wipes an existing tldr;
+  it now preserves the current summary. Pass `--tldr ""` to clear it deliberately.
 
 ## [0.11.1] - 2026-07-14
 ### Added

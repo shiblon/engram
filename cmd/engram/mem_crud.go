@@ -79,6 +79,21 @@ func printMemories(memories []engram.Memory) {
 
 var memTldr string
 
+// effectiveWriteTldr decides the tldr a `write` should persist. When --tldr was
+// given (flagChanged), its value wins, including "" to clear deliberately. When
+// it was not given, the existing memory's tldr is preserved so a content-only
+// rewrite never silently wipes a curated summary; a brand-new memory (existing
+// nil) starts empty.
+func effectiveWriteTldr(existing *engram.Memory, flagChanged bool, flagVal string) string {
+	if flagChanged {
+		return strings.TrimSpace(flagVal)
+	}
+	if existing != nil {
+		return existing.Tldr
+	}
+	return ""
+}
+
 var memWriteCmd = &cobra.Command{
 	Use:   "write <key> <content>",
 	Short: "Write (upsert) a memory entry",
@@ -97,12 +112,13 @@ var memWriteCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		existing, _ := engram.ReadMemory(ctx, h.DB, tier, key)
 		m := engram.Memory{
 			TS:      time.Now().UnixMilli(),
 			Tier:    tier,
 			Key:     key,
 			Content: content,
-			Tldr:    strings.TrimSpace(memTldr),
+			Tldr:    effectiveWriteTldr(existing, cmd.Flag("tldr").Changed, memTldr),
 		}
 		if err := engram.WriteMemory(ctx, h.DB, m); err != nil {
 			return err
@@ -167,7 +183,10 @@ var memReadCmd = &cobra.Command{
 	},
 }
 
-var memListJSON bool
+var (
+	memListJSON        bool
+	memListMissingTldr bool
+)
 
 var memListCmd = &cobra.Command{
 	Use:   "list [key]",
@@ -194,6 +213,18 @@ var memListCmd = &cobra.Command{
 			return err
 		}
 
+		if memListMissingTldr {
+			var missing []engram.Memory
+			for _, m := range memories {
+				// Invariants inject in full and never use a tldr, so they are
+				// never "missing" one -- exclude them from the coverage view.
+				if m.Tier != engram.TierInvariant && m.Tldr == "" {
+					missing = append(missing, m)
+				}
+			}
+			memories = missing
+		}
+
 		if memListJSON {
 			out, err := json.Marshal(memories)
 			if err != nil {
@@ -204,7 +235,11 @@ var memListCmd = &cobra.Command{
 		}
 
 		if len(memories) == 0 {
-			fmt.Println("no memories")
+			if memListMissingTldr {
+				fmt.Println("all listed memories have tldrs")
+			} else {
+				fmt.Println("no memories")
+			}
 			return nil
 		}
 		printMemories(memories)
@@ -263,16 +298,19 @@ var memDeleteCmd = &cobra.Command{
 }
 
 var memTldrCmd = &cobra.Command{
-	Use:   "tldr <key> <summary>",
-	Short: "Set the one-line inject summary of an existing memory (content untouched)",
-	Long: `Set or replace a memory's tldr -- the one-line summary inject surfaces in
-place of its full content -- without rewriting the content. This is the safe way
-to curate what a preference (or any memory) shows at session start; plain 'write'
-would require re-supplying the entire content body.
+	Use:   "tldr <key> [summary]",
+	Short: "Show or set the one-line inject summary of an existing memory",
+	Long: `With a summary, set or replace a memory's tldr -- the one-line summary inject
+surfaces in place of its full content -- without rewriting the content. This is
+the safe way to curate what a memory shows at session start; plain 'write' would
+require re-supplying the entire content body.
+
+With no summary, print the memory's current tldr (or, when none is set, the
+first-line fallback inject would use), so you can review before overwriting.
 
 Pass an empty summary ("") to clear the tldr and fall back to the first line of
 content. Omit --tier to resolve the key automatically when it is unambiguous.`,
-	Args: cobra.MinimumNArgs(2),
+	Args: cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
 		h, err := openMemDB(ctx)
@@ -281,7 +319,6 @@ content. Omit --tier to resolve the key automatically when it is unambiguous.`,
 		}
 		defer h.DB.Close()
 
-		tldr := strings.TrimSpace(strings.Join(args[1:], " "))
 		tier := engram.Tier(memTier)
 		key := args[0]
 		if !cmd.Flag("tier").Changed {
@@ -312,6 +349,26 @@ content. Omit --tier to resolve the key automatically when it is unambiguous.`,
 			}
 		}
 
+		// Getter: no summary given -> print the current tldr, or the first-line
+		// fallback inject would show when none is set.
+		if len(args) == 1 {
+			m, err := engram.ReadMemory(ctx, h.DB, tier, key)
+			if err != nil {
+				return err
+			}
+			if m == nil {
+				return fmt.Errorf("not found: %s/%s", tier, args[0])
+			}
+			if m.Tldr == "" {
+				fmt.Printf("%s/%s: (no tldr set; inject falls back to first line)\n  %s\n", tier, args[0], m.InjectSummary())
+			} else {
+				fmt.Printf("%s/%s: %s\n", tier, args[0], m.Tldr)
+			}
+			return nil
+		}
+
+		// Setter: summary given.
+		tldr := strings.TrimSpace(strings.Join(args[1:], " "))
 		ok, err := engram.SetMemoryTldr(ctx, h.DB, tier, key, tldr)
 		if err != nil {
 			return err
@@ -488,6 +545,7 @@ var memPopCmd = &cobra.Command{
 func init() {
 	memWriteCmd.Flags().StringVar(&memTldr, "tldr", "", fmt.Sprintf("one-line summary shown at inject time (max %d chars; falls back to the first line of content)", engram.MaxTldrLen))
 	memListCmd.Flags().BoolVar(&memListJSON, "json", false, "output as JSON array")
+	memListCmd.Flags().BoolVar(&memListMissingTldr, "missing-tldr", false, "list only memories with no tldr (excludes invariants)")
 	memMoveCmd.Flags().StringVar(&moveFrom, "from", "", "source tier (inferred if omitted)")
 	memMoveCmd.Flags().StringVar(&moveTo, "to", "", "destination tier (required)")
 	memMoveCmd.Flags().StringVar(&moveToDB, "to-db", "", `destination database: "global" or "project" (default: same as source)`)
