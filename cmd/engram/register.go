@@ -14,6 +14,8 @@ import (
 
 var registerScanDir string
 var registerList bool
+var registerForget string
+var registerPurge bool
 
 var registerCmd = &cobra.Command{
 	Use:   "register",
@@ -23,12 +25,22 @@ var registerCmd = &cobra.Command{
 
 Without flags, registers the project rooted at the current directory (or --cwd).
 
-  --list          Print all projects currently in the manifest.
-  --scan <dir>    Walk <dir>, find every .engram/mem.db, and register them all.
+  --list             Print all projects currently in the manifest.
+  --scan <dir>       Walk <dir>, find every .engram/mem.db, and register them all.
+  --forget <target>  Remove a project from the manifest by path or identity.
+  --purge            With --forget, also delete the .engram directory on disk.
 
 Projects are registered automatically when their engram database is first
 created. Use this command for projects that predate v0.6.0 or whose identity
-has changed.`,
+has changed.
+
+--forget is the surgical undo for a project registered by mistake -- a throwaway
+clone under /tmp, say. target is matched against the path column first (copy it
+straight from --list, or pass a filesystem path), which removes exactly one
+working copy and leaves sibling clones sharing its identity alone; only when no
+path matches does target fall back to identity, which forgets every clone of
+that project. Forgetting only edits the manifest; add --purge to also delete the
+stray .engram directory from disk (never the global ~/.engram).`,
 	RunE: runRegister,
 }
 
@@ -40,6 +52,14 @@ func runRegister(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("register: open global db: %w", err)
 	}
 	defer gdb.Close()
+
+	if registerPurge && registerForget == "" {
+		return fmt.Errorf("register: --purge requires --forget")
+	}
+
+	if registerForget != "" {
+		return runRegisterForget(ctx, gdb, registerForget)
+	}
 
 	if registerList {
 		return runRegisterList(ctx, gdb)
@@ -154,6 +174,27 @@ func runRegisterScan(ctx context.Context, gdb *sql.DB, scanRoot string) error {
 	return nil
 }
 
+// runRegisterForget removes the manifest rows matching target and reports each
+// one. A non-empty result can accompany an error (rows removed, but a --purge
+// step failed), so removed rows are always printed before the error surfaces.
+func runRegisterForget(ctx context.Context, gdb *sql.DB, target string) error {
+	removed, err := engram.ForgetProject(ctx, gdb, target, registerPurge)
+	for _, f := range removed {
+		fmt.Fprintf(os.Stderr, "forgot: %s (%s)\n", f.Path, f.Identity)
+		if f.Purged != "" {
+			fmt.Fprintf(os.Stderr, "  purged: %s\n", f.Purged)
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("register --forget: %w", err)
+	}
+	if len(removed) == 0 {
+		fmt.Fprintf(os.Stderr, "no manifest entry matches %q (see 'engram register --list')\n", target)
+		return nil
+	}
+	return nil
+}
+
 func runRegisterList(ctx context.Context, gdb *sql.DB) error {
 	rows, err := gdb.QueryContext(ctx,
 		`SELECT identity, path, status FROM projects ORDER BY status, last_seen DESC`)
@@ -180,5 +221,7 @@ func runRegisterList(ctx context.Context, gdb *sql.DB) error {
 func init() {
 	registerCmd.Flags().BoolVar(&registerList, "list", false, "list all projects in the manifest")
 	registerCmd.Flags().StringVar(&registerScanDir, "scan", "", "scan this directory tree and register all projects found")
+	registerCmd.Flags().StringVar(&registerForget, "forget", "", "remove a project from the manifest by path or identity")
+	registerCmd.Flags().BoolVar(&registerPurge, "purge", false, "with --forget, also delete the stray .engram directory on disk")
 	rootCmd.AddCommand(registerCmd)
 }

@@ -436,3 +436,165 @@ func TestOpenProjectDBFromLinkedWorktreeCreatesOnlyMainDB(t *testing.T) {
 		t.Errorf("path = %q, want main checkout path", path)
 	}
 }
+
+func TestForgetProject(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	ctx := context.Background()
+
+	insert := func(db *sql.DB, identity, path string) {
+		t.Helper()
+		if _, err := db.ExecContext(ctx,
+			`INSERT INTO projects (identity, path, last_seen) VALUES (?, ?, 1)`, identity, path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	remainingPaths := func(db *sql.DB) []string {
+		t.Helper()
+		rows, err := db.Query(`SELECT path FROM projects ORDER BY path`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var ps []string
+		for rows.Next() {
+			var p string
+			if err := rows.Scan(&p); err != nil {
+				t.Fatal(err)
+			}
+			ps = append(ps, p)
+		}
+		return ps
+	}
+
+	t.Run("path_match_leaves_sibling_clones", func(t *testing.T) {
+		// Two clones share one identity; naming a path is single-row surgery and
+		// must not evict the sibling clone.
+		db := testDB(t)
+		insert(db, "git@github.com:me/proj.git", filepath.Join("code", "a"))
+		insert(db, "git@github.com:me/proj.git", filepath.Join("code", "b"))
+
+		removed, err := ForgetProject(ctx, db, filepath.Join("code", "a"), false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(removed) != 1 || removed[0].Path != filepath.Join("code", "a") {
+			t.Fatalf("removed = %+v, want just code/a", removed)
+		}
+		if got := remainingPaths(db); len(got) != 1 || got[0] != filepath.Join("code", "b") {
+			t.Fatalf("remaining = %v, want [code/b]", got)
+		}
+	})
+
+	t.Run("identity_fallback_forgets_all_clones", func(t *testing.T) {
+		db := testDB(t)
+		insert(db, "git@github.com:me/proj.git", filepath.Join("code", "a"))
+		insert(db, "git@github.com:me/proj.git", filepath.Join("code", "b"))
+		insert(db, "git@github.com:me/other.git", filepath.Join("code", "c"))
+
+		removed, err := ForgetProject(ctx, db, "git@github.com:me/proj.git", false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(removed) != 2 {
+			t.Fatalf("removed %d rows, want 2 (both clones of the identity)", len(removed))
+		}
+		if got := remainingPaths(db); len(got) != 1 || got[0] != filepath.Join("code", "c") {
+			t.Fatalf("remaining = %v, want [code/c]", got)
+		}
+	})
+
+	t.Run("path_wins_over_identity", func(t *testing.T) {
+		// A target that could match a path OR an identity resolves to the path,
+		// so an unlucky name collision can never fan out to identity siblings.
+		db := testDB(t)
+		insert(db, "code/x", filepath.Join("code", "y")) // identity literally equals another row's target
+		insert(db, "other", "code/x")                    // path == the target string
+
+		removed, err := ForgetProject(ctx, db, "code/x", false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(removed) != 1 || removed[0].Path != "code/x" {
+			t.Fatalf("removed = %+v, want the path row only", removed)
+		}
+	})
+
+	t.Run("abs_path_normalizes_to_stored_relative", func(t *testing.T) {
+		db := testDB(t)
+		insert(db, "id-x", filepath.Join("code", "a"))
+
+		removed, err := ForgetProject(ctx, db, filepath.Join(home, "code", "a"), false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(removed) != 1 {
+			t.Fatalf("removed = %+v, want 1 via abs-path normalization", removed)
+		}
+	})
+
+	t.Run("no_match_is_benign", func(t *testing.T) {
+		db := testDB(t)
+		insert(db, "id-x", filepath.Join("code", "a"))
+
+		removed, err := ForgetProject(ctx, db, "code/nope", false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(removed) != 0 {
+			t.Fatalf("removed = %+v, want none", removed)
+		}
+		if got := remainingPaths(db); len(got) != 1 {
+			t.Fatalf("row wrongly removed: %v", got)
+		}
+	})
+
+	t.Run("purge_deletes_engram_dir", func(t *testing.T) {
+		// A stray project outside $HOME (stored absolute, like /tmp): --purge
+		// removes the row AND the .engram on disk.
+		db := testDB(t)
+		stray := t.TempDir()
+		engramDir := filepath.Join(stray, ".engram")
+		if err := os.MkdirAll(engramDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		insert(db, "id-stray", stray)
+
+		removed, err := ForgetProject(ctx, db, stray, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(removed) != 1 || removed[0].Purged != engramDir {
+			t.Fatalf("removed = %+v, want purged %s", removed, engramDir)
+		}
+		if _, err := os.Stat(engramDir); !os.IsNotExist(err) {
+			t.Fatalf(".engram dir still present after purge (err = %v)", err)
+		}
+	})
+
+	t.Run("purge_refuses_global_engram", func(t *testing.T) {
+		// A corrupt row resolving to $HOME would point .engram at the global DB.
+		// Purge must refuse and leave every global memory intact, while still
+		// removing the bogus manifest row.
+		db := testDB(t)
+		globalEngram := filepath.Join(home, ".engram")
+		if err := os.MkdirAll(globalEngram, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		insert(db, "id-danger", "") // absProjectRoot("", home) -> $HOME
+
+		removed, err := ForgetProject(ctx, db, "id-danger", true)
+		if err == nil {
+			t.Fatal("expected purge guard to error, got nil")
+		}
+		if len(removed) != 1 || removed[0].Purged != "" {
+			t.Fatalf("removed = %+v, want row removed with no purge", removed)
+		}
+		if _, err := os.Stat(globalEngram); err != nil {
+			t.Fatalf("global engram dir was wrongly touched: %v", err)
+		}
+		if got := remainingPaths(db); len(got) != 0 {
+			t.Fatalf("bogus row not removed: %v", got)
+		}
+	})
+}

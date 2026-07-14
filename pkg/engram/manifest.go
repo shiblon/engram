@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -286,6 +287,119 @@ func IsProjectRegistered(ctx context.Context, globalDB *sql.DB, root string) boo
 		`SELECT COUNT(*) FROM projects WHERE identity = ? AND path = ? AND status = 'live'`,
 		ProjectIdentity(root), homeRelPath(ProjectStorageRoot(root))).Scan(&n)
 	return n > 0
+}
+
+// Forgotten describes one manifest row removed by ForgetProject.
+type Forgotten struct {
+	Identity string
+	Path     string // as stored: $HOME-relative or absolute
+	// Purged is the absolute .engram directory deleted from disk, or "" when
+	// purge was not requested (or nothing was there to delete).
+	Purged string
+}
+
+// ForgetProject removes manifest rows matching target and reports what it
+// removed. It is the surgical counterpart to RegisterProject: the way to evict a
+// project that was registered by mistake (a throwaway clone under /tmp, say)
+// without waiting for the save-time prune, which only reaps rows whose .engram
+// has already vanished from disk.
+//
+// Matching is path-first. target is compared against the stored path column
+// (both as printed by --list and after $HOME-relative normalization, so an
+// absolute or relative path a user types resolves to the stored form); a path
+// match names exactly one working copy and never touches sibling clones that
+// share its identity. Only when no path matches does target fall back to the
+// identity column, which may remove every registered clone of that project.
+//
+// With purge set, the .engram directory of each removed row is also deleted from
+// disk. Purge is best-effort -- individual failures are joined into the returned
+// error while the remaining work proceeds -- and it will never delete the global
+// $HOME/.engram database. A non-nil error may accompany a non-empty result: rows
+// were removed but some purge step failed.
+func ForgetProject(ctx context.Context, globalDB *sql.DB, target string, purge bool) ([]Forgotten, error) {
+	home, _ := os.UserHomeDir()
+
+	// Candidate spellings of target as a path: the literal string (what --list
+	// prints) and its $HOME-relative normalization (what a typed abs/rel path
+	// resolves to). An identity like git@github.com:me/x.git normalizes to a
+	// path under the cwd that matches nothing, so it never yields a false path
+	// hit.
+	pathCandidates := map[string]bool{target: true, homeRelPath(target): true}
+
+	rows, err := globalDB.QueryContext(ctx, `SELECT identity, path FROM projects`)
+	if err != nil {
+		return nil, fmt.Errorf("forget project (scan): %w", err)
+	}
+	var byPath, byIdentity []manifestEntry
+	for rows.Next() {
+		var e manifestEntry
+		if err := rows.Scan(&e.identity, &e.path); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if pathCandidates[e.path] {
+			byPath = append(byPath, e)
+		} else if e.identity == target {
+			byIdentity = append(byIdentity, e)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	targets := byPath
+	if len(targets) == 0 {
+		targets = byIdentity
+	}
+	if len(targets) == 0 {
+		return nil, nil
+	}
+
+	var out []Forgotten
+	var errs []error
+	for _, e := range targets {
+		if _, err := globalDB.ExecContext(ctx,
+			`DELETE FROM projects WHERE identity = ? AND path = ?`, e.identity, e.path); err != nil {
+			errs = append(errs, fmt.Errorf("forget %q (%s): %w", e.identity, e.path, err))
+			continue
+		}
+		f := Forgotten{Identity: e.identity, Path: e.path}
+		if purge {
+			purged, perr := purgeEngramDir(e.path, home)
+			if perr != nil {
+				errs = append(errs, perr)
+			}
+			f.Purged = purged
+		}
+		out = append(out, f)
+	}
+	return out, errors.Join(errs...)
+}
+
+// purgeEngramDir deletes the .engram directory for a forgotten manifest row.
+// It returns the directory it removed (or "" when there was nothing to remove)
+// and refuses, defensively, to delete the global $HOME/.engram database or an
+// .engram sitting directly at $HOME or the filesystem root -- none of which a
+// real project row should ever resolve to, but the cost of the guard is nil and
+// the cost of a wrong RemoveAll is every global memory the user has.
+func purgeEngramDir(manifestPath, home string) (string, error) {
+	absRoot := filepath.Clean(absProjectRoot(manifestPath, home))
+	engramDir := filepath.Join(absRoot, ".engram")
+
+	if home != "" && engramDir == filepath.Join(filepath.Clean(home), ".engram") {
+		return "", fmt.Errorf("purge %s: refusing to delete the global engram database", engramDir)
+	}
+	if absRoot == "" || absRoot == string(os.PathSeparator) || (home != "" && absRoot == filepath.Clean(home)) {
+		return "", fmt.Errorf("purge: refusing to delete .engram at %q", absRoot)
+	}
+	if _, err := os.Stat(engramDir); os.IsNotExist(err) {
+		return "", nil // nothing on disk to purge
+	}
+	if err := os.RemoveAll(engramDir); err != nil {
+		return "", fmt.Errorf("purge %s: %w", engramDir, err)
+	}
+	return engramDir, nil
 }
 
 // registerSelf records root in the global manifest, best-effort. It opens a
