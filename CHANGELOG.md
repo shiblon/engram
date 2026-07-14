@@ -20,6 +20,9 @@ in-repo companion.
 - mem: `tldr <key> <summary>` sets or clears a memory's one-line inject summary
   without rewriting its content, so preferences show a curated summary at session
   start instead of falling back to their first line.
+- packaging: releases now include Debian `.deb` packages (linux amd64/arm64) for
+  `dpkg -i` install, alongside the existing tarballs and Homebrew tap. No apt
+  repository yet -- these are download-and-install artifacts.
 
 ## [0.11.0] - 2026-07-11
 ### Added

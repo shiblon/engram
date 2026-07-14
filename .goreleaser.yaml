@@ -31,6 +31,20 @@ brews:
     test: |-
       system bin/"engram", "--version"
 
+# Debian packages attached to each release for dpkg install. No apt repo yet --
+# these are download-and-install artifacts, not an auto-updating source. nFPM is
+# bundled in goreleaser, so this adds no CI tooling. Linux-only by nature; the
+# darwin builds are skipped automatically.
+nfpms:
+  - package_name: engram
+    homepage: "https://github.com/shiblon/engram"
+    description: "Auto-memory system for AI coding agents"
+    maintainer: "Chris Monson <chris@abundantsecurity.co>"
+    license: "Apache-2.0"
+    section: utils
+    formats:
+      - deb
+
 changelog:
   use: git
   sort: asc
