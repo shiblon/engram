@@ -17,6 +17,9 @@ in-repo companion.
   path-first so naming a path evicts exactly one working copy and leaves sibling
   clones alone; `--purge` also deletes the stray `.engram` directory on disk
   (never the global `~/.engram`).
+- mem: `tldr <key> <summary>` sets or clears a memory's one-line inject summary
+  without rewriting its content, so preferences show a curated summary at session
+  start instead of falling back to their first line.
 
 ## [0.11.0] - 2026-07-11
 ### Added
