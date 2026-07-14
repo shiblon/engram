@@ -1402,3 +1402,59 @@ func TestInjectContextTextTldrAndProjectPreferences(t *testing.T) {
 		}
 	})
 }
+
+func TestSetMemoryTldr(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+
+	if err := WriteMemory(ctx, db, Memory{Tier: TierPreference, Key: "k", Content: "line one\nline two", TS: 100}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Before: no tldr -> InjectSummary falls back to the first line of content.
+	m, err := ReadMemory(ctx, db, TierPreference, "k")
+	if err != nil || m == nil {
+		t.Fatalf("read: %v", err)
+	}
+	if got := m.InjectSummary(); got != "line one" {
+		t.Fatalf("pre-tldr summary = %q, want first line", got)
+	}
+
+	// Set a tldr: content and ts untouched, summary switches to the tldr.
+	ok, err := SetMemoryTldr(ctx, db, TierPreference, "k", "the gist")
+	if err != nil || !ok {
+		t.Fatalf("set tldr: ok=%v err=%v", ok, err)
+	}
+	m, _ = ReadMemory(ctx, db, TierPreference, "k")
+	if m.Tldr != "the gist" {
+		t.Errorf("tldr = %q, want %q", m.Tldr, "the gist")
+	}
+	if m.Content != "line one\nline two" {
+		t.Errorf("content changed: %q", m.Content)
+	}
+	if m.TS != 100 {
+		t.Errorf("ts = %d, want 100 (a tldr edit must not touch the timestamp)", m.TS)
+	}
+	if got := m.InjectSummary(); got != "the gist" {
+		t.Errorf("summary = %q, want the tldr", got)
+	}
+
+	// Clearing falls back to the first line again.
+	if ok, err := SetMemoryTldr(ctx, db, TierPreference, "k", ""); err != nil || !ok {
+		t.Fatalf("clear tldr: ok=%v err=%v", ok, err)
+	}
+	m, _ = ReadMemory(ctx, db, TierPreference, "k")
+	if m.Tldr != "" {
+		t.Errorf("tldr not cleared: %q", m.Tldr)
+	}
+
+	// A missing key reports ok=false with no error (never creates a row).
+	if ok, err := SetMemoryTldr(ctx, db, TierPreference, "nope", "x"); err != nil || ok {
+		t.Errorf("missing key: ok=%v err=%v, want false/nil", ok, err)
+	}
+
+	// An over-length tldr is rejected by validation.
+	if _, err := SetMemoryTldr(ctx, db, TierPreference, "k", strings.Repeat("x", MaxTldrLen+1)); err == nil {
+		t.Error("expected validation error for over-length tldr")
+	}
+}

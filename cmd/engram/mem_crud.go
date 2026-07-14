@@ -262,6 +262,72 @@ var memDeleteCmd = &cobra.Command{
 	},
 }
 
+var memTldrCmd = &cobra.Command{
+	Use:   "tldr <key> <summary>",
+	Short: "Set the one-line inject summary of an existing memory (content untouched)",
+	Long: `Set or replace a memory's tldr -- the one-line summary inject surfaces in
+place of its full content -- without rewriting the content. This is the safe way
+to curate what a preference (or any memory) shows at session start; plain 'write'
+would require re-supplying the entire content body.
+
+Pass an empty summary ("") to clear the tldr and fall back to the first line of
+content. Omit --tier to resolve the key automatically when it is unambiguous.`,
+	Args: cobra.MinimumNArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		ctx := context.Background()
+		h, err := openMemDB(ctx)
+		if err != nil {
+			return err
+		}
+		defer h.DB.Close()
+
+		tldr := strings.TrimSpace(strings.Join(args[1:], " "))
+		tier := engram.Tier(memTier)
+		key := args[0]
+		if !cmd.Flag("tier").Changed {
+			tiers, err := memViewTiers(cmd)
+			if err != nil {
+				return err
+			}
+			matches, err := engram.ListMemoriesForView(ctx, h.DB, tiers, memAgent, args[0])
+			if err != nil {
+				return err
+			}
+			if len(matches) == 0 {
+				return fmt.Errorf("not found: %s", args[0])
+			}
+			if len(matches) > 1 {
+				fmt.Printf("ambiguous: %q found in multiple tiers, specify --tier:\n", args[0])
+				for _, m := range matches {
+					fmt.Printf("  %s\n", engram.MemoryLabel(m))
+				}
+				return fmt.Errorf("ambiguous key")
+			}
+			tier = matches[0].Tier
+			key = matches[0].Key
+		} else {
+			key, err = memStoredKey(args[0], tier)
+			if err != nil {
+				return err
+			}
+		}
+
+		ok, err := engram.SetMemoryTldr(ctx, h.DB, tier, key, tldr)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("not found: %s/%s", tier, args[0])
+		}
+		if tldr == "" {
+			fmt.Printf("cleared tldr: %s/%s\n", tier, args[0])
+		} else {
+			fmt.Printf("set tldr: %s/%s\n", tier, args[0])
+		}
+		return nil
+	},
+}
+
 var (
 	moveFrom string
 	moveTo   string
@@ -426,5 +492,5 @@ func init() {
 	memMoveCmd.Flags().StringVar(&moveTo, "to", "", "destination tier (required)")
 	memMoveCmd.Flags().StringVar(&moveToDB, "to-db", "", `destination database: "global" or "project" (default: same as source)`)
 
-	memCmd.AddCommand(memWriteCmd, memReadCmd, memListCmd, memDeleteCmd, memMoveCmd, memPopCmd)
+	memCmd.AddCommand(memWriteCmd, memReadCmd, memListCmd, memDeleteCmd, memMoveCmd, memPopCmd, memTldrCmd)
 }

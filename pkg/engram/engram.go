@@ -625,6 +625,29 @@ func WriteMemory(ctx context.Context, db *sql.DB, m Memory) error {
 	return nil
 }
 
+// SetMemoryTldr updates only the tldr of an existing memory, leaving its content
+// and timestamp untouched. It is the surgical alternative to WriteMemory for
+// curating summaries: WriteMemory is an upsert that demands the full content
+// back (and silently creates a row on a typo'd key), whereas this never creates
+// a row and reports whether the key matched. Timestamp is deliberately left
+// alone -- a tldr edit is metadata, not a touch, so it must not reorder the
+// memory in inject.
+//
+// The change needs no standing-file resync: the standing files render full
+// content, not the tldr, and inject reads the tldr live from the DB.
+func SetMemoryTldr(ctx context.Context, db *sql.DB, tier Tier, key, tldr string) (bool, error) {
+	if err := validateTldr(tldr); err != nil {
+		return false, fmt.Errorf("set tldr: %w", err)
+	}
+	res, err := db.ExecContext(ctx,
+		`UPDATE memories SET tldr = ? WHERE tier = ? AND key = ?`, tldr, tier, key)
+	if err != nil {
+		return false, fmt.Errorf("set tldr: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 // queryMemories is the shared implementation for ReadMemory, ReadMemoryTop, ListMemories, and FindMemoryByKey.
 // An empty tier matches all tiers.
 func queryMemories(ctx context.Context, db *sql.DB, tier Tier, key string, limit int) ([]Memory, error) {
