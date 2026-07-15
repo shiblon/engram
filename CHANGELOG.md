@@ -11,9 +11,14 @@ in-repo companion.
 
 ## [Unreleased]
 
+### Added
+- experiments: `engram experiments` reports each trial's hypothesis, unstable
+  surfaces, and event-based promotion/removal conditions; tests keep registered
+  experiments aligned with visibly labeled CLI commands.
+
 ## [0.11.3] - 2026-07-15
 ### Added
-- skill (experimental): `discover` inventories conventional repository
+- skill (experimental: `skill-discovery`): `discover` inventories conventional repository
   automation without executing it, and inject prompts when the current script
   snapshot has not been cataloged. `--acknowledge` records reviewed snapshots
   as project bookkeeping rather than memory.

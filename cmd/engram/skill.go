@@ -77,6 +77,7 @@ bookkeeping, not long-term memory.`,
 
 func init() {
 	skillDiscoverCmd.Flags().BoolVar(&skillDiscoverAcknowledge, "acknowledge", false, "mark the current candidate versions as reviewed")
+	markExperimental(skillDiscoverCmd, "skill-discovery")
 	skillCmd.AddCommand(skillDiscoverCmd)
 	rootCmd.AddCommand(skillCmd)
 }

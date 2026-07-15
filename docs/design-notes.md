@@ -49,6 +49,28 @@ Who the agent is does not change per repo, so identity lives only in the global
 database. Preferences are behavioral and can be global (hold everywhere) or
 project-scoped (this repo or team). Inject merges both databases, global first.
 
+## Experiments need exit conditions, not permanent asterisks
+
+An experimental feature may be introduced and refined in patch releases because
+its user-facing contract is explicitly not stable yet. The CLI help and changelog
+must name its experiment key, and `engram experiments` must report:
+
+- the hypothesis being tested;
+- which surfaces may change;
+- the event that promotes it to stable; and
+- the event that removes it.
+
+Promotion happens in a minor release. It removes the experiment label and registry
+entry, making the feature part of the supported surface. An experiment can instead
+be deprecated until its removal condition is met. Minor-release preparation must
+review every registry entry and choose deliberately among promotion, continued
+trial, deprecation, and removal.
+
+The registry and Cobra command annotations are checked by tests. This makes an
+experimental label incomplete unless it points to explicit exit conditions, and
+makes a stale registry entry fail once its command label disappears. As with
+memory lifetime, the conditions name observable events rather than dates.
+
 ## Migrations replay from version 0, so every step must be idempotent
 
 A fresh database applies `schema.sql` and then replays *every* migration from
