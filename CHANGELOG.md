@@ -11,6 +11,13 @@ in-repo companion.
 
 ## [Unreleased]
 
+## [0.11.3] - 2026-07-15
+### Added
+- skill (experimental): `discover` inventories conventional repository
+  automation without executing it, and inject prompts when the current script
+  snapshot has not been cataloged. `--acknowledge` records reviewed snapshots
+  as project bookkeeping rather than memory.
+
 ## [0.11.2] - 2026-07-14
 ### Added
 - mem: `tldr <key>` with no summary now prints the current tldr (or the first-line
@@ -245,7 +252,8 @@ _Internal changes only._
 - first take
 - Initial commit
 
-[Unreleased]: https://github.com/shiblon/engram/compare/v0.11.2...HEAD
+[Unreleased]: https://github.com/shiblon/engram/compare/v0.11.3...HEAD
+[0.11.3]: https://github.com/shiblon/engram/compare/v0.11.2...v0.11.3
 [0.11.2]: https://github.com/shiblon/engram/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/shiblon/engram/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/shiblon/engram/compare/v0.10.1...v0.11.0
