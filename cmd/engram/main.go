@@ -211,6 +211,19 @@ func runInject(cmd *cobra.Command, _ []string) error {
 				if _, err := engram.Prune(ctx, db, injectKeep); err != nil {
 					fmt.Fprintf(os.Stderr, "engram prune: %v\n", err)
 				}
+				if candidates, digest, err := engram.DiscoverAutomation(root); err != nil {
+					log.Printf("engram: discover project automation: %v", err)
+				} else if len(candidates) > 0 {
+					reviewed, err := engram.AutomationCatalogReviewed(ctx, db, digest)
+					if err != nil {
+						log.Printf("engram: read automation catalog state: %v", err)
+					} else if !reviewed {
+						projectResult.AutomationReview = &engram.AutomationReview{
+							Candidates: candidates,
+							Digest:     digest,
+						}
+					}
+				}
 				db.Close()
 			}
 		}

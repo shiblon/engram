@@ -72,3 +72,14 @@ CREATE TABLE IF NOT EXISTS projects (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_identity_path ON projects (identity, path);
+
+-- automation_catalog_state is project-local bookkeeping for the repository
+-- automation discovery prompt. The digest changes when a conventional script
+-- or task-runner surface changes, causing inject to request another review.
+-- It is deliberately not a memory: acknowledging a scan has no semantic value
+-- to the agent once the decision has been made.
+CREATE TABLE IF NOT EXISTS automation_catalog_state (
+    id          INTEGER PRIMARY KEY CHECK (id = 1),
+    digest      TEXT    NOT NULL,
+    reviewed_at INTEGER NOT NULL
+);

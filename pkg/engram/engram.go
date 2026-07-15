@@ -493,6 +493,10 @@ type InjectResult struct {
 	// Populated by the caller from the global DB after Inject. The renderer
 	// surfaces these so the agent can decide whether to run --apply.
 	PendingRestores []PendingRestore
+	// AutomationReview is project-local, filesystem-derived maintenance context.
+	// It is populated only when conventional automation entry points do not match
+	// the last snapshot the user acknowledged as cataloged.
+	AutomationReview *AutomationReview
 }
 
 // Inject returns the recently active files from the last nSessions sessions,
@@ -1037,6 +1041,27 @@ func InjectContextText(global, project InjectResult, nSessions int) string {
 			lines[i] = line
 		}
 		parts = append(parts, "## Staged restores (pending project snapshots -- agent: check for identity or near-miss match with current repo, prompt user to apply or discard)\n"+strings.Join(lines, "\n"))
+	}
+
+	if review := project.AutomationReview; review != nil && len(review.Candidates) > 0 {
+		const shownLimit = 8
+		limit := len(review.Candidates)
+		if limit > shownLimit {
+			limit = shownLimit
+		}
+		lines := make([]string, 0, limit+2)
+		lines = append(lines, fmt.Sprintf(
+			"%d conventional automation entry points have not been cataloged at their current versions.",
+			len(review.Candidates)))
+		for _, candidate := range review.Candidates[:limit] {
+			lines = append(lines, fmt.Sprintf("- %s (%s)", candidate.Path, candidate.Kind))
+		}
+		if omitted := len(review.Candidates) - limit; omitted > 0 {
+			lines = append(lines, fmt.Sprintf("- ... and %d more", omitted))
+		}
+		lines = append(lines,
+			"Ask the user whether to run `engram skill discover`. Classify candidates; do not execute them merely to inspect them.")
+		parts = append(parts, "## Automation catalog review\n"+strings.Join(lines, "\n"))
 	}
 
 	longTerm := mergeMemories(global.LongTerm, project.LongTerm)

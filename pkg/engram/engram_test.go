@@ -326,6 +326,28 @@ func TestInjectContextText(t *testing.T) {
 		}
 	})
 
+	t.Run("automation_review_is_explicitly_a_user_prompt", func(t *testing.T) {
+		project := InjectResult{AutomationReview: &AutomationReview{
+			Candidates: []AutomationCandidate{
+				{Path: "Makefile", Kind: "task runner"},
+				{Path: "scripts/check.sh", Kind: "script"},
+			},
+			Digest: "abc",
+		}}
+		got := InjectContextText(InjectResult{}, project, 5)
+		for _, want := range []string{
+			"## Automation catalog review",
+			"2 conventional automation entry points",
+			"scripts/check.sh (script)",
+			"Ask the user whether to run `engram skill discover`",
+			"do not execute them merely to inspect them",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("automation review missing %q in %q", want, got)
+			}
+		}
+	})
+
 	t.Run("global_long_term_surfaced", func(t *testing.T) {
 		global := InjectResult{LongTerm: []Memory{{Key: "infra", Content: "global-long-fact"}}}
 		got := InjectContextText(global, InjectResult{}, 5)

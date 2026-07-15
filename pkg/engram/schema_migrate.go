@@ -8,7 +8,7 @@ import (
 
 // schemaVersion is the current schema version. Bump this and add an entry to
 // schemaMigrations whenever the schema changes.
-const schemaVersion = 4
+const schemaVersion = 5
 
 // schemaMigrations maps from-version to the SQL that advances to from+1.
 // Version 0 means "newly created or pre-versioning DB with the baseline schema
@@ -101,6 +101,14 @@ var schemaMigrations = []string{
 	     VALUES (new.id, new.key, new.content);
 	 END;
 	 INSERT INTO memories_fts(memories_fts) VALUES ('rebuild');`,
+	// 4 -> 5: remember the exact repository-automation snapshot most recently
+	// reviewed. Fresh databases already have the table from schema.sql; IF NOT
+	// EXISTS keeps the replay idempotent.
+	`CREATE TABLE IF NOT EXISTS automation_catalog_state (
+	     id          INTEGER PRIMARY KEY CHECK (id = 1),
+	     digest      TEXT    NOT NULL,
+	     reviewed_at INTEGER NOT NULL
+	 );`,
 }
 
 // applyMigrations reads PRAGMA user_version, runs any pending migration steps
