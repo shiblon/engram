@@ -11,10 +11,28 @@ in-repo companion.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-07-16
+
 ### Added
+- skill discovery: classifications are now persisted per candidate with their
+  digest, optional rationale, skill grouping, and direct-tool invocation.
+  `skill discover` reports only new, changed, or removed entries by default;
+  `skill classify` supports individual and batch JSON verdicts. Changed entries
+  retain their prior judgment without invalidating unrelated classifications.
+- skills: trigger-bearing long-term memories now provide first-class workflow
+  CRUD/search, a scoped session-start trigger index, and first-use capture
+  guidance that distinguishes skills from callable tools. `skill adopt`
+  classifies an existing long-term memory in place without rewriting its body.
+- bootstrap: markdown-init platforms now carry a guidance version marker and
+  the same skill retrieval/capture protocol as the full Claude guidance.
 - experiments: `engram experiments` reports each trial's hypothesis, unstable
   surfaces, and event-based promotion/removal conditions; tests keep registered
   experiments aligned with visibly labeled CLI commands.
+
+### Changed
+- skill discovery: promoted to stable after trigger-bearing skills and
+  per-candidate catalog classifications proved persistable, injectable, and
+  round-trip safe without executing discovered scripts.
 
 ## [0.11.3] - 2026-07-15
 ### Added
