@@ -85,7 +85,11 @@ type Memory struct {
 	// Tldr is the one-line summary inject surfaces in place of Content for every
 	// tier but invariants. Empty is valid; InjectSummary falls back to the first
 	// line of Content. Capped at MaxTldrLen runes by WriteMemory.
-	Tldr      string
+	Tldr string
+	// Trigger is the compact task condition used to retrieve a skill. A
+	// long-term memory with a nonempty Trigger is a skill; Content remains its
+	// full instructions. Capped at MaxTriggerLen runes by WriteMemory.
+	Trigger   string
 	SessionID string // non-empty for short-tier auto-expiry
 }
 
@@ -94,6 +98,9 @@ type Memory struct {
 // with run-on compounds, whereas characters force genuine compression. Inject
 // leans on this bound to keep session-start context small and predictable.
 const MaxTldrLen = 200
+
+// MaxTriggerLen keeps the always-loaded skill index compact and predictable.
+const MaxTriggerLen = 200
 
 // InjectSummary returns the one-line form of a memory for session-start context:
 // its tldr when set, else the first line of its content, truncated to MaxTldrLen
@@ -112,6 +119,13 @@ func (m Memory) InjectSummary() string {
 func validateTldr(tldr string) error {
 	if n := utf8.RuneCountInString(tldr); n > MaxTldrLen {
 		return fmt.Errorf("tldr too long: %d characters (max %d)", n, MaxTldrLen)
+	}
+	return nil
+}
+
+func validateTrigger(trigger string) error {
+	if n := utf8.RuneCountInString(trigger); n > MaxTriggerLen {
+		return fmt.Errorf("trigger too long: %d characters (max %d)", n, MaxTriggerLen)
 	}
 	return nil
 }
@@ -158,6 +172,7 @@ const (
 	// index. These are the tunable policy knobs. The areas budget is small on
 	// purpose -- it rarely bites, catching only runaway spread-thin repos.
 	InjectLongBudgetChars  = 10000
+	InjectSkillBudgetChars = 5000
 	InjectShortBudgetChars = 3000
 	InjectAreasBudgetChars = 2000
 )
@@ -486,16 +501,21 @@ type InjectResult struct {
 	Cold             []Memory // keys+content injected as index only; content not expanded
 	// From the filesystem (the global agenttools dir), not the DB. Populated by
 	// the caller after Inject, since scanning is I/O outside the memory
-	// database. Only ever set on the global InjectResult -- engram no longer
-	// owns project-scoped tools.
+	// database. Only ever set on the global InjectResult; repository-scoped tools
+	// come from explicit catalog classifications below.
 	AgentTools []ToolDesc
+	// ProjectTools are repository-scoped direct tools backed by durable
+	// automation catalog classifications.
+	ProjectTools []ToolDesc
+	// SkillCandidates are cataloged workflow members grouped by SkillKey. They
+	// are offered for skill authoring but are not themselves executable skills.
+	SkillCandidates []AutomationCatalogEntry
 	// PendingRestores is the list of staged project snapshots awaiting placement.
 	// Populated by the caller from the global DB after Inject. The renderer
 	// surfaces these so the agent can decide whether to run --apply.
 	PendingRestores []PendingRestore
 	// AutomationReview is project-local, filesystem-derived maintenance context.
-	// It is populated only when conventional automation entry points do not match
-	// the last snapshot the user acknowledged as cataloged.
+	// It contains only new, changed, or explicitly removed catalog entries.
 	AutomationReview *AutomationReview
 }
 
@@ -611,18 +631,25 @@ func WriteMemory(ctx context.Context, db *sql.DB, m Memory) error {
 	if err := validateTldr(m.Tldr); err != nil {
 		return fmt.Errorf("write memory: %w", err)
 	}
+	if err := validateTrigger(m.Trigger); err != nil {
+		return fmt.Errorf("write memory: %w", err)
+	}
+	if m.Trigger != "" && m.Tier != TierLong {
+		return fmt.Errorf("write memory: trigger requires long tier")
+	}
 	if m.TS == 0 {
 		m.TS = time.Now().UnixMilli()
 	}
 	_, err := db.ExecContext(ctx, `
-		INSERT INTO memories (ts, tier, key, content, tldr, session_id)
-		VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO memories (ts, tier, key, content, tldr, trigger, session_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(tier, key) DO UPDATE SET
 			ts = excluded.ts,
 			content = excluded.content,
 			tldr = excluded.tldr,
+			trigger = excluded.trigger,
 			session_id = excluded.session_id
-	`, m.TS, m.Tier, m.Key, m.Content, m.Tldr, m.SessionID)
+	`, m.TS, m.Tier, m.Key, m.Content, m.Tldr, m.Trigger, m.SessionID)
 	if err != nil {
 		return fmt.Errorf("write memory: %w", err)
 	}
@@ -655,7 +682,7 @@ func SetMemoryTldr(ctx context.Context, db *sql.DB, tier Tier, key, tldr string)
 // queryMemories is the shared implementation for ReadMemory, ReadMemoryTop, ListMemories, and FindMemoryByKey.
 // An empty tier matches all tiers.
 func queryMemories(ctx context.Context, db *sql.DB, tier Tier, key string, limit int) ([]Memory, error) {
-	q := `SELECT id, ts, tier, key, content, tldr, COALESCE(session_id, '') FROM memories WHERE true`
+	q := `SELECT id, ts, tier, key, content, tldr, trigger, COALESCE(session_id, '') FROM memories WHERE true`
 	var args []any
 	if tier != "" {
 		q += ` AND tier = ?`
@@ -678,14 +705,14 @@ func queryMemories(ctx context.Context, db *sql.DB, tier Tier, key string, limit
 }
 
 // scanMemories collects every row of the canonical memories projection
-// (id, ts, tier, key, content, tldr, session_id) and closes the rows. Shared by
+// (id, ts, tier, key, content, tldr, trigger, session_id) and closes the rows. Shared by
 // queryMemories and SearchMemories, which return identically-shaped rows.
 func scanMemories(rows *sql.Rows) ([]Memory, error) {
 	defer rows.Close()
 	var out []Memory
 	for rows.Next() {
 		var m Memory
-		if err := rows.Scan(&m.ID, &m.TS, &m.Tier, &m.Key, &m.Content, &m.Tldr, &m.SessionID); err != nil {
+		if err := rows.Scan(&m.ID, &m.TS, &m.Tier, &m.Key, &m.Content, &m.Tldr, &m.Trigger, &m.SessionID); err != nil {
 			return nil, fmt.Errorf("scan memory row: %w", err)
 		}
 		out = append(out, m)
@@ -708,6 +735,27 @@ func ReadMemory(ctx context.Context, db *sql.DB, tier Tier, key string) (*Memory
 // ListMemories returns all memories for a tier, ordered by ts descending.
 func ListMemories(ctx context.Context, db *sql.DB, tier Tier) ([]Memory, error) {
 	return queryMemories(ctx, db, tier, "", 0)
+}
+
+// ListSkills returns long-term memories with a retrieval trigger. Skills share
+// memory storage deliberately: trigger is their task index, tldr their outcome,
+// and content their full instructions.
+func ListSkills(ctx context.Context, db *sql.DB) ([]Memory, error) {
+	memories, err := ListMemories(ctx, db, TierLong)
+	if err != nil {
+		return nil, err
+	}
+	return skillMemories(memories), nil
+}
+
+func skillMemories(memories []Memory) []Memory {
+	out := make([]Memory, 0, len(memories))
+	for _, m := range memories {
+		if m.Trigger != "" {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // DeleteMemory removes the memory with the given tier and key, returning an
@@ -799,7 +847,7 @@ func ReadMemoryTop(ctx context.Context, db *sql.DB, tier Tier) (*Memory, error) 
 // SearchMemories performs a full-text search over memories. If tier is
 // non-empty, results are filtered to that tier.
 func SearchMemories(ctx context.Context, db *sql.DB, query string, tier Tier) ([]Memory, error) {
-	q := `SELECT m.id, m.ts, m.tier, m.key, m.content, m.tldr, COALESCE(m.session_id, '')
+	q := `SELECT m.id, m.ts, m.tier, m.key, m.content, m.tldr, m.trigger, COALESCE(m.session_id, '')
 		FROM memories_fts f
 		JOIN memories m ON m.id = f.rowid
 		WHERE memories_fts MATCH ?`
@@ -814,6 +862,16 @@ func SearchMemories(ctx context.Context, db *sql.DB, query string, tier Tier) ([
 		return nil, fmt.Errorf("search memories: %w", err)
 	}
 	return scanMemories(rows)
+}
+
+// SearchSkills searches every indexed skill field, then excludes ordinary
+// long-term memory. The FTS index covers key, content, tldr, and trigger.
+func SearchSkills(ctx context.Context, db *sql.DB, query string) ([]Memory, error) {
+	memories, err := SearchMemories(ctx, db, query, TierLong)
+	if err != nil {
+		return nil, err
+	}
+	return skillMemories(memories), nil
 }
 
 // injectOutput is the JSON structure returned by the SessionStart hook.
@@ -1030,6 +1088,28 @@ func InjectContextText(global, project InjectResult, nSessions int) string {
 		}
 		parts = append(parts, "## Agent tools (invoke with the command shown; details in the script header)\n"+strings.Join(lines, "\n"))
 	}
+	if tools := project.ProjectTools; len(tools) > 0 {
+		lines := make([]string, len(tools))
+		for i, t := range tools {
+			lines[i] = fmt.Sprintf("- %s: %s", t.Command(), t.Desc)
+		}
+		parts = append(parts, "## Project tools (repository-scoped; invoke with the command shown)\n"+strings.Join(lines, "\n"))
+	}
+	if members := project.SkillCandidates; len(members) > 0 {
+		lines := make([]string, len(members))
+		for i, member := range members {
+			group := member.SkillKey
+			if group == "" {
+				group = "unclustered"
+			}
+			line := fmt.Sprintf("- **%s**: %s", group, member.Path)
+			if member.Rationale != "" {
+				line += " — " + member.Rationale
+			}
+			lines[i] = line
+		}
+		parts = append(parts, "## Skill candidates (classified workflow members; offer to create or update the grouped skill)\n"+strings.Join(lines, "\n"))
+	}
 
 	if len(global.PendingRestores) > 0 {
 		lines := make([]string, len(global.PendingRestores))
@@ -1043,38 +1123,77 @@ func InjectContextText(global, project InjectResult, nSessions int) string {
 		parts = append(parts, "## Staged restores (pending project snapshots -- agent: check for identity or near-miss match with current repo, prompt user to apply or discard)\n"+strings.Join(lines, "\n"))
 	}
 
-	if review := project.AutomationReview; review != nil && len(review.Candidates) > 0 {
+	if review := project.AutomationReview; review != nil && len(review.Items) > 0 {
 		const shownLimit = 8
-		limit := len(review.Candidates)
+		limit := len(review.Items)
 		if limit > shownLimit {
 			limit = shownLimit
 		}
 		lines := make([]string, 0, limit+2)
 		lines = append(lines, fmt.Sprintf(
-			"%d conventional automation entry points have not been cataloged at their current versions.",
-			len(review.Candidates)))
-		for _, candidate := range review.Candidates[:limit] {
-			lines = append(lines, fmt.Sprintf("- %s (%s)", candidate.Path, candidate.Kind))
+			"%d automation catalog entries require review.", len(review.Items)))
+		for _, item := range review.Items[:limit] {
+			line := fmt.Sprintf("- %s: %s (%s)", item.State, item.Candidate.Path, item.Candidate.Kind)
+			if item.Previous != nil {
+				line += fmt.Sprintf("; previous: %s", item.Previous.Classification)
+				if item.Previous.Rationale != "" {
+					line += " — " + item.Previous.Rationale
+				}
+			}
+			lines = append(lines, line)
 		}
-		if omitted := len(review.Candidates) - limit; omitted > 0 {
+		if omitted := len(review.Items) - limit; omitted > 0 {
 			lines = append(lines, fmt.Sprintf("- ... and %d more", omitted))
 		}
 		lines = append(lines,
-			"Ask the user whether to run `engram skill discover`. Classify candidates; do not execute them merely to inspect them.")
+			"Run `engram skill discover` to review only these entries. Preserve prior judgments when still valid; do not execute candidates merely to inspect them.")
 		parts = append(parts, "## Automation catalog review\n"+strings.Join(lines, "\n"))
 	}
 
-	longTerm := mergeMemories(global.LongTerm, project.LongTerm)
-	shownLong, totalLong := 0, len(longTerm)
+	var skillLines []string
+	for _, scoped := range []struct {
+		memories []Memory
+		scope    string
+		readFlag string
+	}{
+		{global.LongTerm, "global", "read -g "},
+		{project.LongTerm, "project", "read "},
+	} {
+		for _, m := range scoped.memories {
+			if m.Trigger == "" {
+				continue
+			}
+			skillLines = append(skillLines, fmt.Sprintf(
+				"- **%s** (%s): %s — %s [read: `engram skill %s%s`]",
+				m.Key, scoped.scope, m.Trigger, m.InjectSummary(), scoped.readFlag, m.Key))
+		}
+	}
+	shownSkills := 0
+	if len(skillLines) > 0 {
+		kept, shown := budgetLines(skillLines, InjectSkillBudgetChars)
+		shownSkills = shown
+		remedy := fmt.Sprintf("%d over budget, prune with `engram skill list`", len(skillLines)-shown)
+		parts = append(parts, "## Skills (trigger index — retrieve full instructions when the task matches)"+
+			budgetNote(shown, len(skillLines), remedy)+"\n"+strings.Join(kept, "\n"))
+	}
+
+	allLongTerm := mergeMemories(global.LongTerm, project.LongTerm)
+	longTerm := make([]Memory, 0, len(allLongTerm))
+	for _, m := range allLongTerm {
+		if m.Trigger == "" {
+			longTerm = append(longTerm, m)
+		}
+	}
+	shownLong, totalLong := shownSkills, len(allLongTerm)
 	if len(longTerm) > 0 {
 		lines := make([]string, len(longTerm))
 		for i, m := range longTerm {
 			lines[i] = fmt.Sprintf("- **%s**: %s", m.Key, m.InjectSummary())
 		}
 		kept, shown := budgetLines(lines, InjectLongBudgetChars)
-		shownLong = shown
-		remedy := fmt.Sprintf("%d over budget, prune with `engram mem list`", totalLong-shown)
-		parts = append(parts, "## Long-term memory"+budgetNote(shown, totalLong, remedy)+"\n"+strings.Join(kept, "\n"))
+		shownLong += shown
+		remedy := fmt.Sprintf("%d over budget, prune with `engram mem list`", len(longTerm)-shown)
+		parts = append(parts, "## Long-term memory"+budgetNote(shown, len(longTerm), remedy)+"\n"+strings.Join(kept, "\n"))
 	}
 
 	shortTerm := mergeMemories(global.ShortTerm, project.ShortTerm)
@@ -1213,6 +1332,9 @@ func FormatMemoryMD(tier Tier, memories []Memory) string {
 		if m.Tldr != "" {
 			fmt.Fprintf(&b, "<!-- tldr: %s -->\n", m.Tldr)
 		}
+		if m.Trigger != "" {
+			fmt.Fprintf(&b, "<!-- trigger: %s -->\n", m.Trigger)
+		}
 		fmt.Fprintf(&b, "%s\n\n", m.Content)
 	}
 	return b.String()
@@ -1222,7 +1344,7 @@ func FormatMemoryMD(tier Tier, memories []Memory) string {
 // Memory entries for the given tier.
 func ParseMemoryMD(tier Tier, data string) ([]Memory, error) {
 	var out []Memory
-	var key, tldr string
+	var key, tldr, trigger string
 	var contentLines []string
 	now := time.Now().UnixMilli()
 
@@ -1236,9 +1358,11 @@ func ParseMemoryMD(tier Tier, data string) ([]Memory, error) {
 			Key:     key,
 			Content: strings.TrimSpace(strings.Join(contentLines, "\n")),
 			Tldr:    tldr,
+			Trigger: trigger,
 		})
 		key = ""
 		tldr = ""
+		trigger = ""
 		contentLines = nil
 	}
 
@@ -1256,6 +1380,9 @@ func ParseMemoryMD(tier Tier, data string) ([]Memory, error) {
 			strings.HasPrefix(trimmed, "<!-- tldr:") && strings.HasSuffix(trimmed, "-->"):
 			// The tldr comment sits between an entry's heading and its content.
 			tldr = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(trimmed, "<!-- tldr:"), "-->"))
+		case key != "" && len(contentLines) == 0 &&
+			strings.HasPrefix(trimmed, "<!-- trigger:") && strings.HasSuffix(trimmed, "-->"):
+			trigger = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(trimmed, "<!-- trigger:"), "-->"))
 		case key != "":
 			contentLines = append(contentLines, line)
 		}

@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS memories (
     key        TEXT    NOT NULL,
     content    TEXT    NOT NULL DEFAULT '',
     tldr       TEXT    NOT NULL DEFAULT '',
+    trigger    TEXT    NOT NULL DEFAULT '',
     session_id TEXT
 );
 
@@ -30,25 +31,27 @@ CREATE INDEX IF NOT EXISTS idx_memories_tier_ts ON memories (tier, ts DESC);
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
     key,
     content,
+    tldr,
+    trigger,
     content='memories',
     content_rowid='id'
 );
 
 CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
-    INSERT INTO memories_fts(rowid, key, content)
-    VALUES (new.id, new.key, new.content);
+    INSERT INTO memories_fts(rowid, key, content, tldr, trigger)
+    VALUES (new.id, new.key, new.content, new.tldr, new.trigger);
 END;
 
 CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
-    INSERT INTO memories_fts(memories_fts, rowid, key, content)
-    VALUES ('delete', old.id, old.key, old.content);
+    INSERT INTO memories_fts(memories_fts, rowid, key, content, tldr, trigger)
+    VALUES ('delete', old.id, old.key, old.content, old.tldr, old.trigger);
 END;
 
 CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
-    INSERT INTO memories_fts(memories_fts, rowid, key, content)
-    VALUES ('delete', old.id, old.key, old.content);
-    INSERT INTO memories_fts(rowid, key, content)
-    VALUES (new.id, new.key, new.content);
+    INSERT INTO memories_fts(memories_fts, rowid, key, content, tldr, trigger)
+    VALUES ('delete', old.id, old.key, old.content, old.tldr, old.trigger);
+    INSERT INTO memories_fts(rowid, key, content, tldr, trigger)
+    VALUES (new.id, new.key, new.content, new.tldr, new.trigger);
 END;
 
 -- projects is the dump/restore manifest, populated only in the global DB. It is
@@ -73,13 +76,17 @@ CREATE TABLE IF NOT EXISTS projects (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_identity_path ON projects (identity, path);
 
--- automation_catalog_state is project-local bookkeeping for the repository
--- automation discovery prompt. The digest changes when a conventional script
--- or task-runner surface changes, causing inject to request another review.
--- It is deliberately not a memory: acknowledging a scan has no semantic value
--- to the agent once the decision has been made.
-CREATE TABLE IF NOT EXISTS automation_catalog_state (
-    id          INTEGER PRIMARY KEY CHECK (id = 1),
-    digest      TEXT    NOT NULL,
+-- One durable classification per repository automation entry point. The
+-- content digest is per candidate rather than one aggregate snapshot, so a
+-- changed script retains its previous judgment and does not invalidate every
+-- unrelated classification in the repository.
+CREATE TABLE IF NOT EXISTS automation_catalog_entries (
+    path           TEXT PRIMARY KEY,
+    detected_kind  TEXT NOT NULL,
+    content_digest TEXT NOT NULL,
+    classification TEXT NOT NULL,
+    rationale      TEXT NOT NULL DEFAULT '',
+    skill_key      TEXT NOT NULL DEFAULT '',
+    invocation     TEXT NOT NULL DEFAULT '',
     reviewed_at INTEGER NOT NULL
 );

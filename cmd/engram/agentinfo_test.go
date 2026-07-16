@@ -19,6 +19,21 @@ func TestRenderAgentInfoSubstitutesVersion(t *testing.T) {
 	}
 }
 
+func TestProtocolGuidanceCarriesVersionAndSkillMetaTrigger(t *testing.T) {
+	got := engramProtocolSection("codex")
+	for _, want := range []string{
+		"Guidance version: " + engramVersion(),
+		"CAPTURE ON FIRST USE",
+		"Explicit recurrence language makes this search mandatory",
+		"after removing",
+		"Ask before writing it globally",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("protocol guidance missing %q", want)
+		}
+	}
+}
+
 func TestGuidanceDropsContextLongMd(t *testing.T) {
 	got := renderAgentInfo()
 	for _, gone := range []string{

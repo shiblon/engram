@@ -30,17 +30,7 @@ type Experiment struct {
 	Commands         []string
 }
 
-var experimentRegistry = []Experiment{
-	{
-		Key:              "skill-discovery",
-		Status:           ExperimentExperimental,
-		Hypothesis:       "Surfacing unreviewed repository automation will help users and agents capture when and how to use it without turning every script into always-loaded memory.",
-		UnstableSurfaces: "Candidate-discovery heuristics, injected prompt wording, acknowledgment semantics, and the skill command shape may change in patch releases.",
-		PromoteWhen:      "Catalog classifications and trigger-bearing skills can be persisted, injected, and round-trip tested without executing discovered scripts.",
-		RemoveWhen:       "Catalog prompts repeatedly create noise without producing reusable entries, or a native skill-discovery workflow replaces this experiment.",
-		Commands:         []string{"engram skill discover"},
-	},
-}
+var experimentRegistry []Experiment
 
 // Experiments returns a copy of the registry in deterministic key order.
 func Experiments() []Experiment {

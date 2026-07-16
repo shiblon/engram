@@ -211,16 +211,29 @@ func runInject(cmd *cobra.Command, _ []string) error {
 				if _, err := engram.Prune(ctx, db, injectKeep); err != nil {
 					fmt.Fprintf(os.Stderr, "engram prune: %v\n", err)
 				}
-				if candidates, digest, err := engram.DiscoverAutomation(root); err != nil {
+				if candidates, err := engram.DiscoverAutomation(root); err != nil {
 					log.Printf("engram: discover project automation: %v", err)
-				} else if len(candidates) > 0 {
-					reviewed, err := engram.AutomationCatalogReviewed(ctx, db, digest)
+				} else {
+					review, err := engram.ReconcileAutomationCatalog(ctx, db, candidates, false)
 					if err != nil {
-						log.Printf("engram: read automation catalog state: %v", err)
-					} else if !reviewed {
-						projectResult.AutomationReview = &engram.AutomationReview{
-							Candidates: candidates,
-							Digest:     digest,
+						log.Printf("engram: reconcile automation catalog: %v", err)
+					} else if len(review.Items) > 0 {
+						projectResult.AutomationReview = &review
+					}
+					entries, err := engram.ListAutomationCatalog(ctx, db)
+					if err != nil {
+						log.Printf("engram: list automation catalog: %v", err)
+					} else {
+						entries = engram.ActiveAutomationCatalogEntries(entries, candidates)
+						var warnings []string
+						projectResult.ProjectTools, warnings = engram.ProjectToolsFromCatalog(root, entries)
+						for _, warning := range warnings {
+							fmt.Fprintf(os.Stderr, "engram project tools: %s\n", warning)
+						}
+						for _, entry := range entries {
+							if entry.Classification == engram.AutomationSkillMember {
+								projectResult.SkillCandidates = append(projectResult.SkillCandidates, entry)
+							}
 						}
 					}
 				}

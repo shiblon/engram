@@ -28,7 +28,12 @@ var experimentsCmd = &cobra.Command{
 	Short: "List experimental features and their exit conditions",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		for i, experiment := range engram.Experiments() {
+		experiments := engram.Experiments()
+		if len(experiments) == 0 {
+			fmt.Fprintln(cmd.OutOrStdout(), "No active experiments.")
+			return nil
+		}
+		for i, experiment := range experiments {
 			if i > 0 {
 				fmt.Fprintln(cmd.OutOrStdout())
 			}

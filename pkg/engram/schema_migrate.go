@@ -8,7 +8,7 @@ import (
 
 // schemaVersion is the current schema version. Bump this and add an entry to
 // schemaMigrations whenever the schema changes.
-const schemaVersion = 5
+const schemaVersion = 7
 
 // schemaMigrations maps from-version to the SQL that advances to from+1.
 // Version 0 means "newly created or pre-versioning DB with the baseline schema
@@ -71,6 +71,7 @@ var schemaMigrations = []string{
 	`DROP TRIGGER IF EXISTS memories_ai;
 	 DROP TRIGGER IF EXISTS memories_ad;
 	 DROP TRIGGER IF EXISTS memories_au;
+	 DROP TABLE IF EXISTS memories_fts;
 	 CREATE TABLE memories_new (
 	     id         INTEGER PRIMARY KEY,
 	     ts         INTEGER NOT NULL,
@@ -86,6 +87,10 @@ var schemaMigrations = []string{
 	 ALTER TABLE memories_new RENAME TO memories;
 	 CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_tier_key ON memories (tier, key);
 	 CREATE INDEX IF NOT EXISTS idx_memories_tier_ts ON memories (tier, ts DESC);
+	 CREATE VIRTUAL TABLE memories_fts USING fts5(
+	     key, content,
+	     content='memories', content_rowid='id'
+	 );
 	 CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
 	     INSERT INTO memories_fts(rowid, key, content)
 	     VALUES (new.id, new.key, new.content);
@@ -108,6 +113,63 @@ var schemaMigrations = []string{
 	     id          INTEGER PRIMARY KEY CHECK (id = 1),
 	     digest      TEXT    NOT NULL,
 	     reviewed_at INTEGER NOT NULL
+	 );`,
+	// 5 -> 6: a trigger-bearing long-term memory is a skill. Rebuild both the
+	// canonical table and its external-content FTS index so trigger and tldr are
+	// searchable alongside key and content. Existing memories remain ordinary
+	// memories with an empty trigger.
+	`DROP TRIGGER IF EXISTS memories_ai;
+	 DROP TRIGGER IF EXISTS memories_ad;
+	 DROP TRIGGER IF EXISTS memories_au;
+	 DROP TABLE IF EXISTS memories_fts;
+	 CREATE TABLE memories_new (
+	     id         INTEGER PRIMARY KEY,
+	     ts         INTEGER NOT NULL,
+	     tier       TEXT    NOT NULL,
+	     key        TEXT    NOT NULL,
+	     content    TEXT    NOT NULL DEFAULT '',
+	     tldr       TEXT    NOT NULL DEFAULT '',
+	     trigger    TEXT    NOT NULL DEFAULT '',
+	     session_id TEXT
+	 );
+	 INSERT INTO memories_new (id, ts, tier, key, content, tldr, session_id)
+	     SELECT id, ts, tier, key, content, tldr, session_id FROM memories;
+	 DROP TABLE memories;
+	 ALTER TABLE memories_new RENAME TO memories;
+	 CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_tier_key ON memories (tier, key);
+	 CREATE INDEX IF NOT EXISTS idx_memories_tier_ts ON memories (tier, ts DESC);
+	 CREATE VIRTUAL TABLE memories_fts USING fts5(
+	     key, content, tldr, trigger,
+	     content='memories', content_rowid='id'
+	 );
+	 CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN
+	     INSERT INTO memories_fts(rowid, key, content, tldr, trigger)
+	     VALUES (new.id, new.key, new.content, new.tldr, new.trigger);
+	 END;
+	 CREATE TRIGGER memories_ad AFTER DELETE ON memories BEGIN
+	     INSERT INTO memories_fts(memories_fts, rowid, key, content, tldr, trigger)
+	     VALUES ('delete', old.id, old.key, old.content, old.tldr, old.trigger);
+	 END;
+	 CREATE TRIGGER memories_au AFTER UPDATE ON memories BEGIN
+	     INSERT INTO memories_fts(memories_fts, rowid, key, content, tldr, trigger)
+	     VALUES ('delete', old.id, old.key, old.content, old.tldr, old.trigger);
+	     INSERT INTO memories_fts(rowid, key, content, tldr, trigger)
+	     VALUES (new.id, new.key, new.content, new.tldr, new.trigger);
+	 END;
+	 INSERT INTO memories_fts(memories_fts) VALUES ('rebuild');`,
+	// 6 -> 7: replace the aggregate automation acknowledgment hash with durable
+	// per-candidate classifications. The old digest cannot be expanded back into
+	// judgments, so upgraded repositories receive one fresh classification pass.
+	`DROP TABLE IF EXISTS automation_catalog_state;
+	 CREATE TABLE IF NOT EXISTS automation_catalog_entries (
+	     path           TEXT PRIMARY KEY,
+	     detected_kind  TEXT NOT NULL,
+	     content_digest TEXT NOT NULL,
+	     classification TEXT NOT NULL,
+	     rationale      TEXT NOT NULL DEFAULT '',
+	     skill_key      TEXT NOT NULL DEFAULT '',
+	     invocation     TEXT NOT NULL DEFAULT '',
+	     reviewed_at    INTEGER NOT NULL
 	 );`,
 }
 

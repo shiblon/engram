@@ -71,6 +71,20 @@ experimental label incomplete unless it points to explicit exit conditions, and
 makes a stale registry entry fail once its command label disappears. As with
 memory lifetime, the conditions name observable events rather than dates.
 
+## Automation catalogs store judgments, not acknowledgments
+
+Repository automation discovery is useful only when its expensive result -- the
+agent's classification after reading headers, documentation, and call sites --
+survives the scan. The catalog therefore stores one verdict per candidate with
+that candidate's content digest, rather than one aggregate "reviewed" hash.
+
+Reconciliation is local: an unchanged candidate stays silent; a changed one
+retains its prior verdict and rationale for confirmation; a new one starts
+unclassified; and a removed one requires explicit retirement. Changed or removed
+code is not surfaced as an active project tool or skill member until reconciled.
+This makes discovery a durable review loop instead of proof that somebody once
+looked at a now-indivisible pile of files.
+
 ## Migrations replay from version 0, so every step must be idempotent
 
 A fresh database applies `schema.sql` and then replays *every* migration from

@@ -526,6 +526,8 @@ func engramProtocolSection(agent string) string {
 	return fmt.Sprintf(`
 ## Engram Session Protocol
 
+> Guidance version: %s.
+
 At the start of a new conversation, first check whether engram context is already
 present in this session. Look for sections such as "## Orientation",
 "## Identity", "## Preferences", or "## Long-term memory".
@@ -546,7 +548,9 @@ layer instead, for example:
 
   %s
 
-Do not skip this step.`, cmd, layer, layerExample)
+%s
+
+Do not skip this step.`, engramVersion(), cmd, layer, layerExample, skillManagementGuidance)
 }
 
 func runBootstrapGemini(cmd *cobra.Command, _ []string) error {
