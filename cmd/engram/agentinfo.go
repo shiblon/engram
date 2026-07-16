@@ -7,6 +7,54 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const skillManagementGuidance = `## Skills: retrieval and first-use capture
+
+A skill is a named, task-triggered procedure. Its trigger says WHEN to retrieve
+it, its tldr says WHAT outcome it provides, and its content is the full prompt or
+instructions. A tool is callable machinery (script, command, MCP operation); a
+skill supplies task-level judgment and may coordinate zero, one, or many tools.
+
+RETRIEVE: At the start of a task, read a matching skill from the injected Skills
+index. Search project and global skills when the user explicitly signals
+recurrence ("again", "earlier", "as usual", "same process", "another ..."), or
+when the same named task already occurred in this conversation:
+  engram skill search "<task words>"
+  engram skill search -g "<task words>"
+Explicit recurrence language makes this search mandatory, not discretionary.
+
+CAPTURE ON FIRST USE: After completing and verifying a task, save it as a
+project skill without waiting for repetition when BOTH are true:
+1. The user gave the activity a recognizable name or concept describing a
+   category of work, not merely this instance. Mechanical test: after removing
+   dates, IDs, paths, and other instance values, the name still describes a task
+   someone could request.
+2. Completion required at least two ordered operations, OR exposed a reusable
+   correction, constraint, or gotcha.
+
+Derive the key and trigger from the user's language. The trigger describes task
+intent ("when the user asks to prepare or post a standup"), the tldr names the
+outcome, and content records the verified procedure plus an explicit TOOLS NEEDED
+section. Tell the user what was captured. Ask before writing it globally; project
+scope is the default. If a matching skill exists, update it instead of creating a
+duplicate. If the procedure already exists as ordinary long-term memory, preserve
+its body and classify it in place with:
+  engram skill adopt <key> --trigger "<task condition>" [--tldr "<outcome>"]
+
+DO NOT CAPTURE: a single direct command with no meaningful procedure; a fact,
+decision, or preference; unfinished or unverified work; an instance-specific
+fix; or a generic activity named only by the agent ("repository work").
+
+AUTOMATION CATALOG: When inject reports new, changed, or removed automation,
+run 'engram skill discover'. Inspect candidate documentation, headers, and call
+sites without executing candidates merely to understand them. Persist the actual
+judgment with 'engram skill classify': direct-tool for one callable operation,
+skill-member for part of a judgment-bearing workflow, internal for plumbing,
+review for an intentionally deferred decision, or ignore for deliberately
+uncataloged material. Give skill members a shared --skill key when they belong
+together. Preserve a changed entry's prior verdict when it still holds; resolve a
+missing entry explicitly with --as removed. Classification replaces the old
+aggregate acknowledgment workflow.`
+
 const agentInfoText = `<!-- GENERATED FILE -- do not edit directly. This file is written by
 "engram bootstrap"; edits here are overwritten on the next run. To change it, edit
 the source in the engram binary (cmd/engram/agentinfo.go, const agentInfoText) and
@@ -157,6 +205,8 @@ same in any language:
   # engram-desc: <one-line description>   (REQUIRED -- without it the file is not a tool)
   # engram-usage: <invocation example>    (optional)
   # engram-run: <runner command>          (optional; else inferred from extension or shebang)
+
+` + skillManagementGuidance + `
 
 ## Staged restores
 

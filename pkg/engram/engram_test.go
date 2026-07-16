@@ -326,6 +326,48 @@ func TestInjectContextText(t *testing.T) {
 		}
 	})
 
+	t.Run("automation_review_is_explicitly_a_user_prompt", func(t *testing.T) {
+		project := InjectResult{AutomationReview: &AutomationReview{
+			Items: []AutomationReviewItem{
+				{Candidate: AutomationCandidate{Path: "Makefile", Kind: "task runner"}, State: AutomationNew},
+				{Candidate: AutomationCandidate{Path: "scripts/check.sh", Kind: "script"}, State: AutomationChanged,
+					Previous: &AutomationCatalogEntry{Classification: AutomationDirectTool, Rationale: "validation gate"}},
+			},
+		}}
+		got := InjectContextText(InjectResult{}, project, 5)
+		for _, want := range []string{
+			"## Automation catalog review",
+			"2 automation catalog entries",
+			"changed: scripts/check.sh (script)",
+			"previous: direct-tool — validation gate",
+			"Run `engram skill discover`",
+			"do not execute candidates merely to inspect them",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("automation review missing %q in %q", want, got)
+			}
+		}
+	})
+
+	t.Run("classified_project_tools_and_skill_members_are_scoped", func(t *testing.T) {
+		project := InjectResult{
+			ProjectTools: []ToolDesc{{Name: "scripts/check.sh", Run: "bash", Path: "scripts/check.sh", Desc: "validation gate"}},
+			SkillCandidates: []AutomationCatalogEntry{{
+				Path: "scripts/release.sh", Classification: AutomationSkillMember,
+				SkillKey: "release", Rationale: "publishes the artifact",
+			}},
+		}
+		got := InjectContextText(InjectResult{}, project, 5)
+		for _, want := range []string{
+			"## Project tools", "bash scripts/check.sh: validation gate",
+			"## Skill candidates", "**release**: scripts/release.sh — publishes the artifact",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("classified automation missing %q in %q", want, got)
+			}
+		}
+	})
+
 	t.Run("global_long_term_surfaced", func(t *testing.T) {
 		global := InjectResult{LongTerm: []Memory{{Key: "infra", Content: "global-long-fact"}}}
 		got := InjectContextText(global, InjectResult{}, 5)
@@ -519,7 +561,7 @@ func TestFormatStatusLine(t *testing.T) {
 
 func TestMemoryMDRoundTrip(t *testing.T) {
 	original := []Memory{
-		{Tier: TierLong, Key: "alpha", Content: "content alpha", Tldr: "the alpha summary"},
+		{Tier: TierLong, Key: "alpha", Content: "content alpha", Tldr: "the alpha summary", Trigger: "When alpha work is requested"},
 		{Tier: TierLong, Key: "beta", Content: "multi\nline\ncontent"},
 		{Tier: TierLong, Key: "gamma", Content: "  trimmed  "},
 	}
@@ -544,6 +586,9 @@ func TestMemoryMDRoundTrip(t *testing.T) {
 		}
 		if m.Tldr != original[i].Tldr {
 			t.Errorf("[%d] tldr %q, want %q", i, m.Tldr, original[i].Tldr)
+		}
+		if m.Trigger != original[i].Trigger {
+			t.Errorf("[%d] trigger %q, want %q", i, m.Trigger, original[i].Trigger)
 		}
 	}
 }
@@ -1064,6 +1109,69 @@ func TestSearchMemories(t *testing.T) {
 	}
 }
 
+func TestSkillsAreTriggerBearingLongTermMemories(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+
+	skill := Memory{
+		Tier:    TierLong,
+		Key:     "standup-report",
+		Content: "Gather work, draft the narrative, then post it.",
+		Tldr:    "Prepare and post a concise standup",
+		Trigger: "When the user asks to prepare or post a standup report",
+	}
+	if err := WriteMemory(ctx, db, skill); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteMemory(ctx, db, Memory{Tier: TierLong, Key: "standup-format", Content: "A settled formatting decision"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteMemory(ctx, db, Memory{Tier: TierShort, Key: "bad", Content: "no", Trigger: "When bad"}); err == nil {
+		t.Fatal("trigger-bearing short memory should be rejected")
+	}
+
+	skills, err := ListSkills(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(skills) != 1 || skills[0].Key != skill.Key {
+		t.Fatalf("ListSkills = %+v, want only %q", skills, skill.Key)
+	}
+	for _, query := range []string{"standup", "concise"} {
+		hits, err := SearchSkills(ctx, db, query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(hits) != 1 || hits[0].Key != skill.Key {
+			t.Errorf("SearchSkills(%q) = %+v, want %q", query, hits, skill.Key)
+		}
+	}
+}
+
+func TestInjectRendersScopedSkillTriggerIndex(t *testing.T) {
+	global := InjectResult{LongTerm: []Memory{{
+		Key: "standup", Content: "full global instructions", Tldr: "Prepare the report", Trigger: "When asked for a standup",
+	}}}
+	project := InjectResult{LongTerm: []Memory{{
+		Key: "release", Content: "full project instructions", Tldr: "Ship safely", Trigger: "When asked to release",
+	}}}
+	got := InjectContextText(global, project, 5)
+	for _, want := range []string{
+		"## Skills (trigger index",
+		"When asked for a standup",
+		"engram skill read -g standup",
+		"When asked to release",
+		"engram skill read release",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("skill index missing %q in %q", want, got)
+		}
+	}
+	if strings.Contains(got, "full global instructions") || strings.Contains(got, "full project instructions") {
+		t.Errorf("skill index leaked full instructions: %q", got)
+	}
+}
+
 func TestInjectIncludesMemories(t *testing.T) {
 	db := testDB(t)
 	ctx := context.Background()
@@ -1293,6 +1401,7 @@ func TestSchemaMigrationV3ToV4AddsTldr(t *testing.T) {
 		`DROP TRIGGER IF EXISTS memories_ai`,
 		`DROP TRIGGER IF EXISTS memories_ad`,
 		`DROP TRIGGER IF EXISTS memories_au`,
+		`DROP TABLE IF EXISTS memories_fts`,
 		`CREATE TABLE memories_v3 (
 		    id INTEGER PRIMARY KEY, ts INTEGER NOT NULL, tier TEXT NOT NULL,
 		    key TEXT NOT NULL, content TEXT NOT NULL DEFAULT '', session_id TEXT)`,
@@ -1302,6 +1411,8 @@ func TestSchemaMigrationV3ToV4AddsTldr(t *testing.T) {
 		`ALTER TABLE memories_v3 RENAME TO memories`,
 		`CREATE UNIQUE INDEX idx_memories_tier_key ON memories (tier, key)`,
 		`CREATE INDEX idx_memories_tier_ts ON memories (tier, ts DESC)`,
+		`CREATE VIRTUAL TABLE memories_fts USING fts5(
+		    key, content, content='memories', content_rowid='id')`,
 		`CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN
 		    INSERT INTO memories_fts(rowid, key, content) VALUES (new.id, new.key, new.content);
 		 END`,
@@ -1342,14 +1453,22 @@ func TestSchemaMigrationV3ToV4AddsTldr(t *testing.T) {
 	if tldrCols != 1 {
 		t.Error("tldr column missing after migration")
 	}
+	var triggerCols int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name = 'trigger'`).Scan(&triggerCols); err != nil {
+		t.Fatal(err)
+	}
+	if triggerCols != 1 {
+		t.Error("trigger column missing after migration")
+	}
 
 	// The row survives, with tldr defaulting to empty.
 	m, err := ReadMemory(ctx, db, TierLong, "infra")
 	if err != nil || m == nil {
 		t.Fatalf("row lost across migration: %v", err)
 	}
-	if m.Content != "stateless decomposition wins" || m.Tldr != "" {
-		t.Errorf("migrated row = {content:%q tldr:%q}, want content preserved and tldr empty", m.Content, m.Tldr)
+	if m.Content != "stateless decomposition wins" || m.Tldr != "" || m.Trigger != "" {
+		t.Errorf("migrated row = {content:%q tldr:%q trigger:%q}, want content preserved and metadata empty", m.Content, m.Tldr, m.Trigger)
 	}
 
 	// Full-text search still works over the rebuilt table.

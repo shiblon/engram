@@ -120,6 +120,9 @@ var memWriteCmd = &cobra.Command{
 			Content: content,
 			Tldr:    effectiveWriteTldr(existing, cmd.Flag("tldr").Changed, memTldr),
 		}
+		if existing != nil {
+			m.Trigger = existing.Trigger
+		}
 		if err := engram.WriteMemory(ctx, h.DB, m); err != nil {
 			return err
 		}
