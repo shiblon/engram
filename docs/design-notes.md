@@ -43,6 +43,31 @@ So inject stays self-sufficient (identity full, the rest summarized) and the
 a little duplication on Claude Code rather than couple inject to whether the
 render targets happen to be live.
 
+## Retrieval rides the injected index; search is a lossy fallback
+
+A skill is delivered the same way every other memory is: its trigger and tldr
+render in the session-start index, in context before the task begins. So the
+first retrieval move is recognition, not search -- the matching skill is already
+in front of the agent. Making `engram skill search` the primary step regressed
+this: as a bare long-term memory the summary just worked, and calling the same
+entry a "skill" bolted a lookup in front of something already present. Search
+earns its place only when the index cannot answer (it was budget-truncated,
+scrolled out of a long session, or the match is on wording in the body the
+one-line index never shows), and a "no results" is never proof of absence when
+the index is sitting in context.
+
+Search is a fallback partly because it is lossy, and the loss is easy to
+underestimate. FTS5 treats space-separated barewords as an implicit **AND**, so
+a free-text query gets *narrower* with every word added, the opposite of what
+recall wants. An agent that helpfully expands "standup" into "standup morning
+routine" matches fewer entries, not more, and a skill whose text only says
+"standup" drops out entirely. So the search layer builds its own MATCH query
+(tokenize, quote each term, OR them) and leans on bm25 rank to order the hits:
+more words widen the net and the best match floats up. Quoting each token also
+keeps stray operator characters in arbitrary text from turning a query into an
+FTS syntax error. Whenever search sits on FTS, assume raw user words should be an
+OR of ranked terms, not an AND of required ones.
+
 ## Identity is global by nature; behavior can be scoped
 
 Who the agent is does not change per repo, so identity lives only in the global
