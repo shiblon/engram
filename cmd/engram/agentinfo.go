@@ -14,13 +14,23 @@ it, its tldr says WHAT outcome it provides, and its content is the full prompt o
 instructions. A tool is callable machinery (script, command, MCP operation); a
 skill supplies task-level judgment and may coordinate zero, one, or many tools.
 
-RETRIEVE: At the start of a task, read a matching skill from the injected Skills
-index. Search project and global skills when the user explicitly signals
-recurrence ("again", "earlier", "as usual", "same process", "another ..."), or
-when the same named task already occurred in this conversation:
+RETRIEVE: The injected Skills index is the retrieval mechanism, not a pointer to
+one. At the start of a task, scan that index and match the task against each
+trigger; when one matches, read its full instructions with the read command the
+index prints for it. The skill is already in your context, so recognition, not
+search, is the primary move.
+
+Fall to search only when the index cannot answer: a budget note on the Skills
+section says it was truncated, a long or compacted session may have scrolled it
+away, or you suspect the match is on wording buried in the skill body (the index
+shows only trigger and tldr). Explicit recurrence language ("again", "as usual",
+"same process", "another ...") means a skill very likely exists -- find it in the
+index first, and search only if it is not visible there:
   engram skill search "<task words>"
   engram skill search -g "<task words>"
-Explicit recurrence language makes this search mandatory, not discretionary.
+Search is OR-matched and forgiving, so a distinctive word or two outperforms a
+long inferred phrase. A "no results" is never proof a skill is absent when the
+index is in front of you -- trust the index over the search.
 
 CAPTURE ON FIRST USE: After completing and verifying a task, save it as a
 project skill without waiting for repetition when BOTH are true:

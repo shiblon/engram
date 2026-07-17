@@ -1148,6 +1148,63 @@ func TestSkillsAreTriggerBearingLongTermMemories(t *testing.T) {
 	}
 }
 
+// TestSearchRecallIsAdditive pins the OR-matching contract: extra query words
+// widen recall instead of narrowing it, so an inferred phrase whose surplus
+// words the skill never mentions still finds the skill. Under the old implicit-
+// AND behavior "standup morning routine" returned nothing because the skill's
+// text lacks "morning" and "routine"; that was the standup discoverability bug.
+func TestSearchRecallIsAdditive(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+
+	skill := Memory{
+		Tier:    TierLong,
+		Key:     "standup",
+		Content: "Gather yesterday/today/blockers and post the update.",
+		Tldr:    "Assemble and post the daily standup",
+		Trigger: "When the user asks to prepare or post the standup",
+	}
+	if err := WriteMemory(ctx, db, skill); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		query string
+		want  int
+	}{
+		{"standup", 1},
+		{"standup morning routine", 1}, // surplus words must not drop the hit
+		{"morning routine", 0},         // no overlap at all still finds nothing
+	} {
+		hits, err := SearchSkills(ctx, db, tc.query)
+		if err != nil {
+			t.Errorf("SearchSkills(%q) error: %v", tc.query, err)
+			continue
+		}
+		if len(hits) != tc.want {
+			t.Errorf("SearchSkills(%q) = %d hits, want %d", tc.query, len(hits), tc.want)
+		}
+	}
+}
+
+// TestSearchQueryIsSyntaxSafe pins that arbitrary caller text, including FTS5
+// operator characters and queries with no searchable token, never provokes a
+// MATCH syntax error: token-only queries return no results, and punctuation is
+// quoted away rather than parsed as operators.
+func TestSearchQueryIsSyntaxSafe(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	if err := WriteMemory(ctx, db, Memory{Tier: TierLong, Key: "auth", Content: "authentication uses JWT tokens"}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, query := range []string{"", "   ", "-", `"`, "()", "* OR", "release: v1.2"} {
+		if _, err := SearchMemories(ctx, db, query, ""); err != nil {
+			t.Errorf("SearchMemories(%q) errored, want graceful handling: %v", query, err)
+		}
+	}
+}
+
 func TestInjectRendersScopedSkillTriggerIndex(t *testing.T) {
 	global := InjectResult{LongTerm: []Memory{{
 		Key: "standup", Content: "full global instructions", Tldr: "Prepare the report", Trigger: "When asked for a standup",

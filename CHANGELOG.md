@@ -11,6 +11,23 @@ in-repo companion.
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-07-17
+
+### Fixed
+- skill/memory search: free-text queries are now tokenized, quoted, and OR-ed
+  before hitting FTS5 instead of passed through as bareword implicit-AND. Extra
+  words now widen recall (bm25 rank floats the best match up) rather than
+  narrowing it, so an inferred phrase like "standup morning routine" finds a
+  skill whose text only says "standup". Quoting also stops FTS operator
+  characters in arbitrary queries from provoking a MATCH syntax error.
+
+### Changed
+- skills guidance: the injected Skills index is now framed as the retrieval
+  mechanism itself, not a pointer to one. Agents scan it and read the matching
+  skill directly; `skill search` is a fallback for a truncated or scrolled-away
+  index or a body-only match, and a "no results" is no longer treated as proof a
+  skill is absent. `skill search` with no hits now says so.
+
 ## [0.12.0] - 2026-07-16
 
 ### Added
