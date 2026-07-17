@@ -11,6 +11,8 @@ in-repo companion.
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-07-17
+
 ### Fixed
 - skill/memory search: free-text queries are now tokenized, quoted, and OR-ed
   before hitting FTS5 instead of passed through as bareword implicit-AND. Extra
