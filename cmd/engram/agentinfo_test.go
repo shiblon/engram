@@ -24,7 +24,8 @@ func TestProtocolGuidanceCarriesVersionAndSkillMetaTrigger(t *testing.T) {
 	for _, want := range []string{
 		"Guidance version: " + engramVersion(),
 		"CAPTURE ON FIRST USE",
-		"Explicit recurrence language makes this search mandatory",
+		"The injected Skills index is the retrieval mechanism",
+		"trust the index over the search",
 		"after removing",
 		"Ask before writing it globally",
 	} {

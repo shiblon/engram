@@ -206,7 +206,7 @@ var skillSearchCmd = &cobra.Command{
 			return err
 		}
 		if len(skills) == 0 {
-			fmt.Fprintln(cmd.OutOrStdout(), "no results")
+			fmt.Fprintln(cmd.OutOrStdout(), "no results (search is a fallback; the injected Skills index already lists every trigger in context -- check there before concluding no skill exists)")
 			return nil
 		}
 		for _, skill := range skills {

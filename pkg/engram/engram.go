@@ -22,6 +22,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	_ "embed"
@@ -844,14 +845,40 @@ func ReadMemoryTop(ctx context.Context, db *sql.DB, tier Tier) (*Memory, error) 
 	return &ms[0], nil
 }
 
+// ftsMatchQuery turns free-text into a forgiving FTS5 MATCH expression: every
+// alphanumeric token is double-quoted (which neutralizes FTS operator characters
+// like ", -, *, and :, so arbitrary caller text can never provoke a MATCH syntax
+// error) and the tokens are OR-ed together.
+//
+// OR, not the FTS5 bareword default of implicit AND, is the whole point. Under
+// AND, "standup morning routine" requires a memory to contain all three tokens,
+// so every extra word the caller adds can only ever drop hits -- recall shrinks
+// as the query grows, exactly backwards for discovery. Under OR, more words widen
+// the net and bm25 rank floats the best match to the top. It returns "" when the
+// query holds no searchable token; callers treat that as "no results" rather than
+// feeding an empty string to MATCH (which errors).
+func ftsMatchQuery(raw string) string {
+	tokens := strings.FieldsFunc(raw, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+	})
+	for i, tok := range tokens {
+		tokens[i] = `"` + tok + `"`
+	}
+	return strings.Join(tokens, " OR ")
+}
+
 // SearchMemories performs a full-text search over memories. If tier is
 // non-empty, results are filtered to that tier.
 func SearchMemories(ctx context.Context, db *sql.DB, query string, tier Tier) ([]Memory, error) {
+	match := ftsMatchQuery(query)
+	if match == "" {
+		return nil, nil
+	}
 	q := `SELECT m.id, m.ts, m.tier, m.key, m.content, m.tldr, m.trigger, COALESCE(m.session_id, '')
 		FROM memories_fts f
 		JOIN memories m ON m.id = f.rowid
 		WHERE memories_fts MATCH ?`
-	args := []any{query}
+	args := []any{match}
 	if tier != "" {
 		q += ` AND m.tier = ?`
 		args = append(args, tier)
