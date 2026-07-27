@@ -75,7 +75,8 @@ var skillWriteCmd = &cobra.Command{
 			Content: strings.Join(args[1:], " "),
 			Tldr:    tldr,
 			Trigger: trigger,
-		}); err != nil {
+		}, engram.WithCurationSource(engram.SourceInteractive),
+			engram.WithCurationScope(scopeName(skillGlobal))); err != nil {
 			return err
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "stored %s skill: %s\n", scopeName(skillGlobal), args[0])
@@ -128,7 +129,10 @@ is safe to rerun on an already adopted skill.`,
 			return fmt.Errorf("adopt skill %q: %w", args[0], err)
 		}
 		wasSkill := existing.Trigger != ""
-		if err := engram.WriteMemory(ctx, h.DB, m); err != nil {
+		if err := engram.WriteMemory(ctx, h.DB, m,
+			engram.WithCurationAction(engram.CurationSkillAdopt),
+			engram.WithCurationSource(engram.SourceInteractive),
+			engram.WithCurationScope(scopeName(skillGlobal))); err != nil {
 			return err
 		}
 		verb := "adopted"
@@ -234,7 +238,9 @@ var skillDeleteCmd = &cobra.Command{
 		if m == nil || m.Trigger == "" {
 			return fmt.Errorf("skill not found: %s", args[0])
 		}
-		return engram.DeleteMemory(ctx, h.DB, engram.TierLong, args[0])
+		return engram.DeleteMemory(ctx, h.DB, engram.TierLong, args[0],
+			engram.WithCurationSource(engram.SourceInteractive),
+			engram.WithCurationScope(scopeName(skillGlobal)))
 	},
 }
 

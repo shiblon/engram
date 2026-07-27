@@ -8,7 +8,7 @@ import (
 
 // schemaVersion is the current schema version. Bump this and add an entry to
 // schemaMigrations whenever the schema changes.
-const schemaVersion = 7
+const schemaVersion = 8
 
 // schemaMigrations maps from-version to the SQL that advances to from+1.
 // Version 0 means "newly created or pre-versioning DB with the baseline schema
@@ -171,6 +171,30 @@ var schemaMigrations = []string{
 	     invocation     TEXT NOT NULL DEFAULT '',
 	     reviewed_at    INTEGER NOT NULL
 	 );`,
+	// 7 -> 8: add the append-only curation_events instrumentation log. It captures
+	// every mutating curation action so overwrites and deletes -- which the
+	// last-write-wins memories table discards -- are preserved as a reward signal
+	// for a future learning layer. Fresh databases already have the table from
+	// schema.sql; IF NOT EXISTS keeps the replay idempotent.
+	`CREATE TABLE IF NOT EXISTS curation_events (
+	     id          INTEGER PRIMARY KEY,
+	     ts          INTEGER NOT NULL,
+	     session_id  TEXT    NOT NULL DEFAULT '',
+	     action      TEXT    NOT NULL,
+	     tier        TEXT    NOT NULL DEFAULT '',
+	     key         TEXT    NOT NULL,
+	     db_scope    TEXT    NOT NULL DEFAULT '',
+	     source      TEXT    NOT NULL DEFAULT '',
+	     content     TEXT    NOT NULL DEFAULT '',
+	     tldr        TEXT    NOT NULL DEFAULT '',
+	     trigger     TEXT    NOT NULL DEFAULT '',
+	     from_tier   TEXT    NOT NULL DEFAULT '',
+	     to_tier     TEXT    NOT NULL DEFAULT '',
+	     from_db     TEXT    NOT NULL DEFAULT '',
+	     to_db       TEXT    NOT NULL DEFAULT ''
+	 );
+	 CREATE INDEX IF NOT EXISTS idx_curation_events_ts      ON curation_events (ts DESC);
+	 CREATE INDEX IF NOT EXISTS idx_curation_events_session ON curation_events (session_id);`,
 }
 
 // applyMigrations reads PRAGMA user_version, runs any pending migration steps

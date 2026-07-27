@@ -65,7 +65,7 @@ func migrateMemories(ctx context.Context, src, dst *sql.DB, result *MigrateResul
 			}
 			result.Conflicts = append(result.Conflicts, fmt.Sprintf("%s/%s: source kept (newer)", m.Tier, m.Key))
 		}
-		if err := WriteMemory(ctx, dst, m); err != nil {
+		if err := WriteMemory(ctx, dst, m, WithCurationSource(SourceMigrate)); err != nil {
 			return fmt.Errorf("migrate memories write: %w", err)
 		}
 		result.Memories++

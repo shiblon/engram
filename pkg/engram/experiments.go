@@ -30,7 +30,17 @@ type Experiment struct {
 	Commands         []string
 }
 
-var experimentRegistry []Experiment
+var experimentRegistry = []Experiment{
+	{
+		Key:              "curation-log",
+		Status:           ExperimentExperimental,
+		Hypothesis:       "Losslessly capturing every human curation action (create, update, delete, move, tldr-set, skill-adopt, skill-classify) into an append-only log will provide the reward signal a future learning layer needs, which the last-write-wins memories table discards on every overwrite and delete.",
+		UnstableSurfaces: "The curation_events schema, the captured action and source vocabulary, the `engram curation` read surface, and the log's rotation policy may change in patch releases. This is capture only; nothing consumes the log yet.",
+		PromoteWhen:      "The log is confirmed lossless for overwrites and deletes across every mutation path, a consumer reads it, and its retention policy is settled against real volume.",
+		RemoveWhen:       "Curation actions turn out not to be a useful learning signal, or a different capture mechanism replaces this table.",
+		Commands:         []string{"engram curation"},
+	},
+}
 
 // Experiments returns a copy of the registry in deterministic key order.
 func Experiments() []Experiment {

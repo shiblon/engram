@@ -57,7 +57,7 @@ func bootstrapGlobalDB(ctx context.Context) (int, int, error) {
 				Tier:    engram.TierShort,
 				Key:     setupKey,
 				Content: "Set up personality and preferences. FIRST run: engram mem --global --tier invariant list -- if personality and codename are already configured from another project, skip to preferences or just delete this entry. Otherwise: work with the user to choose a codename and define a personality, store both as global invariants, add code preferences as global preferences. Delete this entry when done.",
-			}); err != nil {
+			}, engram.WithCurationSource(engram.SourceBootstrap), engram.WithCurationScope(scopeName(false))); err != nil {
 				return wrote, skipped, err
 			}
 			fmt.Printf("wrote: short/%s\n", setupKey)
@@ -78,7 +78,7 @@ func bootstrapGlobalDB(ctx context.Context) (int, int, error) {
 			Tier:    engram.TierShort,
 			Key:     migrateKey,
 			Content: "Migrate existing memory into engram. First check whether global memories are already configured: engram mem --global --tier invariant list. Then follow the appropriate path:\n\nIf global memories are NOT yet set up: also migrate any global context you have been maintaining (personality, preferences, coding rules from CLAUDE.md or similar files) into the global engram DB as invariants and preferences. Ask the user before writing anything global.\n\nIf global memories ARE already set up: leave them alone entirely.\n\nIn both cases: look for project-specific memory or context for THIS project -- markdown files, notes, project-level context files -- and migrate relevant content into the project engram tiers (not global): settled decisions to long-term, in-flight work to short-term. Delete or archive source files once migrated. If nothing is found, delete this entry.",
-		}); err != nil {
+		}, engram.WithCurationSource(engram.SourceBootstrap), engram.WithCurationScope(scopeName(false))); err != nil {
 			return wrote, skipped, err
 		}
 		fmt.Printf("wrote: short/%s\n", migrateKey)

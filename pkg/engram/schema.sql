@@ -54,6 +54,34 @@ CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
     VALUES (new.id, new.key, new.content, new.tldr, new.trigger);
 END;
 
+-- curation_events is the append-only instrumentation log of human curation
+-- actions on memory (see curation.go). The memories table is a last-write-wins
+-- upsert keyed on (tier, key), so overwrites and deletes erase all prior state;
+-- every mutating curation action writes one immutable row here instead, with a
+-- content and tldr snapshot taken at event time. Rows are never updated or
+-- deleted except by rotation (Prune). This is capture only -- no learning or
+-- weighting reads it yet.
+CREATE TABLE IF NOT EXISTS curation_events (
+    id          INTEGER PRIMARY KEY,
+    ts          INTEGER NOT NULL,
+    session_id  TEXT    NOT NULL DEFAULT '',
+    action      TEXT    NOT NULL,
+    tier        TEXT    NOT NULL DEFAULT '',
+    key         TEXT    NOT NULL,
+    db_scope    TEXT    NOT NULL DEFAULT '',
+    source      TEXT    NOT NULL DEFAULT '',
+    content     TEXT    NOT NULL DEFAULT '',
+    tldr        TEXT    NOT NULL DEFAULT '',
+    trigger     TEXT    NOT NULL DEFAULT '',
+    from_tier   TEXT    NOT NULL DEFAULT '',
+    to_tier     TEXT    NOT NULL DEFAULT '',
+    from_db     TEXT    NOT NULL DEFAULT '',
+    to_db       TEXT    NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_curation_events_ts      ON curation_events (ts DESC);
+CREATE INDEX IF NOT EXISTS idx_curation_events_session ON curation_events (session_id);
+
 -- projects is the dump/restore manifest, populated only in the global DB. It is
 -- the lazy index of every project that has a local engram DB, written once when
 -- a project DB is born (see RegisterProject). identity is the cross-machine key

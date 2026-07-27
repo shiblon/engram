@@ -292,7 +292,28 @@ func ClassifyAutomation(ctx context.Context, db automationExecer, candidate Auto
 	if err != nil {
 		return fmt.Errorf("classify automation %s: %w", candidate.Path, err)
 	}
+	// Capture the verdict in the append-only curation log. The classification is
+	// the valence-bearing text (a reader can weigh "direct-tool" against "ignore"
+	// later); rationale rides the tldr. The automation catalog is project-scoped.
+	// This shares the caller's execer, so when classify runs inside a batch
+	// transaction the event commits atomically with the verdict.
+	captureCuration(ctx, db, CurationEvent{
+		Action:  CurationSkillClassify,
+		Key:     candidate.Path,
+		DBScope: scopeName(false),
+		Content: string(classification),
+		Tldr:    rationale,
+	})
 	return nil
+}
+
+// scopeName is the package-internal name for a database scope, matching the CLI's
+// vocabulary. The automation catalog only ever lives in the project database.
+func scopeName(global bool) string {
+	if global {
+		return "global"
+	}
+	return "project"
 }
 
 // InferAutomationInvocation returns a stable runner-based command for a script.
@@ -317,7 +338,18 @@ func RemoveAutomationClassification(ctx context.Context, db automationExecer, pa
 		return false, fmt.Errorf("remove automation classification %s: %w", path, err)
 	}
 	n, err := result.RowsAffected()
-	return n > 0, err
+	if err != nil {
+		return false, err
+	}
+	if n > 0 {
+		captureCuration(ctx, db, CurationEvent{
+			Action:  CurationSkillClassify,
+			Key:     path,
+			DBScope: scopeName(false),
+			Content: "removed",
+		})
+	}
+	return n > 0, nil
 }
 
 // ActiveAutomationCatalogEntries returns only judgments matching a currently

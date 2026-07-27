@@ -11,6 +11,19 @@ in-repo companion.
 
 ## [Unreleased]
 
+### Added
+- curation log (experimental `curation-log`): every mutating curation action --
+  create, update, delete, move, tldr-set, skill-adopt, skill-classify -- is now
+  captured into an append-only `curation_events` table, snapshotting the content
+  and tldr at event time (for a delete, the removed values). The `memories` table
+  is last-write-wins, so overwrites and deletes previously erased all history;
+  the log preserves it as raw signal for a future learning layer. Capture rides
+  the data-access primitives (`WriteMemory`/`DeleteMemory`/`SetMemoryTldr` and the
+  move/skill-classify paths) so no mutation path is missed, and is best-effort so
+  it never fails the mutation. Read it with the experimental `engram curation`
+  command. This is capture only: nothing weighs or learns from it yet. `prune`
+  rotates the log by the same session model, but never drops session-less rows.
+
 ## [0.12.1] - 2026-07-17
 
 ### Fixed

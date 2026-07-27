@@ -112,7 +112,9 @@ var memLoadCmd = &cobra.Command{
 				return fmt.Errorf("parse %s: %w", path, err)
 			}
 			for _, m := range memories {
-				if err := engram.WriteMemory(ctx, h.DB, m); err != nil {
+				if err := engram.WriteMemory(ctx, h.DB, m,
+					engram.WithCurationSource(engram.SourceLoad),
+					engram.WithCurationScope(scopeName(memUsesGlobal()))); err != nil {
 					return err
 				}
 			}

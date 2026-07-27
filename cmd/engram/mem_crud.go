@@ -123,7 +123,9 @@ var memWriteCmd = &cobra.Command{
 		if existing != nil {
 			m.Trigger = existing.Trigger
 		}
-		if err := engram.WriteMemory(ctx, h.DB, m); err != nil {
+		if err := engram.WriteMemory(ctx, h.DB, m,
+			engram.WithCurationSource(engram.SourceInteractive),
+			engram.WithCurationScope(scopeName(memUsesGlobal()))); err != nil {
 			return err
 		}
 		syncStandingIfTouched(ctx, h, engram.Tier(memTier))
@@ -292,7 +294,9 @@ var memDeleteCmd = &cobra.Command{
 			}
 		}
 
-		if err := engram.DeleteMemory(ctx, h.DB, tier, key); err != nil {
+		if err := engram.DeleteMemory(ctx, h.DB, tier, key,
+			engram.WithCurationSource(engram.SourceInteractive),
+			engram.WithCurationScope(scopeName(memUsesGlobal()))); err != nil {
 			return err
 		}
 		syncStandingIfTouched(ctx, h, tier)
@@ -372,7 +376,9 @@ content. Omit --tier to resolve the key automatically when it is unambiguous.`,
 
 		// Setter: summary given.
 		tldr := strings.TrimSpace(strings.Join(args[1:], " "))
-		ok, err := engram.SetMemoryTldr(ctx, h.DB, tier, key, tldr)
+		ok, err := engram.SetMemoryTldr(ctx, h.DB, tier, key, tldr,
+			engram.WithCurationSource(engram.SourceInteractive),
+			engram.WithCurationScope(scopeName(memUsesGlobal())))
 		if err != nil {
 			return err
 		}
@@ -477,7 +483,9 @@ Tiers: invariant, preference, long, short, cold`,
 
 		// Same-database move: the common case, unchanged behavior.
 		if destGlobal == srcGlobal {
-			if err := engram.MoveMemory(ctx, src.DB, key, from, toTier); err != nil {
+			if err := engram.MoveMemory(ctx, src.DB, key, from, toTier,
+				engram.WithCurationSource(engram.SourceInteractive),
+				engram.WithCurationScope(scopeName(srcGlobal))); err != nil {
 				return err
 			}
 			syncStandingIfTouched(ctx, src, from, toTier)
@@ -499,7 +507,10 @@ Tiers: invariant, preference, long, short, cold`,
 				dstKey = base
 			}
 		}
-		if err := engram.MoveMemoryAcrossDB(ctx, src.DB, dst.DB, key, dstKey, from, toTier); err != nil {
+		if err := engram.MoveMemoryAcrossDB(ctx, src.DB, dst.DB, key, dstKey, from, toTier,
+			engram.WithCurationSource(engram.SourceInteractive),
+			engram.WithCurationScope(scopeName(srcGlobal)),
+			engram.WithCurationToScope(scopeName(destGlobal))); err != nil {
 			return err
 		}
 		// Re-render the global standing files if a standing tier crossed the global

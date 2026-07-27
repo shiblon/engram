@@ -605,30 +605,57 @@ func queryStrings(ctx context.Context, db *sql.DB, query string, args ...any) ([
 	return out, rows.Err()
 }
 
-// Prune deletes events from sessions older than the keepSessions most recent,
-// returning the number of rows deleted.
+// Prune deletes file-touch events from sessions older than the keepSessions most
+// recent, returning the number of event rows deleted. It rotates the append-only
+// curation log by the same session model in the same call, so the two logs share
+// one retention policy and neither grows without bound.
+//
+// Two deliberate departures protect the curation log's losslessness. The retained
+// session set is computed over both tables' timestamps, so a session that only
+// curated memory (and touched no files) is not aged out early. And a curation row
+// with no session id is never pruned: it has no session to age against, and
+// dropping it would discard reward signal. In practice curation rows carry an
+// empty session id today (the CLI is invoked without one), so this call rotates
+// only the file-touch log until acting sessions are threaded through.
 func Prune(ctx context.Context, db *sql.DB, keepSessions int) (int64, error) {
-	result, err := db.ExecContext(ctx, `
-		DELETE FROM events
-		WHERE session_id NOT IN (
-			SELECT session_id FROM (
-				SELECT session_id, MAX(ts) AS last_ts
-				FROM events
-				GROUP BY session_id
-				ORDER BY last_ts DESC
-				LIMIT ?
+	recent := `
+		SELECT session_id FROM (
+			SELECT session_id, MAX(ts) AS last_ts FROM (
+				SELECT session_id, ts FROM events
+				UNION ALL
+				SELECT session_id, ts FROM curation_events WHERE session_id != ''
 			)
-		)
-	`, keepSessions)
+			GROUP BY session_id
+			ORDER BY last_ts DESC
+			LIMIT ?
+		)`
+	result, err := db.ExecContext(ctx,
+		`DELETE FROM events WHERE session_id NOT IN (`+recent+`)`, keepSessions)
 	if err != nil {
 		return 0, fmt.Errorf("prune: %w", err)
 	}
-	return result.RowsAffected()
+	eventsDeleted, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("prune: %w", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`DELETE FROM curation_events WHERE session_id != '' AND session_id NOT IN (`+recent+`)`,
+		keepSessions); err != nil {
+		return 0, fmt.Errorf("prune curation events: %w", err)
+	}
+	return eventsDeleted, nil
 }
 
 // WriteMemory upserts a memory entry. If a memory with the same tier and key
 // exists it is replaced.
-func WriteMemory(ctx context.Context, db *sql.DB, m Memory) error {
+//
+// Every write is captured in the append-only curation log (see curation.go),
+// which is why the primitive rather than each caller carries the instrumentation:
+// no write path can be silently missed. The recorded action is derived as create
+// or update from whether the (tier, key) already existed, unless a caller
+// overrides it (WithCurationAction) or suppresses capture (used internally by the
+// move composition). Capture is best-effort and never fails the write.
+func WriteMemory(ctx context.Context, db *sql.DB, m Memory, opts ...CurationOption) error {
 	if err := validateTldr(m.Tldr); err != nil {
 		return fmt.Errorf("write memory: %w", err)
 	}
@@ -641,6 +668,24 @@ func WriteMemory(ctx context.Context, db *sql.DB, m Memory) error {
 	if m.TS == 0 {
 		m.TS = time.Now().UnixMilli()
 	}
+
+	// Determine create vs update before the upsert so the captured action is
+	// accurate. Only needed when capture is on and the caller did not fix the
+	// action itself, so ordinary suppressed/overridden writes skip the extra read.
+	co := resolveCurationOptions(opts)
+	action := co.action
+	if !co.suppress && action == "" {
+		existing, err := ReadMemory(ctx, db, m.Tier, m.Key)
+		if err != nil {
+			return fmt.Errorf("write memory: %w", err)
+		}
+		if existing == nil {
+			action = CurationCreate
+		} else {
+			action = CurationUpdate
+		}
+	}
+
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO memories (ts, tier, key, content, tldr, trigger, session_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -654,7 +699,32 @@ func WriteMemory(ctx context.Context, db *sql.DB, m Memory) error {
 	if err != nil {
 		return fmt.Errorf("write memory: %w", err)
 	}
+
+	if !co.suppress {
+		captureCuration(ctx, db, CurationEvent{
+			TS:        m.TS,
+			SessionID: firstNonEmpty(co.session, m.SessionID),
+			Action:    action,
+			Tier:      m.Tier,
+			Key:       m.Key,
+			DBScope:   co.scope,
+			Source:    co.source,
+			Content:   m.Content,
+			Tldr:      m.Tldr,
+			Trigger:   m.Trigger,
+		})
+	}
 	return nil
+}
+
+// firstNonEmpty returns the first non-empty string, or "".
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // SetMemoryTldr updates only the tldr of an existing memory, leaving its content
@@ -667,7 +737,7 @@ func WriteMemory(ctx context.Context, db *sql.DB, m Memory) error {
 //
 // The change needs no standing-file resync: the standing files render full
 // content, not the tldr, and inject reads the tldr live from the DB.
-func SetMemoryTldr(ctx context.Context, db *sql.DB, tier Tier, key, tldr string) (bool, error) {
+func SetMemoryTldr(ctx context.Context, db *sql.DB, tier Tier, key, tldr string, opts ...CurationOption) (bool, error) {
 	if err := validateTldr(tldr); err != nil {
 		return false, fmt.Errorf("set tldr: %w", err)
 	}
@@ -677,7 +747,29 @@ func SetMemoryTldr(ctx context.Context, db *sql.DB, tier Tier, key, tldr string)
 		return false, fmt.Errorf("set tldr: %w", err)
 	}
 	n, _ := res.RowsAffected()
-	return n > 0, nil
+	if n == 0 {
+		return false, nil
+	}
+	co := resolveCurationOptions(opts)
+	if !co.suppress {
+		// Snapshot the (unchanged) content alongside the new tldr so a later reader
+		// sees both what the summary now says and the body it summarizes.
+		var content string
+		if m, err := ReadMemory(ctx, db, tier, key); err == nil && m != nil {
+			content = m.Content
+		}
+		captureCuration(ctx, db, CurationEvent{
+			SessionID: co.session,
+			Action:    CurationTldrSet,
+			Tier:      tier,
+			Key:       key,
+			DBScope:   co.scope,
+			Source:    co.source,
+			Content:   content,
+			Tldr:      tldr,
+		})
+	}
+	return true, nil
 }
 
 // queryMemories is the shared implementation for ReadMemory, ReadMemoryTop, ListMemories, and FindMemoryByKey.
@@ -760,8 +852,16 @@ func skillMemories(memories []Memory) []Memory {
 }
 
 // DeleteMemory removes the memory with the given tier and key, returning an
-// error if nothing was found.
-func DeleteMemory(ctx context.Context, db *sql.DB, tier Tier, key string) error {
+// error if nothing was found. The removed content and tldr are snapshotted into
+// the curation log before deletion, so a delete -- the most destructive curation
+// action -- is fully recoverable from the append-only log. Capture is best-effort
+// and only happens on a successful delete.
+func DeleteMemory(ctx context.Context, db *sql.DB, tier Tier, key string, opts ...CurationOption) error {
+	co := resolveCurationOptions(opts)
+	var snapshot *Memory
+	if !co.suppress {
+		snapshot, _ = ReadMemory(ctx, db, tier, key)
+	}
 	result, err := db.ExecContext(ctx, `DELETE FROM memories WHERE tier = ? AND key = ?`, tier, key)
 	if err != nil {
 		return fmt.Errorf("delete memory: %w", err)
@@ -773,6 +873,23 @@ func DeleteMemory(ctx context.Context, db *sql.DB, tier Tier, key string) error 
 	if n == 0 {
 		return fmt.Errorf("not found: %s/%s", tier, key)
 	}
+	if !co.suppress && snapshot != nil {
+		action := co.action
+		if action == "" {
+			action = CurationDelete
+		}
+		captureCuration(ctx, db, CurationEvent{
+			SessionID: firstNonEmpty(co.session, snapshot.SessionID),
+			Action:    action,
+			Tier:      tier,
+			Key:       key,
+			DBScope:   co.scope,
+			Source:    co.source,
+			Content:   snapshot.Content,
+			Tldr:      snapshot.Tldr,
+			Trigger:   snapshot.Trigger,
+		})
+	}
 	return nil
 }
 
@@ -782,7 +899,11 @@ func FindMemoryByKey(ctx context.Context, db *sql.DB, key string) ([]Memory, err
 }
 
 // MoveMemory moves a memory from one tier to another within the same database.
-func MoveMemory(ctx context.Context, db *sql.DB, key string, from, to Tier) error {
+// It records a single curation event with action "move" rather than the
+// create+delete pair its implementation is built from, because a reclassification
+// (e.g. a demotion long -> cold) is a distinct reward signal from either writing
+// or deleting. The constituent Write and Delete suppress their own capture.
+func MoveMemory(ctx context.Context, db *sql.DB, key string, from, to Tier, opts ...CurationOption) error {
 	m, err := ReadMemory(ctx, db, from, key)
 	if err != nil {
 		return err
@@ -792,10 +913,30 @@ func MoveMemory(ctx context.Context, db *sql.DB, key string, from, to Tier) erro
 	}
 	m.Tier = to
 	m.TS = time.Now().UnixMilli()
-	if err := WriteMemory(ctx, db, *m); err != nil {
+	if err := WriteMemory(ctx, db, *m, suppressCuration()); err != nil {
 		return err
 	}
-	return DeleteMemory(ctx, db, from, key)
+	if err := DeleteMemory(ctx, db, from, key, suppressCuration()); err != nil {
+		return err
+	}
+	co := resolveCurationOptions(opts)
+	captureCuration(ctx, db, CurationEvent{
+		TS:        m.TS,
+		SessionID: firstNonEmpty(co.session, m.SessionID),
+		Action:    CurationMove,
+		Tier:      to,
+		Key:       key,
+		DBScope:   co.scope,
+		Source:    co.source,
+		Content:   m.Content,
+		Tldr:      m.Tldr,
+		Trigger:   m.Trigger,
+		FromTier:  from,
+		ToTier:    to,
+		FromDB:    co.scope,
+		ToDB:      co.scope,
+	})
+	return nil
 }
 
 // MoveMemoryAcrossDB relocates a memory from the src database to the dst
@@ -805,7 +946,12 @@ func MoveMemory(ctx context.Context, db *sql.DB, key string, from, to Tier) erro
 // caller de-scope an agent-layer key when it lands in a project, which has no
 // layers. The write happens before the delete so a failure leaves the source
 // intact rather than losing the memory.
-func MoveMemoryAcrossDB(ctx context.Context, src, dst *sql.DB, srcKey, dstKey string, from, to Tier) error {
+// A cross-database move records the move in both databases -- one event in the
+// source (the memory departed) and one in the destination (it arrived) -- so
+// neither log loses the fact of the move when the two are read independently.
+// Both carry identical from/to tier and database fields; they differ only in the
+// db_scope naming which log they live in.
+func MoveMemoryAcrossDB(ctx context.Context, src, dst *sql.DB, srcKey, dstKey string, from, to Tier, opts ...CurationOption) error {
 	m, err := ReadMemory(ctx, src, from, srcKey)
 	if err != nil {
 		return err
@@ -817,10 +963,35 @@ func MoveMemoryAcrossDB(ctx context.Context, src, dst *sql.DB, srcKey, dstKey st
 	m.Key = dstKey
 	m.Tier = to
 	m.TS = time.Now().UnixMilli()
-	if err := WriteMemory(ctx, dst, *m); err != nil {
+	if err := WriteMemory(ctx, dst, *m, suppressCuration()); err != nil {
 		return err
 	}
-	return DeleteMemory(ctx, src, from, srcKey)
+	if err := DeleteMemory(ctx, src, from, srcKey, suppressCuration()); err != nil {
+		return err
+	}
+	co := resolveCurationOptions(opts)
+	event := CurationEvent{
+		TS:        m.TS,
+		SessionID: firstNonEmpty(co.session, m.SessionID),
+		Action:    CurationMove,
+		Tier:      to,
+		Key:       dstKey,
+		Source:    co.source,
+		Content:   m.Content,
+		Tldr:      m.Tldr,
+		Trigger:   m.Trigger,
+		FromTier:  from,
+		ToTier:    to,
+		FromDB:    co.scope,
+		ToDB:      co.toScope,
+	}
+	srcEvent := event
+	srcEvent.DBScope = co.scope
+	dstEvent := event
+	dstEvent.DBScope = co.toScope
+	captureCuration(ctx, src, srcEvent)
+	captureCuration(ctx, dst, dstEvent)
+	return nil
 }
 
 // PopMemory reads and deletes the most recent short-tier memory. Returns nil
