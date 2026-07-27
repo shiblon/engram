@@ -40,6 +40,15 @@ var experimentRegistry = []Experiment{
 		RemoveWhen:       "Curation actions turn out not to be a useful learning signal, or a different capture mechanism replaces this table.",
 		Commands:         []string{"engram curation"},
 	},
+	{
+		Key:              "template-vocab",
+		Status:           ExperimentExperimental,
+		Hypothesis:       "Storing fixed directive templates with named blanks alongside a flat per-blank vocabulary, with single-binding render and cross-product enumeration, provides the substrate a later layer needs to learn to select and fill directive templates per context.",
+		UnstableSurfaces: "The templates and vocab schema, the slot syntax ({name}), the `engram template` and `engram vocab` command surfaces, and the enumerate sampling semantics may change in patch releases. This is plumbing only: no learner, weighting, scoring, or featurizer reads these tables yet.",
+		PromoteWhen:      "A selection/fill layer consumes templates and vocab in a real workflow, the slot syntax and enumeration semantics are settled, and the generativity-audit use of --sample is validated against real template sets.",
+		RemoveWhen:       "Templated directive generation turns out not to be a useful substrate, or a different representation replaces these tables.",
+		Commands:         []string{"engram template", "engram vocab"},
+	},
 }
 
 // Experiments returns a copy of the registry in deterministic key order.

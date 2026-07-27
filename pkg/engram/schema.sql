@@ -104,6 +104,36 @@ CREATE TABLE IF NOT EXISTS projects (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_identity_path ON projects (identity, path);
 
+-- templates and vocab back the experimental template/vocabulary ("madlibs")
+-- mechanism (see templatevocab.go): fixed directive templates with named blanks
+-- like {artifact}, plus a flat vocabulary of candidate words per blank. This is
+-- plumbing only -- manual CRUD, single-binding render, and cross-product
+-- enumeration -- the substrate a later layer will learn to select and fill from.
+-- They live in dedicated tables, never in memories. ts is unix epoch ms.
+--
+-- A template's text carries named blanks; key is unique so add is an upsert.
+CREATE TABLE IF NOT EXISTS templates (
+    id   INTEGER PRIMARY KEY,
+    ts   INTEGER NOT NULL,
+    key  TEXT    NOT NULL,
+    text TEXT    NOT NULL DEFAULT '',
+    tldr TEXT    NOT NULL DEFAULT ''
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_templates_key ON templates (key);
+
+-- vocab is a flat per-slot word list. (slot, word) is unique so a word cannot be
+-- added to a slot twice; the slot index makes enumeration's per-slot fetch cheap.
+CREATE TABLE IF NOT EXISTS vocab (
+    id   INTEGER PRIMARY KEY,
+    ts   INTEGER NOT NULL,
+    slot TEXT    NOT NULL,
+    word TEXT    NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_vocab_slot_word ON vocab (slot, word);
+CREATE INDEX IF NOT EXISTS idx_vocab_slot ON vocab (slot);
+
 -- One durable classification per repository automation entry point. The
 -- content digest is per candidate rather than one aggregate snapshot, so a
 -- changed script retains its previous judgment and does not invalidate every

@@ -44,6 +44,19 @@ const (
 	// point. Its key is the automation path; content holds the classification and
 	// tldr holds the rationale.
 	CurationSkillClassify CurationAction = "skill-classify"
+	// CurationTemplateAdd records adding or overwriting a directive template in
+	// the experimental template/vocabulary store. Its key is the template key and
+	// content snapshots the template text at event time.
+	CurationTemplateAdd CurationAction = "template-add"
+	// CurationTemplateDelete records removing a template; the row snapshots the
+	// removed text.
+	CurationTemplateDelete CurationAction = "template-delete"
+	// CurationVocabAdd records adding a word to a slot's vocabulary. Its key is the
+	// slot name and content holds the added word.
+	CurationVocabAdd CurationAction = "vocab-add"
+	// CurationVocabDelete records removing a word from a slot's vocabulary; key is
+	// the slot and content the removed word.
+	CurationVocabDelete CurationAction = "vocab-delete"
 )
 
 // CurationSource tags how a mutation was triggered so administrative bulk writes

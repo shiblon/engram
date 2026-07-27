@@ -8,7 +8,7 @@ import (
 
 // schemaVersion is the current schema version. Bump this and add an entry to
 // schemaMigrations whenever the schema changes.
-const schemaVersion = 9
+const schemaVersion = 10
 
 // schemaMigrations maps from-version to the SQL that advances to from+1.
 // Version 0 means "newly created or pre-versioning DB with the baseline schema
@@ -244,6 +244,28 @@ var schemaMigrations = []string{
 	 UPDATE curation_events SET from_tier = 'long' WHERE from_tier = 'long-term';
 	 UPDATE curation_events SET to_tier = 'short' WHERE to_tier = 'short-term';
 	 UPDATE curation_events SET to_tier = 'long' WHERE to_tier = 'long-term';`,
+	// 9 -> 10: add the experimental template/vocabulary ("madlibs") tables. A
+	// template is fixed directive text with named blanks like {artifact}; vocab is
+	// a flat per-slot word list the blanks enumerate against. This is plumbing for
+	// a later selection/fill learner -- no learning reads it yet. Fresh databases
+	// already have both tables from schema.sql; IF NOT EXISTS keeps the replay
+	// idempotent.
+	`CREATE TABLE IF NOT EXISTS templates (
+	     id   INTEGER PRIMARY KEY,
+	     ts   INTEGER NOT NULL,
+	     key  TEXT    NOT NULL,
+	     text TEXT    NOT NULL DEFAULT '',
+	     tldr TEXT    NOT NULL DEFAULT ''
+	 );
+	 CREATE UNIQUE INDEX IF NOT EXISTS idx_templates_key ON templates (key);
+	 CREATE TABLE IF NOT EXISTS vocab (
+	     id   INTEGER PRIMARY KEY,
+	     ts   INTEGER NOT NULL,
+	     slot TEXT    NOT NULL,
+	     word TEXT    NOT NULL
+	 );
+	 CREATE UNIQUE INDEX IF NOT EXISTS idx_vocab_slot_word ON vocab (slot, word);
+	 CREATE INDEX IF NOT EXISTS idx_vocab_slot ON vocab (slot);`,
 }
 
 // applyMigrations reads PRAGMA user_version, runs any pending migration steps
