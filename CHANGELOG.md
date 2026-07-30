@@ -14,9 +14,9 @@ in-repo companion.
 ## [0.12.3] - 2026-07-30
 
 ### Fixed
-- version reporting: development builds now retain `-v`/`--version` and report
-  `(devel)` instead of hiding the flag; root help begins with the running version
-  for both development and released binaries.
+- version reporting: source-tree builds now retain `-v`/`--version` and fall
+  back to the checked-in release version instead of hiding the flag or reporting
+  `(devel)`; root help begins with the running version for every installation path.
 
 ## [0.12.2] - 2026-07-30
 
