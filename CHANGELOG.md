@@ -11,6 +11,8 @@ in-repo companion.
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-07-30
+
 ### Added
 - curation log (experimental `curation-log`): every mutating curation action --
   create, update, delete, move, tldr-set, skill-adopt, skill-classify -- is now
