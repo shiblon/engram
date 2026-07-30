@@ -920,6 +920,71 @@ func TestWriteMemoryUpsert(t *testing.T) {
 	}
 }
 
+func TestParseTier(t *testing.T) {
+	tests := []struct {
+		input string
+		want  Tier
+	}{
+		{"invariant", TierInvariant},
+		{"preference", TierPreference},
+		{"long", TierLong},
+		{"long-term", TierLong},
+		{"short", TierShort},
+		{"short-term", TierShort},
+		{"cold", TierCold},
+		{" SHORT-TERM ", TierShort},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got, err := ParseTier(tt.input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Errorf("ParseTier(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+
+	if _, err := ParseTier("shortish"); err == nil {
+		t.Fatal("ParseTier accepted an unknown tier")
+	} else if !strings.Contains(err.Error(), "invariant, preference, long, short, or cold") {
+		t.Errorf("unknown-tier error = %q, want canonical tier list", err)
+	}
+}
+
+func TestWriteMemoryCanonicalizesTierAliasAndRejectsUnknown(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+
+	if err := WriteMemory(ctx, db, Memory{
+		Tier: "short-term", Key: "alias", Content: "visible",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if m, err := ReadMemory(ctx, db, TierShort, "alias"); err != nil || m == nil {
+		t.Fatalf("canonical short row missing after alias write: %v", err)
+	}
+	var aliases int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM memories WHERE tier = 'short-term'`).Scan(&aliases); err != nil {
+		t.Fatal(err)
+	}
+	if aliases != 0 {
+		t.Errorf("stored %d short-term alias rows, want 0", aliases)
+	}
+
+	err := WriteMemory(ctx, db, Memory{Tier: "shortish", Key: "bad", Content: "hidden"})
+	if err == nil {
+		t.Fatal("WriteMemory accepted an unknown tier")
+	}
+	if matches, findErr := FindMemoryByKey(ctx, db, "bad"); findErr != nil {
+		t.Fatal(findErr)
+	} else if len(matches) != 0 {
+		t.Errorf("unknown-tier write persisted %d rows, want 0", len(matches))
+	}
+}
+
 func TestReadMemoryNotFound(t *testing.T) {
 	db := testDB(t)
 	ctx := context.Background()
@@ -1013,6 +1078,34 @@ func TestMoveMemoryNotFound(t *testing.T) {
 	err := MoveMemory(ctx, db, "ghost", TierShort, TierLong)
 	if err == nil {
 		t.Error("expected error moving nonexistent memory")
+	}
+}
+
+func TestMoveMemoryRecoversLegacyUnknownTier(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO memories (ts, tier, key, content) VALUES (1, 'backlog', 'legacy', 'recover me')`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := MoveMemory(ctx, db, "legacy", "backlog", TierShort); err != nil {
+		t.Fatal(err)
+	}
+	m, err := ReadMemory(ctx, db, TierShort, "legacy")
+	if err != nil || m == nil {
+		t.Fatalf("recovered memory missing from short: %v", err)
+	}
+	if m.Content != "recover me" {
+		t.Errorf("recovered content = %q, want %q", m.Content, "recover me")
+	}
+	var legacyRows int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM memories WHERE tier = 'backlog'`).Scan(&legacyRows); err != nil {
+		t.Fatal(err)
+	}
+	if legacyRows != 0 {
+		t.Errorf("legacy source rows = %d, want 0", legacyRows)
 	}
 }
 

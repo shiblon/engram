@@ -24,6 +24,19 @@ in-repo companion.
   command. This is capture only: nothing weighs or learns from it yet. `prune`
   rotates the log by the same session model, but never drops session-less rows.
 
+### Fixed
+- memory tiers: enforce the five canonical tiers at the write boundary, accept
+  human-facing `long-term` and `short-term` as aliases for `long` and `short`,
+  reject unknown destination tiers, and normalize existing alias rows during
+  schema migration. Compact agent guidance now states the exact CLI tier tokens.
+- mem write safety: reject human-readable `mem read` output when it is fed back
+  as replacement content, explicitly report that a failed write left the stored
+  memory unchanged, and recognize a re-supplied unchanged body plus `--tldr` as
+  a metadata-only edit instead of claiming the body was stored. Generated agent
+  guidance directs summary-only edits to `mem tldr` and warns that a read-back
+  retry after a failed write retrieves the old body and can otherwise discard
+  the intended edit.
+
 ## [0.12.1] - 2026-07-17
 
 ### Fixed

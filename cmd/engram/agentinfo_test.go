@@ -19,10 +19,27 @@ func TestRenderAgentInfoSubstitutesVersion(t *testing.T) {
 	}
 }
 
+func TestRenderAgentInfoWarnsAgainstMemoryReadbackWrites(t *testing.T) {
+	got := renderAgentInfo()
+	for _, want := range []string{
+		"engram mem ... tldr <key>",
+		"Do not feed `engram mem read` output back into `engram mem write`",
+		"after a failed write",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("rendered guidance missing %q", want)
+		}
+	}
+}
+
 func TestProtocolGuidanceCarriesVersionAndSkillMetaTrigger(t *testing.T) {
 	got := engramProtocolSection("codex")
 	for _, want := range []string{
 		"Guidance version: " + engramVersion(),
+		"CLI tier tokens are fixed",
+		"`--tier short`",
+		"engram mem ... tldr <key>",
+		"Do not feed `engram mem read` output back into `engram mem write`",
 		"CAPTURE ON FIRST USE",
 		"The injected Skills index is the retrieval mechanism",
 		"trust the index over the search",

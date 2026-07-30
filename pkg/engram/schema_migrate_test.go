@@ -227,3 +227,97 @@ func TestSchemaMigrationV1ToV2RelaxesProjectsKey(t *testing.T) {
 		t.Error("duplicate (identity, path) should be rejected after migration")
 	}
 }
+
+func TestSchemaMigrationV8ToV9NormalizesTierAliases(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	setup := []string{
+		`INSERT INTO memories (ts, tier, key, content) VALUES
+		    (100, 'short-term', 'alias-only', 'short alias'),
+		    (200, 'long-term', 'long-alias', 'long alias'),
+		    (200, 'short', 'canonical-wins', 'new canonical'),
+		    (100, 'short-term', 'canonical-wins', 'old alias'),
+		    (100, 'long', 'alias-wins', 'old canonical'),
+		    (200, 'long-term', 'alias-wins', 'new alias'),
+		    (300, 'backlog', 'custom', 'legacy custom tier')`,
+		`INSERT INTO curation_events
+		    (ts, action, tier, key, from_tier, to_tier)
+		 VALUES (1, 'move', 'short-term', 'event', 'long-term', 'short-term')`,
+		`PRAGMA user_version = 8`,
+	}
+	for _, stmt := range setup {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("set up v8 state (%q): %v", stmt, err)
+		}
+	}
+
+	if err := applyMigrations(ctx, db); err != nil {
+		t.Fatalf("applyMigrations v8->: %v", err)
+	}
+
+	want := map[string]struct {
+		tier    string
+		content string
+	}{
+		"alias-only":     {"short", "short alias"},
+		"long-alias":     {"long", "long alias"},
+		"canonical-wins": {"short", "new canonical"},
+		"alias-wins":     {"long", "new alias"},
+		"custom":         {"backlog", "legacy custom tier"},
+	}
+	rows, err := db.QueryContext(ctx, `SELECT tier, key, content FROM memories`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	seen := make(map[string]bool)
+	for rows.Next() {
+		var tier, key, content string
+		if err := rows.Scan(&tier, &key, &content); err != nil {
+			t.Fatal(err)
+		}
+		expected, ok := want[key]
+		if !ok {
+			t.Errorf("unexpected migrated row %s/%s", tier, key)
+			continue
+		}
+		seen[key] = true
+		if tier != expected.tier || content != expected.content {
+			t.Errorf("%s migrated to (%q, %q), want (%q, %q)",
+				key, tier, content, expected.tier, expected.content)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	for key := range want {
+		if !seen[key] {
+			t.Errorf("migrated row %q is missing", key)
+		}
+	}
+
+	var aliasRows int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM memories WHERE tier IN ('short-term', 'long-term')`).Scan(&aliasRows); err != nil {
+		t.Fatal(err)
+	}
+	if aliasRows != 0 {
+		t.Errorf("alias rows after migration = %d, want 0", aliasRows)
+	}
+
+	var tier, fromTier, toTier string
+	if err := db.QueryRowContext(ctx,
+		`SELECT tier, from_tier, to_tier FROM curation_events WHERE key = 'event'`).
+		Scan(&tier, &fromTier, &toTier); err != nil {
+		t.Fatal(err)
+	}
+	if tier != "short" || fromTier != "long" || toTier != "short" {
+		t.Errorf("curation tiers = (%q, %q, %q), want (short, long, short)",
+			tier, fromTier, toTier)
+	}
+}

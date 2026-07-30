@@ -20,8 +20,9 @@ var memCmd = &cobra.Command{
   cold        Low-priority archive. Injected as an index only.
 
 Tier and database are orthogonal. The -g/--global flag selects the DATABASE:
-with -g a memory lives in ~/.engram, without it in the project's .engram. Any tier
-can live in either; move one between them with 'move --to-db global|project'.
+with -g a memory lives in ~/.engram, without it in the project's .engram. Any of
+the five tiers can live in either; move one between them with
+'move --to-db global|project'.
 
 Long vs short is one test, not a forecast: can you name the event that makes the
 memory obsolete? If yes it is short (record it: "Retire when: ..."); if no it is
@@ -48,6 +49,14 @@ Common operations:
   engram inject                            print session-start context as JSON
 
 Run 'engram mem <subcommand> --help' for details on each operation.`,
+	PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
+		tier, err := engram.ParseTier(memTier)
+		if err != nil {
+			return err
+		}
+		memTier = string(tier)
+		return nil
+	},
 }
 
 // shared flags

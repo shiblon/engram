@@ -65,6 +65,19 @@ together. Preserve a changed entry's prior verdict when it still holds; resolve 
 missing entry explicitly with --as removed. Classification replaces the old
 aggregate acknowledgment workflow.`
 
+const memoryWriteSafetyGuidance = `## Safe memory updates
+
+To change only the tldr of an existing memory, preserve its body structurally:
+  engram mem ... tldr <key> "<one-line summary>"
+Do not feed ` + "`engram mem read`" + ` output back into ` + "`engram mem write`" + `. Read output is
+display-formatted, not a round-trip format; after a failed write it also contains
+the old body, so a read-back retry can silently discard the intended edit.`
+
+const memoryTierGuidance = `Engram's CLI tier tokens are fixed: ` + "`invariant`" + `, ` +
+	"`preference`" + `, ` + "`long`" + `, ` + "`short`" + `, and ` + "`cold`" + `. Human-facing prose
+often says "long-term" and "short-term"; the corresponding canonical flags are
+` + "`--tier long`" + ` and ` + "`--tier short`" + `.`
+
 const agentInfoText = `<!-- GENERATED FILE -- do not edit directly. This file is written by
 "engram bootstrap"; edits here are overwritten on the next run. To change it, edit
 the source in the engram binary (cmd/engram/agentinfo.go, const agentInfoText) and
@@ -122,9 +135,11 @@ the user which to keep.
 
 ## Memory tiers
 
+` + memoryTierGuidance + `
+
 Two axes: TIER (what kind of memory) and DATABASE (-g/--global for ~/.engram, else
-the project's .engram). They are orthogonal -- any tier can live in either database.
-Run engram mem --help for the full command reference.
+the project's .engram). They are orthogonal -- any of the five tiers can live in
+either database. Run engram mem --help for the full command reference.
 
 - invariant  (global): identity -- codename, personality. Rarely changes.
 - preference (global or project): behavioral rules and standing defaults.
@@ -167,6 +182,8 @@ Write a tldr with every memory:
   engram mem ... write <key> <content> --tldr "<one-line summary>"
 It has a hard character limit, so compress deliberately -- the tldr is what future
 sessions see first. Omit it and inject falls back to the first line of the content.
+
+` + memoryWriteSafetyGuidance + `
 
 ## Project memory and sharing
 

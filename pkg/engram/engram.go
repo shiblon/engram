@@ -76,6 +76,30 @@ const (
 	TierCold       Tier = "cold"
 )
 
+// ParseTier turns a user- or caller-supplied tier name into one of engram's five
+// canonical tiers. The human-facing names "long-term" and "short-term" are
+// accepted as aliases because the documentation and injected context naturally
+// use them in prose; storage always uses the canonical short tokens.
+func ParseTier(value string) (Tier, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case string(TierInvariant):
+		return TierInvariant, nil
+	case string(TierPreference):
+		return TierPreference, nil
+	case string(TierLong), "long-term":
+		return TierLong, nil
+	case string(TierShort), "short-term":
+		return TierShort, nil
+	case string(TierCold):
+		return TierCold, nil
+	default:
+		return "", fmt.Errorf(
+			"invalid memory tier %q: use invariant, preference, long, short, or cold",
+			value,
+		)
+	}
+}
+
 // Memory holds a single intentional memory entry.
 type Memory struct {
 	ID      int64
@@ -656,6 +680,11 @@ func Prune(ctx context.Context, db *sql.DB, keepSessions int) (int64, error) {
 // overrides it (WithCurationAction) or suppresses capture (used internally by the
 // move composition). Capture is best-effort and never fails the write.
 func WriteMemory(ctx context.Context, db *sql.DB, m Memory, opts ...CurationOption) error {
+	tier, err := ParseTier(string(m.Tier))
+	if err != nil {
+		return fmt.Errorf("write memory: %w", err)
+	}
+	m.Tier = tier
 	if err := validateTldr(m.Tldr); err != nil {
 		return fmt.Errorf("write memory: %w", err)
 	}
@@ -686,7 +715,7 @@ func WriteMemory(ctx context.Context, db *sql.DB, m Memory, opts ...CurationOpti
 		}
 	}
 
-	_, err := db.ExecContext(ctx, `
+	_, err = db.ExecContext(ctx, `
 		INSERT INTO memories (ts, tier, key, content, tldr, trigger, session_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(tier, key) DO UPDATE SET
@@ -904,6 +933,11 @@ func FindMemoryByKey(ctx context.Context, db *sql.DB, key string) ([]Memory, err
 // (e.g. a demotion long -> cold) is a distinct reward signal from either writing
 // or deleting. The constituent Write and Delete suppress their own capture.
 func MoveMemory(ctx context.Context, db *sql.DB, key string, from, to Tier, opts ...CurationOption) error {
+	canonicalTo, err := ParseTier(string(to))
+	if err != nil {
+		return fmt.Errorf("move memory: destination %w", err)
+	}
+	to = canonicalTo
 	m, err := ReadMemory(ctx, db, from, key)
 	if err != nil {
 		return err
@@ -952,6 +986,11 @@ func MoveMemory(ctx context.Context, db *sql.DB, key string, from, to Tier, opts
 // Both carry identical from/to tier and database fields; they differ only in the
 // db_scope naming which log they live in.
 func MoveMemoryAcrossDB(ctx context.Context, src, dst *sql.DB, srcKey, dstKey string, from, to Tier, opts ...CurationOption) error {
+	canonicalTo, err := ParseTier(string(to))
+	if err != nil {
+		return fmt.Errorf("move memory across databases: destination %w", err)
+	}
+	to = canonicalTo
 	m, err := ReadMemory(ctx, src, from, srcKey)
 	if err != nil {
 		return err

@@ -8,7 +8,7 @@ import (
 
 // schemaVersion is the current schema version. Bump this and add an entry to
 // schemaMigrations whenever the schema changes.
-const schemaVersion = 8
+const schemaVersion = 9
 
 // schemaMigrations maps from-version to the SQL that advances to from+1.
 // Version 0 means "newly created or pre-versioning DB with the baseline schema
@@ -195,6 +195,55 @@ var schemaMigrations = []string{
 	 );
 	 CREATE INDEX IF NOT EXISTS idx_curation_events_ts      ON curation_events (ts DESC);
 	 CREATE INDEX IF NOT EXISTS idx_curation_events_session ON curation_events (session_id);`,
+	// 8 -> 9: tiers have always been a fixed five-value concept, but the CLI
+	// previously accepted arbitrary strings. Normalize the two human-facing names
+	// agents naturally inferred from the documentation. When both an alias row and
+	// its canonical counterpart exist for one key, keep the newer row (canonical
+	// wins ties) before renaming so the unique (tier, key) index is never violated.
+	// Unknown historical tiers remain untouched and can be recovered explicitly
+	// with `mem move --from <legacy-tier> --to <canonical-tier>`.
+	`DELETE FROM memories AS canonical
+	     WHERE canonical.tier = 'short'
+	       AND EXISTS (
+	           SELECT 1 FROM memories AS alias
+	           WHERE alias.tier = 'short-term'
+	             AND alias.key = canonical.key
+	             AND alias.ts > canonical.ts
+	       );
+	 DELETE FROM memories AS alias
+	     WHERE alias.tier = 'short-term'
+	       AND EXISTS (
+	           SELECT 1 FROM memories AS canonical
+	           WHERE canonical.tier = 'short'
+	             AND canonical.key = alias.key
+	             AND canonical.ts >= alias.ts
+	       );
+	 UPDATE memories SET tier = 'short' WHERE tier = 'short-term';
+
+	 DELETE FROM memories AS canonical
+	     WHERE canonical.tier = 'long'
+	       AND EXISTS (
+	           SELECT 1 FROM memories AS alias
+	           WHERE alias.tier = 'long-term'
+	             AND alias.key = canonical.key
+	             AND alias.ts > canonical.ts
+	       );
+	 DELETE FROM memories AS alias
+	     WHERE alias.tier = 'long-term'
+	       AND EXISTS (
+	           SELECT 1 FROM memories AS canonical
+	           WHERE canonical.tier = 'long'
+	             AND canonical.key = alias.key
+	             AND canonical.ts >= alias.ts
+	       );
+	 UPDATE memories SET tier = 'long' WHERE tier = 'long-term';
+
+	 UPDATE curation_events SET tier = 'short' WHERE tier = 'short-term';
+	 UPDATE curation_events SET tier = 'long' WHERE tier = 'long-term';
+	 UPDATE curation_events SET from_tier = 'short' WHERE from_tier = 'short-term';
+	 UPDATE curation_events SET from_tier = 'long' WHERE from_tier = 'long-term';
+	 UPDATE curation_events SET to_tier = 'short' WHERE to_tier = 'short-term';
+	 UPDATE curation_events SET to_tier = 'long' WHERE to_tier = 'long-term';`,
 }
 
 // applyMigrations reads PRAGMA user_version, runs any pending migration steps

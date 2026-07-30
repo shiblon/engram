@@ -94,10 +94,44 @@ func effectiveWriteTldr(existing *engram.Memory, flagChanged bool, flagVal strin
 	return ""
 }
 
+// validateMemWriteContent rejects the human-readable output of `mem read` when
+// it is fed back to `mem write`. The read form includes a display label before
+// the body; accepting it would persist that label as content. More importantly,
+// a read performed after a failed write returns the old body, so a retry built
+// from command substitution can silently discard the intended edit.
+func validateMemWriteContent(existing *engram.Memory, content string) error {
+	if existing == nil {
+		return nil
+	}
+	if strings.HasPrefix(content, engram.MemoryLabel(*existing)+"\n") {
+		return fmt.Errorf(
+			"content begins with formatted `engram mem read` output; refusing to overwrite %s: "+
+				"use `engram mem tldr` for a summary-only change, or retry `engram mem write` "+
+				"with the intended body",
+			engram.MemoryLabel(*existing),
+		)
+	}
+	return nil
+}
+
+// memWriteIsTldrOnly identifies a write that re-supplies the unchanged body only
+// to alter its tldr. Treating that as the surgical metadata operation makes the
+// result explicit and avoids touching the memory's recency or logging a body
+// update that did not happen.
+func memWriteIsTldrOnly(existing *engram.Memory, content string, tldrFlagChanged bool) bool {
+	return existing != nil && tldrFlagChanged && content == existing.Content
+}
+
 var memWriteCmd = &cobra.Command{
 	Use:   "write <key> <content>",
 	Short: "Write (upsert) a memory entry",
-	Args:  cobra.MinimumNArgs(2),
+	Long: `Write (upsert) a memory entry, replacing its content body.
+
+The output of 'engram mem read' is human-readable display text, not a round-trip
+format; do not substitute it back into this command. To change only an existing
+memory's summary, use 'engram mem tldr <key> <summary>', which leaves its content
+untouched.`,
+	Args: cobra.MinimumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
 		h, err := openMemDB(ctx)
@@ -112,7 +146,31 @@ var memWriteCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		existing, _ := engram.ReadMemory(ctx, h.DB, tier, key)
+		existing, err := engram.ReadMemory(ctx, h.DB, tier, key)
+		if err != nil {
+			return fmt.Errorf("read existing memory before write: %w", err)
+		}
+		if err := validateMemWriteContent(existing, content); err != nil {
+			return err
+		}
+		if memWriteIsTldrOnly(existing, content, cmd.Flag("tldr").Changed) {
+			tldr := effectiveWriteTldr(existing, true, memTldr)
+			ok, err := engram.SetMemoryTldr(ctx, h.DB, tier, key, tldr,
+				engram.WithCurationSource(engram.SourceInteractive),
+				engram.WithCurationScope(scopeName(memUsesGlobal())))
+			if err != nil {
+				return fmt.Errorf("memory was not changed: %w", err)
+			}
+			if !ok {
+				return fmt.Errorf("memory was not changed: %s no longer exists", engram.MemoryLabel(*existing))
+			}
+			if tldr == "" {
+				fmt.Printf("content unchanged; cleared tldr: %s\n", engram.MemoryLabel(*existing))
+			} else {
+				fmt.Printf("content unchanged; set tldr: %s\n", engram.MemoryLabel(*existing))
+			}
+			return nil
+		}
 		m := engram.Memory{
 			TS:      time.Now().UnixMilli(),
 			Tier:    tier,
@@ -126,7 +184,7 @@ var memWriteCmd = &cobra.Command{
 		if err := engram.WriteMemory(ctx, h.DB, m,
 			engram.WithCurationSource(engram.SourceInteractive),
 			engram.WithCurationScope(scopeName(memUsesGlobal()))); err != nil {
-			return err
+			return fmt.Errorf("memory was not changed: %w", err)
 		}
 		syncStandingIfTouched(ctx, h, engram.Tier(memTier))
 		scope := "project"
@@ -431,7 +489,10 @@ Tiers: invariant, preference, long, short, cold`,
 		if moveTo == "" {
 			return fmt.Errorf("--to is required")
 		}
-		toTier := engram.Tier(moveTo)
+		toTier, err := engram.ParseTier(moveTo)
+		if err != nil {
+			return fmt.Errorf("--to: %w", err)
+		}
 		if memAgent != "" && !engram.IsStandingTier(toTier) {
 			return fmt.Errorf("--agent only applies to global invariant/preference memory; --to must be invariant or preference")
 		}
@@ -461,6 +522,9 @@ Tiers: invariant, preference, long, short, cold`,
 			from = matches[0].Tier
 			key = matches[0].Key
 		} else {
+			// --from deliberately remains a raw tier string so a user can recover
+			// rows written by older versions under a noncanonical tier. Every
+			// destination is parsed above and therefore canonical.
 			key, err = memStoredKey(args[0], from)
 			if err != nil {
 				return err
@@ -560,7 +624,7 @@ func init() {
 	memWriteCmd.Flags().StringVar(&memTldr, "tldr", "", fmt.Sprintf("one-line summary shown at inject time (max %d chars; falls back to the first line of content)", engram.MaxTldrLen))
 	memListCmd.Flags().BoolVar(&memListJSON, "json", false, "output as JSON array")
 	memListCmd.Flags().BoolVar(&memListMissingTldr, "missing-tldr", false, "list only memories with no tldr (excludes invariants)")
-	memMoveCmd.Flags().StringVar(&moveFrom, "from", "", "source tier (inferred if omitted)")
+	memMoveCmd.Flags().StringVar(&moveFrom, "from", "", "source tier (inferred if omitted; noncanonical values accepted for legacy recovery)")
 	memMoveCmd.Flags().StringVar(&moveTo, "to", "", "destination tier (required)")
 	memMoveCmd.Flags().StringVar(&moveToDB, "to-db", "", `destination database: "global" or "project" (default: same as source)`)
 

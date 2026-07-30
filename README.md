@@ -40,7 +40,7 @@ Whether agents store memory in .md files or just in session context is not neces
 
 Or, the agent can write a markdown file with info in it, but the format is all over the map, and that can make the agent confused. "What do you mean by 'backlog', exactly?" is a question I got once, and we had to go the rounds figuring out that it meant something like long-term memory, and that it should be checked and updated every time we finished a task. This is simply not built in, and it can burn a pile of tokens just figuring it out together.
 
-Engram makes memory explicit, editable, and searchable. It imposes a pretty flexible structure on the idea of remembering things. It's important that it be flexible, and it's also important that it be structured. There is a difference between long-term and short-term memory; between invariants (identity, which applies everywhere) and preferences (rules that yield to what you ask for in the moment) — which can be global when they should hold everywhere, or scoped to a single project; and project memory tied to the working directory. And you can specify your own.
+Engram makes memory explicit, editable, and searchable. It imposes a pretty flexible structure on the idea of remembering things. It's important that it be flexible, and it's also important that it be structured. Its five fixed tiers distinguish long-term from short-term memory; invariants (identity, which applies everywhere) from preferences (rules that yield to what you ask for in the moment); and active memory from the cold archive. Preferences can be global when they should hold everywhere or scoped to a single project, and project memory remains tied to the working directory.
 
 Long-term versus short-term is the distinction people trip over most, so engram settles it with one test that requires no fortune-telling: can you name, right now, the event that will make this memory obsolete? If you can ("once this plan ships", "when the checklist is empty"), it's short-term, and it carries that retirement trigger with it so it gets cleaned up on its own. If you can't — a principle, a settled decision — it's long-term.
 
@@ -194,6 +194,9 @@ Agent: stored in global preference memory: sqlite-cgo-preference
 
 The agent will always tell you where it put something. If you want a specific tier:
 > "remember this as short-term" / "add this to the backlog" / "make this a global preference"
+
+In CLI commands, the human-facing names "long-term" and "short-term" use the
+canonical tier tokens `long` and `short`.
 
 **The conversation stack**
 
