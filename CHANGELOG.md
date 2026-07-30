@@ -11,6 +11,11 @@ in-repo companion.
 
 ## [Unreleased]
 
+### Fixed
+- version reporting: development builds now retain `-v`/`--version` and report
+  `(devel)` instead of hiding the flag; root help begins with the running version
+  for both development and released binaries.
+
 ## [0.12.2] - 2026-07-30
 
 ### Added

@@ -12,9 +12,6 @@ import (
 )
 
 func main() {
-	if v := engramVersion(); v != "(devel)" {
-		rootCmd.Version = v
-	}
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
@@ -22,14 +19,21 @@ func main() {
 
 var rootCWD string
 
-var rootCmd = &cobra.Command{
-	Use:   "engram",
-	Short: "Per-session memory and personality for AI agents",
-	Long: `Per-session memory and personality for AI agents -- works with Claude Code,
+func rootLongDescription(version string) string {
+	return fmt.Sprintf(`Engram version %s
+
+Per-session memory and personality for AI agents -- works with Claude Code,
 Cursor, GitHub Copilot, Codex, and any agent with a markdown init file.
 
 Get started:  engram bootstrap <platform>
-Or ask your agent to run: engram agentinfo`,
+Or ask your agent to run: engram agentinfo`, version)
+}
+
+var rootCmd = &cobra.Command{
+	Use:          "engram",
+	Short:        "Per-session memory and personality for AI agents",
+	Long:         rootLongDescription(engramVersion()),
+	Version:      engramVersion(),
 	SilenceUsage: true,
 }
 
