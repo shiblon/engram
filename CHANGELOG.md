@@ -11,6 +11,11 @@ in-repo companion.
 
 ## [Unreleased]
 
+### Changed
+- mem: `list` now defaults to a compact, human-scannable tier/key/tldr index;
+  use `--keys` for one visible key per line or `--full` for the previous
+  body-inclusive output. JSON output remains unchanged.
+
 ## [0.12.3] - 2026-07-30
 
 ### Fixed

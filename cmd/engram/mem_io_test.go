@@ -153,4 +153,43 @@ func TestMemPersistentPreRunCanonicalizesTierAliases(t *testing.T) {
 	if err := memCmd.PersistentPreRunE(memWriteCmd, nil); err == nil {
 		t.Fatal("persistent pre-run accepted an unknown tier")
 	}
+
+	memTier = ""
+	if err := memCmd.PersistentPreRunE(memWriteCmd, nil); err != nil {
+		t.Fatal(err)
+	}
+	if memTier != string(engram.TierShort) {
+		t.Errorf("empty memTier = %q after pre-run, want %q", memTier, engram.TierShort)
+	}
+}
+
+func TestPrintMemorySummaries(t *testing.T) {
+	memories := []engram.Memory{
+		{Tier: engram.TierLong, Key: "decision", Content: "fallback summary\nfull body"},
+		{Tier: engram.TierPreference, Key: "agent/codex/style", Content: "body", Tldr: "curated summary"},
+	}
+	var buf bytes.Buffer
+	printMemorySummaries(&buf, memories)
+	out := buf.String()
+
+	for _, want := range []string{"TIER", "KEY", "TLDR", "long", "decision", "fallback summary", "preference", "style @codex", "curated summary"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("compact list output %q does not contain %q", out, want)
+		}
+	}
+	if strings.Contains(out, "full body") {
+		t.Errorf("compact list output contains full memory body: %q", out)
+	}
+}
+
+func TestPrintMemoryKeys(t *testing.T) {
+	memories := []engram.Memory{
+		{Tier: engram.TierLong, Key: "decision"},
+		{Tier: engram.TierPreference, Key: "agent/codex/style"},
+	}
+	var buf bytes.Buffer
+	printMemoryKeys(&buf, memories)
+	if got, want := buf.String(), "decision\nstyle\n"; got != want {
+		t.Errorf("key list output = %q, want %q", got, want)
+	}
 }

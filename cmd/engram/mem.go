@@ -40,7 +40,9 @@ Agent layers are global and selected with --agent <name>; they apply on top of t
 primary invariant/preference tiers only when inject runs with the same agent.
 
 Common operations:
-  engram mem -g -t invariant list          list all global invariants
+  engram mem list                           scan project keys and summaries
+  engram mem list --keys                    print project keys only
+  engram mem -g -t invariant list           list global invariant summaries
   engram mem -g list personality           list primary + agent personality layers
   engram mem -g -t preference write <key> <content> --tldr "<summary>"
   engram mem -t long write <key> <content> write to project long-term memory
@@ -50,6 +52,10 @@ Common operations:
 
 Run 'engram mem <subcommand> --help' for details on each operation.`,
 	PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
+		if memTier == "" {
+			memTier = string(engram.TierShort)
+			return nil
+		}
 		tier, err := engram.ParseTier(memTier)
 		if err != nil {
 			return err
@@ -106,6 +112,6 @@ func scopeName(global bool) string {
 
 func init() {
 	memCmd.PersistentFlags().BoolVarP(&memGlobal, "global", "g", false, "use global (~/.engram) database")
-	memCmd.PersistentFlags().StringVarP(&memTier, "tier", "t", string(engram.TierShort), "memory tier (invariant, preference, long, short, cold)")
+	memCmd.PersistentFlags().StringVarP(&memTier, "tier", "t", "", "memory tier (invariant, preference, long, short, cold; default short when needed)")
 	memCmd.PersistentFlags().StringVar(&memAgent, "agent", "", "agent layer for global invariant/preference memory (implies --global)")
 }

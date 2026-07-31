@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/shiblon/engram/pkg/engram"
@@ -71,9 +73,44 @@ func memViewTiers(cmd *cobra.Command) ([]engram.Tier, error) {
 	return tiers, nil
 }
 
-func printMemories(memories []engram.Memory) {
+func printMemories(w io.Writer, memories []engram.Memory) {
 	for i, m := range memories {
-		fmt.Printf("%d. %s %s\n", i+1, engram.MemoryLabel(m), m.Content)
+		fmt.Fprintf(w, "%d. %s %s\n", i+1, engram.MemoryLabel(m), m.Content)
+	}
+}
+
+// visibleMemoryKey returns the key a person uses with the CLI. Agent-layer
+// storage prefixes are an implementation detail, so render them using the same
+// @agent notation as MemoryLabel.
+func visibleMemoryKey(m engram.Memory) string {
+	if agent, base, ok := engram.ParseAgentLayerKey(m.Key); ok {
+		return fmt.Sprintf("%s @%s", base, agent)
+	}
+	return m.Key
+}
+
+func memoryKey(m engram.Memory) string {
+	if _, base, ok := engram.ParseAgentLayerKey(m.Key); ok {
+		return base
+	}
+	return m.Key
+}
+
+func printMemorySummaries(w io.Writer, memories []engram.Memory) {
+	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(tw, "TIER\tKEY\tTLDR")
+	for _, m := range memories {
+		// Tldrs are intended to be one line, but imported or legacy data may not
+		// honor that contract. Keep the index scannable regardless.
+		summary := strings.Join(strings.Fields(m.InjectSummary()), " ")
+		fmt.Fprintf(tw, "%s\t%s\t%s\n", m.Tier, visibleMemoryKey(m), summary)
+	}
+	_ = tw.Flush()
+}
+
+func printMemoryKeys(w io.Writer, memories []engram.Memory) {
+	for _, m := range memories {
+		fmt.Fprintln(w, memoryKey(m))
 	}
 }
 
@@ -249,13 +286,30 @@ var memReadCmd = &cobra.Command{
 var (
 	memListJSON        bool
 	memListMissingTldr bool
+	memListKeys        bool
+	memListFull        bool
 )
 
 var memListCmd = &cobra.Command{
 	Use:   "list [key]",
-	Short: "List memories. Omit --tier to list all tiers (cold excluded; use --tier cold).",
-	Args:  cobra.MaximumNArgs(1),
+	Short: "List memory keys and summaries. Omit --tier to list all active tiers.",
+	Long: `List memories as a compact index of tier, key, and tldr.
+
+Omit --tier to list all active tiers. Cold memory is excluded from that default;
+use --tier cold to list the archive. Use --keys for keys alone, --full to include
+complete memory bodies, or --json for structured output.`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		selectedFormats := 0
+		for _, selected := range []bool{memListJSON, memListKeys, memListFull} {
+			if selected {
+				selectedFormats++
+			}
+		}
+		if selectedFormats > 1 {
+			return fmt.Errorf("--json, --keys, and --full are mutually exclusive")
+		}
+
 		ctx := context.Background()
 		h, err := openMemDB(ctx)
 		if err != nil {
@@ -305,7 +359,14 @@ var memListCmd = &cobra.Command{
 			}
 			return nil
 		}
-		printMemories(memories)
+		switch {
+		case memListKeys:
+			printMemoryKeys(cmd.OutOrStdout(), memories)
+		case memListFull:
+			printMemories(cmd.OutOrStdout(), memories)
+		default:
+			printMemorySummaries(cmd.OutOrStdout(), memories)
+		}
 		return nil
 	},
 }
@@ -624,6 +685,8 @@ func init() {
 	memWriteCmd.Flags().StringVar(&memTldr, "tldr", "", fmt.Sprintf("one-line summary shown at inject time (max %d chars; falls back to the first line of content)", engram.MaxTldrLen))
 	memListCmd.Flags().BoolVar(&memListJSON, "json", false, "output as JSON array")
 	memListCmd.Flags().BoolVar(&memListMissingTldr, "missing-tldr", false, "list only memories with no tldr (excludes invariants)")
+	memListCmd.Flags().BoolVar(&memListKeys, "keys", false, "output visible keys only, one per line")
+	memListCmd.Flags().BoolVar(&memListFull, "full", false, "include complete memory bodies")
 	memMoveCmd.Flags().StringVar(&moveFrom, "from", "", "source tier (inferred if omitted; noncanonical values accepted for legacy recovery)")
 	memMoveCmd.Flags().StringVar(&moveTo, "to", "", "destination tier (required)")
 	memMoveCmd.Flags().StringVar(&moveToDB, "to-db", "", `destination database: "global" or "project" (default: same as source)`)

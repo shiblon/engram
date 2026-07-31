@@ -46,6 +46,26 @@ Long-term versus short-term is the distinction people trip over most, so engram 
 
 The agent can also describe to you how its memory works. You can ask it what it can do, and it can tell you how it treats memory.
 
+### Work with memory directly
+
+An agent is optional. The CLI exposes the same memory index and operations to
+you directly:
+
+```sh
+engram mem list                         # scan project keys and summaries
+engram mem list --keys                  # keys only, one per line
+engram mem read <key>                   # inspect one complete memory
+engram mem search "deployment rollback" # search keys, summaries, and bodies
+engram mem tldr <key>                   # show its session-start summary
+engram mem tldr <key> "new summary"     # change only the summary
+engram mem -t long write <key> "body"   # store a settled project memory
+engram mem move <key> --to cold          # archive a memory without deleting it
+```
+
+These commands use the current project's `.engram` database. Add `--global`
+(`-g`) to inspect or change the memories that apply across projects, and use
+`--tier` (`-t`) when you want one tier rather than the active-memory index.
+
 If you are interacting with it and say, "I don't want to continue just yet, we need to brainstorm on design first," it can know that you mean to store the current context in short-term memory, and to pop the stack when the design question is settled. That's not built-in for your basic code agent. Engram does this, and at a token cost that is tiny compared to working with defaults.
 
 I'm making token claims, here. I don't have numbers to back them up, just experience. Not terribly satisfying, I know.
