@@ -55,6 +55,7 @@ you directly:
 engram mem list                         # scan project keys and summaries
 engram mem list --keys                  # keys only, one per line
 engram mem read <key>                   # inspect one complete memory
+engram mem edit <key>                   # edit its body and summary in $EDITOR
 engram mem search "deployment rollback" # search keys, summaries, and bodies
 engram mem tldr <key>                   # show its session-start summary
 engram mem tldr <key> "new summary"     # change only the summary

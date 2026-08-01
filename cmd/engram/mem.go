@@ -42,6 +42,7 @@ primary invariant/preference tiers only when inject runs with the same agent.
 Common operations:
   engram mem list                           scan project keys and summaries
   engram mem list --keys                    print project keys only
+  engram mem edit <key>                     edit a body and tldr in $EDITOR
   engram mem -g -t invariant list           list global invariant summaries
   engram mem -g list personality           list primary + agent personality layers
   engram mem -g -t preference write <key> <content> --tldr "<summary>"

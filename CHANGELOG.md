@@ -11,6 +11,12 @@ in-repo companion.
 
 ## [Unreleased]
 
+### Added
+- mem: `edit <key>` opens an existing memory's tldr and body in `$VISUAL` or
+  `$EDITOR`, preserves its tier, scope, layer, trigger, and session metadata,
+  treats unchanged saves as no-ops, and retains the temporary file after an
+  editor, parse, or database failure so human edits are not lost.
+
 ### Changed
 - mem: `list` now defaults to a compact, human-scannable tier/key/tldr index;
   use `--keys` for one visible key per line or `--full` for the previous
