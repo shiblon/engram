@@ -16,9 +16,15 @@ in-repo companion.
   `$EDITOR`, preserves its tier, scope, layer, trigger, and session metadata,
   treats unchanged saves as no-ops, and retains the temporary file after an
   editor, parse, or database failure so human edits are not lost.
+- mem: copyable `engram:` addresses carry scope, tier, agent layer, and escaped
+  key through `read`, `write`, `edit`, `delete`, `tldr`, `list`, and `move`.
+  Rootless addresses select the current project (`engram:long/key`); a leading
+  slash selects global memory (`engram:/long/key`). Authorities, queries, and
+  fragments are reserved and rejected for now. Existing bare keys and flags
+  remain supported.
 
 ### Changed
-- mem: `list` now defaults to a compact, human-scannable tier/key/tldr index;
+- mem: `list` now defaults to a compact, human-scannable address/tldr index;
   use `--keys` for one visible key per line or `--full` for the previous
   body-inclusive output. JSON output remains unchanged.
 

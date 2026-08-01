@@ -52,20 +52,22 @@ An agent is optional. The CLI exposes the same memory index and operations to
 you directly:
 
 ```sh
-engram mem list                         # scan project keys and summaries
-engram mem list --keys                  # keys only, one per line
-engram mem read <key>                   # inspect one complete memory
-engram mem edit <key>                   # edit its body and summary in $EDITOR
-engram mem search "deployment rollback" # search keys, summaries, and bodies
-engram mem tldr <key>                   # show its session-start summary
-engram mem tldr <key> "new summary"     # change only the summary
-engram mem -t long write <key> "body"   # store a settled project memory
-engram mem move <key> --to cold          # archive a memory without deleting it
+engram mem list                              # copyable addresses and summaries
+engram mem list --keys                       # bare keys only, one per line
+engram mem read engram:long/deployment       # inspect one project memory
+engram mem edit engram:/preference/editor    # edit one global memory in $EDITOR
+engram mem search "deployment rollback"      # search keys, summaries, and bodies
+engram mem tldr engram:long/deployment       # show its session-start summary
+engram mem write engram:long/decision "body" # store a settled project memory
+engram mem move engram:short/plan --to cold  # archive without deleting it
 ```
 
-These commands use the current project's `.engram` database. Add `--global`
-(`-g`) to inspect or change the memories that apply across projects, and use
-`--tier` (`-t`) when you want one tier rather than the active-memory index.
+In an address, `engram:tier/key` means the current project and
+`engram:/tier/key` means global memory. A global agent layer is explicit, for
+example `engram:/preference/@codex/editor`. Addresses work anywhere an entry
+command accepts a key and carry the scope, tier, and layer with them. The older
+bare-key form remains available: add `--global` (`-g`), `--tier` (`-t`), and
+`--agent` when needed.
 
 If you are interacting with it and say, "I don't want to continue just yet, we need to brainstorm on design first," it can know that you mean to store the current context in short-term memory, and to pop the stack when the design question is settled. That's not built-in for your basic code agent. Engram does this, and at a token cost that is tiny compared to working with defaults.
 

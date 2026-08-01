@@ -195,7 +195,7 @@ func applyMemoryEdit(ctx context.Context, db *sql.DB, original engram.Memory, tl
 }
 
 var memEditCmd = &cobra.Command{
-	Use:   "edit <key>",
+	Use:   "edit <key-or-address>",
 	Short: "Edit an existing memory's body and tldr in your editor",
 	Long: `Open an existing memory in VISUAL or EDITOR (falling back to vi, or
 notepad on Windows). Scope, tier, key, skill trigger, and short-term session
@@ -209,18 +209,22 @@ If parsing, the editor, or the database write fails, the edited temporary file
 is retained and its path is reported so your work is not lost.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) (runErr error) {
+		target, err := resolveMemoryTarget(cmd, args[0], "tier")
+		if err != nil {
+			return err
+		}
 		ctx := context.Background()
-		h, err := openMemDB(ctx)
+		h, err := target.openDB(ctx)
 		if err != nil {
 			return err
 		}
 		defer h.DB.Close()
 
-		tiers, err := memViewTiers(cmd)
+		tiers, err := target.viewTiers(cmd)
 		if err != nil {
 			return err
 		}
-		original, err := findEditableMemory(ctx, h.DB, tiers, memAgent, args[0])
+		original, err := findEditableMemory(ctx, h.DB, tiers, target.Agent, target.Key)
 		if err != nil {
 			return err
 		}
@@ -241,7 +245,7 @@ is retained and its path is reported so your work is not lost.`,
 			}
 		}()
 
-		initial := formatMemoryEdit(scopeName(memUsesGlobal()), *original)
+		initial := formatMemoryEdit(scopeName(target.Global), *original)
 		if _, err := f.WriteString(initial); err != nil {
 			_ = f.Close()
 			return fmt.Errorf("write edit file: %w", err)
@@ -261,12 +265,12 @@ is retained and its path is reported so your work is not lost.`,
 		if err != nil {
 			return fmt.Errorf("parse edited memory: %w", err)
 		}
-		result, err := applyMemoryEdit(ctx, h.DB, *original, tldr, body, scopeName(memUsesGlobal()))
+		result, err := applyMemoryEdit(ctx, h.DB, *original, tldr, body, scopeName(target.Global))
 		if err != nil {
 			return fmt.Errorf("memory was not changed: %w", err)
 		}
 		if result != "unchanged" {
-			syncStandingIfTouched(ctx, h, original.Tier)
+			syncStandingIfTouched(ctx, h, target.Global, original.Tier)
 		}
 		removeFile = true
 		fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", result, engram.MemoryLabel(*original))

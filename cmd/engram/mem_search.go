@@ -57,7 +57,7 @@ var memSearchCmd = &cobra.Command{
 			return nil
 		}
 		for i, m := range results {
-			fmt.Printf("%d. %s %s\n", i+1, engram.MemoryLabel(m), m.Content)
+			fmt.Printf("%d. %s %s\n", i+1, engram.MemoryAddressFor(memUsesGlobal(), m), m.Content)
 		}
 		return nil
 	},

@@ -34,21 +34,32 @@ memory loads in every project, a project memory only in its own.
 
 Every entry carries a one-line tldr (set with --tldr on write; falls back to the
 first line of content). Inject surfaces the tldr for every tier except invariants,
-which show in full; read an entry's full text with 'engram mem read <key>'.
+which show in full; read an entry's full text with 'engram mem read <key-or-address>'.
 
 Agent layers are global and selected with --agent <name>; they apply on top of the
 primary invariant/preference tiers only when inject runs with the same agent.
 
+Compact list output uses copyable addresses. A rootless path means the current
+project; a leading slash means global memory:
+
+  engram:long/deployment                  project long-term memory
+  engram:/preference/editor               global primary preference
+  engram:/preference/@codex/editor        global codex preference layer
+
+Use an address anywhere a memory command accepts <key>. It supplies scope, tier,
+and agent layer, so the corresponding flags are unnecessary. Existing bare keys
+and flags remain supported; a conflicting address and flag is an error.
+
 Common operations:
-  engram mem list                           scan project keys and summaries
+  engram mem list                           scan project addresses and summaries
   engram mem list --keys                    print project keys only
-  engram mem edit <key>                     edit a body and tldr in $EDITOR
+  engram mem edit engram:long/deployment    edit a body and tldr in $EDITOR
   engram mem -g -t invariant list           list global invariant summaries
-  engram mem -g list personality           list primary + agent personality layers
+  engram mem -g list personality            list primary + agent personality layers
   engram mem -g -t preference write <key> <content> --tldr "<summary>"
-  engram mem -t long write <key> <content> write to project long-term memory
-  engram mem move <key> --to long --to-db global   relocate across tier and database
-  engram mem search <query>                full-text search across all tiers
+  engram mem write engram:long/<key> <content>   write project long-term memory
+  engram mem move engram:short/<key> --to long   promote a project memory
+  engram mem search <query>                 full-text search across all tiers
   engram inject                            print session-start context as JSON
 
 Run 'engram mem <subcommand> --help' for details on each operation.`,

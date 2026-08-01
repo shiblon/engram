@@ -169,10 +169,10 @@ func TestPrintMemorySummaries(t *testing.T) {
 		{Tier: engram.TierPreference, Key: "agent/codex/style", Content: "body", Tldr: "curated summary"},
 	}
 	var buf bytes.Buffer
-	printMemorySummaries(&buf, memories)
+	printMemorySummaries(&buf, memories, true)
 	out := buf.String()
 
-	for _, want := range []string{"TIER", "KEY", "TLDR", "long", "decision", "fallback summary", "preference", "style @codex", "curated summary"} {
+	for _, want := range []string{"ADDRESS", "TLDR", "engram:/long/decision", "fallback summary", "engram:/preference/@codex/style", "curated summary"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("compact list output %q does not contain %q", out, want)
 		}

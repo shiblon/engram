@@ -32,6 +32,20 @@ func TestRenderAgentInfoWarnsAgainstMemoryReadbackWrites(t *testing.T) {
 	}
 }
 
+func TestRenderAgentInfoExplainsCopyableMemoryAddresses(t *testing.T) {
+	got := renderAgentInfo()
+	for _, want := range []string{
+		"engram:tier/key",
+		"engram:/tier/key is global",
+		"engram:/preference/@codex/key",
+		"Bare keys plus --tier/--global/--agent remain supported",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("rendered guidance missing %q", want)
+		}
+	}
+}
+
 func TestProtocolGuidanceCarriesVersionAndSkillMetaTrigger(t *testing.T) {
 	got := engramProtocolSection("codex")
 	for _, want := range []string{
