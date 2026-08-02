@@ -46,6 +46,20 @@ func TestRenderAgentInfoExplainsCopyableMemoryAddresses(t *testing.T) {
 	}
 }
 
+func TestRenderAgentInfoExplainsLinkedWorktreeReadAccess(t *testing.T) {
+	got := renderAgentInfo()
+	for _, want := range []string{
+		"Linked Git worktrees share the main checkout's Engram database",
+		"request narrowly scoped filesystem",
+		"retry once",
+		"separate .engram directory in the linked worktree",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("rendered guidance missing %q", want)
+		}
+	}
+}
+
 func TestProtocolGuidanceCarriesVersionAndSkillMetaTrigger(t *testing.T) {
 	got := engramProtocolSection("codex")
 	for _, want := range []string{

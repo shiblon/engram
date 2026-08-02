@@ -9,11 +9,13 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
 )
 
 // SaveMeta is written as meta.json at the root of the archive.
@@ -259,11 +261,86 @@ func openRaw(ctx context.Context, path string) (*sql.DB, error) {
 		db.Close()
 		return nil, err
 	}
+	// Keep the WAL and shared-memory files after the final writable connection
+	// closes. A later read-only process can then participate in WAL locking
+	// without needing permission to create coordination files beside the DB --
+	// important when a sandboxed linked worktree can read, but not write, the
+	// main checkout that owns its Engram database.
+	if !isMemorySQLite(path) {
+		if err := persistWAL(ctx, db); err != nil {
+			db.Close()
+			return nil, err
+		}
+	}
 	if _, err := db.ExecContext(ctx, "PRAGMA busy_timeout=5000"); err != nil {
 		db.Close()
 		return nil, err
 	}
 	return db, nil
+}
+
+func isMemorySQLite(path string) bool {
+	return path == ":memory:" || strings.HasPrefix(path, "file::memory:")
+}
+
+// openReadOnly opens an existing SQLite database without changing journal
+// mode, applying schema, or running migrations. It deliberately does not use
+// immutable=1: Engram databases remain live and may have concurrent writers.
+func openReadOnly(ctx context.Context, path string) (*sql.DB, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	dsn := (&url.URL{
+		Scheme:   "file",
+		Path:     filepath.ToSlash(abs),
+		RawQuery: "mode=ro",
+	}).String()
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	if err := db.PingContext(ctx); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if _, err := db.ExecContext(ctx, "PRAGMA busy_timeout=5000"); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return db, nil
+}
+
+func persistWAL(ctx context.Context, db *sql.DB) error {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	return conn.Raw(func(driverConn any) error {
+		fc, ok := driverConn.(sqlite.FileControl)
+		if !ok {
+			return fmt.Errorf("sqlite driver does not support persistent WAL control")
+		}
+		if _, err := fc.FileControlPersistWAL("main", 1); err != nil {
+			return fmt.Errorf("enable persistent WAL: %w", err)
+		}
+		return nil
+	})
+}
+
+// removeSQLiteSidecars removes WAL coordination files before atomically
+// replacing a closed database file. Persistent WAL makes their lifecycle
+// explicit: carrying sidecars from the old database across replacement can
+// make SQLite pair the new main file with stale state.
+func removeSQLiteSidecars(path string) error {
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if err := os.Remove(path + suffix); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
 }
 
 // vacuumInto creates a WAL-safe consistent snapshot of src at destPath using

@@ -69,6 +69,13 @@ command accepts a key and carry the scope, tier, and layer with them. The older
 bare-key form remains available: add `--global` (`-g`), `--tier` (`-t`), and
 `--agent` when needed.
 
+Read-only commands do not create or migrate memory databases. Linked Git
+worktrees read the database owned by the main checkout. In a filesystem
+sandbox, Engram normally uses the existing WAL coordination files without
+needing write access; if SQLite needs to create them once, the error names the
+shared directory to approve. Do not create a second `.engram` inside the linked
+worktree.
+
 If you are interacting with it and say, "I don't want to continue just yet, we need to brainstorm on design first," it can know that you mean to store the current context in short-term memory, and to pop the stack when the design question is settled. That's not built-in for your basic code agent. Engram does this, and at a token cost that is tiny compared to working with defaults.
 
 I'm making token claims, here. I don't have numbers to back them up, just experience. Not terribly satisfying, I know.

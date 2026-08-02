@@ -109,6 +109,10 @@ func (t memoryTarget) openDB(ctx context.Context) (*engram.DBHandle, error) {
 	return openScopeDB(ctx, t.Global)
 }
 
+func (t memoryTarget) openDBReadOnly(ctx context.Context) (*engram.DBHandle, error) {
+	return openScopeDBReadOnly(ctx, t.Global)
+}
+
 func (t memoryTarget) storedKey() (string, error) {
 	if t.Agent == "" {
 		return t.Key, nil

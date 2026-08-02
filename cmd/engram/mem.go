@@ -90,6 +90,10 @@ func openMemDB(ctx context.Context) (*engram.DBHandle, error) {
 	return openScopeDB(ctx, memUsesGlobal())
 }
 
+func openMemDBReadOnly(ctx context.Context) (*engram.DBHandle, error) {
+	return openScopeDBReadOnly(ctx, memUsesGlobal())
+}
+
 // openScopeDB opens either the global (~/.engram) or the project (.engram)
 // database explicitly, independent of the command's flags. The move command uses
 // it to open a second, cross-scope handle when relocating a memory between the two
@@ -108,6 +112,28 @@ func openScopeDB(ctx context.Context, global bool) (*engram.DBHandle, error) {
 		return nil, err
 	}
 	db, err := engram.OpenProjectDB(ctx, root)
+	if err != nil {
+		return nil, err
+	}
+	return &engram.DBHandle{DB: db, Path: engram.DBPath(root)}, nil
+}
+
+// openScopeDBReadOnly opens existing memory without creating files, applying
+// schema changes, or requiring a write-capable SQLite connection.
+func openScopeDBReadOnly(ctx context.Context, global bool) (*engram.DBHandle, error) {
+	if global {
+		db, err := engram.OpenGlobalDBReadOnly(ctx)
+		if err != nil {
+			return nil, err
+		}
+		path, _ := engram.GlobalDBPath()
+		return &engram.DBHandle{DB: db, Path: path}, nil
+	}
+	root, err := engram.FindProjectRoot(effectiveCWD())
+	if err != nil {
+		return nil, err
+	}
+	db, err := engram.OpenProjectDBReadOnly(ctx, root)
 	if err != nil {
 		return nil, err
 	}

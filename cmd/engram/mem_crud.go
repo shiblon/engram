@@ -233,7 +233,7 @@ var memReadCmd = &cobra.Command{
 			return err
 		}
 		ctx := context.Background()
-		h, err := target.openDB(ctx)
+		h, err := target.openDBReadOnly(ctx)
 		if err != nil {
 			return err
 		}
@@ -329,7 +329,7 @@ write, delete, tldr, list, and move:
 		}
 
 		ctx := context.Background()
-		h, err := target.openDB(ctx)
+		h, err := target.openDBReadOnly(ctx)
 		if err != nil {
 			return err
 		}
@@ -472,7 +472,12 @@ content. Omit --tier to resolve the key automatically when it is unambiguous.`,
 			return err
 		}
 		ctx := context.Background()
-		h, err := target.openDB(ctx)
+		var h *engram.DBHandle
+		if len(args) == 1 {
+			h, err = target.openDBReadOnly(ctx)
+		} else {
+			h, err = target.openDB(ctx)
+		}
 		if err != nil {
 			return err
 		}

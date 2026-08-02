@@ -27,6 +27,14 @@ in-repo companion.
 - mem: `list` now defaults to a compact, human-scannable address/tldr index;
   use `--keys` for one visible key per line or `--full` for the previous
   body-inclusive output. JSON output remains unchanged.
+- database access: inspection commands now use true read-only SQLite
+  connections and do not create databases or run schema initialization.
+  Writable opens preserve WAL coordination files so sandboxed linked worktrees
+  can read the main checkout's shared database without write access. When a
+  one-time coordination-file setup is still needed, errors report the exact
+  shared path instead of SQLite's bare `unable to open database file (14)`.
+- status: database-open and query failures are reported instead of being
+  silently rendered as zero memory counts.
 
 ## [0.12.3] - 2026-07-30
 

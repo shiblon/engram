@@ -22,15 +22,23 @@ func runStatus(_ *cobra.Command, _ []string) error {
 	codename := ""
 	shortCount := 0
 	if engram.GlobalDBExists() {
-		if db, err := engram.OpenGlobalDB(ctx); err == nil {
-			if m, err := engram.ReadMemory(ctx, db, engram.TierInvariant, "codename"); err == nil && m != nil {
-				codename = m.Content
-			}
-			if items, err := engram.ListMemories(ctx, db, engram.TierShort); err == nil {
-				shortCount += len(items)
-			}
-			db.Close()
+		db, err := engram.OpenGlobalDBReadOnly(ctx)
+		if err != nil {
+			return fmt.Errorf("status: %w", err)
 		}
+		if m, err := engram.ReadMemory(ctx, db, engram.TierInvariant, "codename"); err != nil {
+			db.Close()
+			return fmt.Errorf("status: read global codename: %w", err)
+		} else if m != nil {
+			codename = m.Content
+		}
+		if items, err := engram.ListMemories(ctx, db, engram.TierShort); err != nil {
+			db.Close()
+			return fmt.Errorf("status: list global short memory: %w", err)
+		} else {
+			shortCount += len(items)
+		}
+		db.Close()
 	}
 
 	project := ""
@@ -38,11 +46,21 @@ func runStatus(_ *cobra.Command, _ []string) error {
 	if cwd, err := os.Getwd(); err == nil {
 		if root, err := engram.FindProjectRoot(cwd); err == nil {
 			project = filepath.Base(root)
-			if db, err := engram.OpenProjectDB(ctx, root); err == nil {
-				if items, err := engram.ListMemories(ctx, db, engram.TierLong); err == nil {
+			if engram.ProjectDBExists(root) {
+				db, err := engram.OpenProjectDBReadOnly(ctx, root)
+				if err != nil {
+					return fmt.Errorf("status: %w", err)
+				}
+				if items, err := engram.ListMemories(ctx, db, engram.TierLong); err != nil {
+					db.Close()
+					return fmt.Errorf("status: list project long memory: %w", err)
+				} else {
 					longCount = len(items)
 				}
-				if items, err := engram.ListMemories(ctx, db, engram.TierShort); err == nil {
+				if items, err := engram.ListMemories(ctx, db, engram.TierShort); err != nil {
+					db.Close()
+					return fmt.Errorf("status: list project short memory: %w", err)
+				} else {
 					shortCount += len(items)
 				}
 				db.Close()

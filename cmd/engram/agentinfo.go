@@ -139,6 +139,12 @@ project, engram:/tier/key is global, and engram:/preference/@codex/key selects a
 global agent layer. An address supplies scope, tier, and layer without extra flags.
 Bare keys plus --tier/--global/--agent remain supported.
 
+Linked Git worktrees share the main checkout's Engram database. Read-only
+commands normally work without write access to that checkout. If Engram reports
+that SQLite needs WAL coordination files, request narrowly scoped filesystem
+access to the exact directory in the error and retry once. Do not create a
+separate .engram directory in the linked worktree.
+
 ## Memory tiers
 
 ` + memoryTierGuidance + `

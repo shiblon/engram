@@ -14,7 +14,7 @@ var memSearchCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
-		h, err := openMemDB(ctx)
+		h, err := openMemDBReadOnly(ctx)
 		if err != nil {
 			return err
 		}
