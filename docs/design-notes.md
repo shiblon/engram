@@ -126,3 +126,28 @@ Do not write memory or files in other repos or projects without explicit user
 approval, and ask before writing or updating global memory. Relocating a memory
 across the global/project boundary is a deliberate act: `engram mem move <key>
 --to <tier> --to-db global|project`.
+
+## Durable state is not automatically memory
+
+New subsystems tend to arrive asking for a tier, because a tier is the most
+visible place to put something that has to persist. Most of them want a table
+instead. Three questions settle it, and all three are about what the tiers
+already promise:
+
+- Would a row belong in `engram save`, carried to another machine?
+- Would it take a place in the priority ladder that shapes agent behavior?
+- Would a human ever curate it?
+
+Three times no means it is state, and a tier would assert otherwise. The cost of
+getting this wrong is visible rather than theoretical: a tier that is not really
+memory forces an "except this one" carve-out in `mem list`, `mem search`, the FTS
+index, `curation_events`, `mem dump`, and the save archive. Several carve-outs
+around one value is the signature of a wrong abstraction, and the schema already
+has the right pattern for the alternative, since `events`, `curation_events`,
+`projects`, and `automation_catalog_entries` all live outside `memories` for
+exactly this reason.
+
+The corollary is that a new table is cheap and a new tier is not. Tiers are
+user-facing vocabulary that propagate into help text, agent guidance, the
+priority ladder, and every uniform traversal of `memories`. Worked example: the
+run mailbox in `docs/dispatch-notes.md`.
