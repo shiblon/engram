@@ -59,6 +59,9 @@ type TokenUsage struct {
 	Output        int `json:"output,omitempty"`
 	CacheCreation int `json:"cache_creation,omitempty"`
 	CacheRead     int `json:"cache_read,omitempty"`
+	// Reasoning counts codex's reasoning output tokens, which claude does not
+	// report separately.
+	Reasoning int `json:"reasoning,omitempty"`
 }
 
 // TaskResult is one child's outcome. It is repeated verbatim inside batch_done, so

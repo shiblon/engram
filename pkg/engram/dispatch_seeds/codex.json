@@ -3,7 +3,8 @@
   "provider": "codex",
   "executable": "codex",
   "base_argv": [
-    "exec"
+    "exec",
+    "--json"
   ],
   "prompt": {
     "transport": "argv",
@@ -51,7 +52,8 @@
       "-o",
       "{{output_file}}"
     ],
-    "model_regex": "(?im)^\\s*model:\\s*(\\S+)"
+    "model_regex": "(?im)^\\s*model:\\s*(\\S+)",
+    "usage_jsonl_path": "usage"
   },
   "version": {
     "argv": [
@@ -76,6 +78,11 @@
       "result"
     ],
     "seed": true,
-    "notes": "Seed shipped with engram, drawn from a probe pass against codex-cli 0.146.0. Two findings are baked in: top-level help documents -a/--ask-for-approval but `codex exec` rejects it, so this spec claims only flags the exec subcommand accepts; and codex reads stdin IN ADDITION to an argv prompt, appending it as a <stdin> block, which is why dispatch always sets a child's stdin explicitly. No context-suppression flag is claimed, so a codex child pays full context load on spawn -- that shows up as a warning on every task rather than as a silent cost. Re-checked against codex-cli 0.146.0 help on 2026-08-05: `codex exec` accepts -m/--model, -s/--sandbox (read-only, workspace-write, danger-full-access), -C/--cd, and -o/--output-last-message. --json is deliberately NOT used, because it replaces the human preamble that carries the resolved model line this spec reads for verification. Nothing here is verified on THIS machine until you run `engram dispatch probe codex --model <M>`. AUTHORITY IS NOT ENFORCED HERE, measured twice on 2026-08-05. codex echoed `sandbox: read-only` in its own preamble and then, under that very setting, (a) created a project skill in engram memory during a review batch and (b) created ./authz-canary-ws.txt inside the workspace on a direct canary -- once before and once after bubblewrap was installed. So `--sandbox read-only` is ADVISORY on this machine: the flag is accepted and reported as applied while writes still succeed. A flag the provider ACCEPTS is not a flag the provider ENFORCES. Never rely on codex authority to contain a child; dispatch warns on every task because authority is absent from verified_fields."
+    "notes": "Seed shipped with engram, drawn from a probe pass against codex-cli 0.146.0. Two findings are baked in: top-level help documents -a/--ask-for-approval but `codex exec` rejects it, so this spec claims only flags the exec subcommand accepts; and codex reads stdin IN ADDITION to an argv prompt, appending it as a <stdin> block, which is why dispatch always sets a child's stdin explicitly. No context-suppression flag is claimed, so a codex child pays full context load on spawn -- that shows up as a warning on every task rather than as a silent cost. Re-checked against codex-cli 0.146.0 help on 2026-08-05: `codex exec` accepts -m/--model, -s/--sandbox (read-only, workspace-write, danger-full-access), -C/--cd, and -o/--output-last-message. --json is deliberately NOT used, because it replaces the human preamble that carries the resolved model line this spec reads for verification. Nothing here is verified on THIS machine until you run `engram dispatch probe codex --model <M>`. AUTHORITY IS NOT ENFORCED HERE, measured twice on 2026-08-05. codex echoed `sandbox: read-only` in its own preamble and then, under that very setting, (a) created a project skill in engram memory during a review batch and (b) created ./authz-canary-ws.txt inside the workspace on a direct canary -- once before and once after bubblewrap was installed. So `--sandbox read-only` is ADVISORY on this machine: the flag is accepted and reported as applied while writes still succeed. A flag the provider ACCEPTS is not a flag the provider ENFORCES. Never rely on codex authority to contain a child; dispatch warns on every task because authority is absent from verified_fields. TOKENS vs MODEL, measured 2026-08-05: `codex exec --json` emits a turn.completed event carrying input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens, and reasoning_output_tokens -- but it suppresses the preamble entirely, on stdout AND stderr, so the resolved model line disappears. Plain `codex exec` is the reverse: model visible, no usage anywhere. codex reports no dollar cost either way. So runs use --json for the token counts and the probe drops it to read the model, which is what `probe.base_argv` is for."
+  },
+  "probe": {
+    "base_argv": [
+      "exec"
+    ]
   }
 }

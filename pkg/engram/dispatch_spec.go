@@ -203,6 +203,24 @@ type ResultSpec struct {
 	ModelPath          string   `json:"model_path,omitempty"`
 	ModelRegex         string   `json:"model_regex,omitempty"`
 	OutputFileArgv     []string `json:"output_file_argv,omitempty"`
+	// UsageJSONLPath names a path to a token-usage object to look for across the
+	// lines of a JSONL stdout stream, independently of where the RESULT comes from.
+	// codex needs this: its result arrives in a file while its token counts arrive
+	// only as a JSONL event, so neither one alone accounts for a run.
+	UsageJSONLPath string `json:"usage_jsonl_path,omitempty"`
+}
+
+// ProbeOverride adjusts the invocation used when probing, which is a different job
+// from running a task.
+//
+// codex forced this. `codex exec --json` reports token usage but suppresses the
+// preamble naming the resolved model, while plain `codex exec` prints the model and
+// reports no usage -- measured 2026-08-05, both ways. A run wants the tokens; a
+// probe wants the model, since positively verifying model selection is the whole
+// point of probing and the only thing that catches a silent substitution. One argv
+// cannot serve both, so the probe gets its own.
+type ProbeOverride struct {
+	BaseArgv []string `json:"base_argv,omitempty"`
 }
 
 // ExitCodes records what a provider's exit statuses mean, to whatever extent
@@ -264,6 +282,7 @@ type ProviderSpec struct {
 	Env             map[string]string `json:"env,omitempty"`
 	Result          ResultSpec        `json:"result"`
 	Version         *ArgvFragment     `json:"version,omitempty"`
+	Probe           *ProbeOverride    `json:"probe,omitempty"`
 	ExitCodes       ExitCodes         `json:"exit_codes,omitempty"`
 	Provenance      Provenance        `json:"provenance,omitempty"`
 }
@@ -315,6 +334,11 @@ func (s *ProviderSpec) Validate() error {
 	}
 	if err := s.checkArgv("base_argv", s.BaseArgv, nil); err != nil {
 		return err
+	}
+	if s.Probe != nil {
+		if err := s.checkArgv("probe.base_argv", s.Probe.BaseArgv, nil); err != nil {
+			return err
+		}
 	}
 
 	switch s.Prompt.Transport {
@@ -497,6 +521,8 @@ func (s *ProviderSpec) Clone() *ProviderSpec {
 // TaskRequest is one child's worth of work, expressed in role-level terms. It
 // names no provider flags, which is what keeps a dispatch plan portable.
 type TaskRequest struct {
+	// ForProbe selects the spec's probe overrides, if it declares any.
+	ForProbe        bool
 	ID              string
 	Prompt          string
 	SystemPrompt    string
@@ -566,7 +592,11 @@ func (s *ProviderSpec) BuildInvocation(request TaskRequest, tempDir string) (*In
 		}
 	}
 
-	inv.Argv = append(inv.Argv, s.BaseArgv...)
+	baseArgv := s.BaseArgv
+	if request.ForProbe && s.Probe != nil && len(s.Probe.BaseArgv) > 0 {
+		baseArgv = s.Probe.BaseArgv
+	}
+	inv.Argv = append(inv.Argv, baseArgv...)
 
 	if request.Model != "" {
 		if s.Model == nil {

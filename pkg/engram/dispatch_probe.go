@@ -122,6 +122,7 @@ func ProbeSpec(ctx context.Context, spec *ProviderSpec, opts ProbeOptions) (Prob
 	}()
 
 	request := TaskRequest{
+		ForProbe:        true,
 		ID:              "probe",
 		Prompt:          opts.Prompt,
 		Model:           opts.Model,
@@ -196,6 +197,7 @@ func ProbeSpec(ctx context.Context, spec *ProviderSpec, opts ProbeOptions) (Prob
 		// Fallback: pass a deliberately invalid model and confirm it errors. If a
 		// provider silently falls back instead, that is the finding.
 		liveness, err := runProbeOnce(ctx, spec, TaskRequest{
+			ForProbe:        true,
 			ID:              "probe-liveness",
 			Prompt:          opts.Prompt,
 			Model:           DefaultInvalidProbeModel,

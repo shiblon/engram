@@ -106,6 +106,15 @@ func extractResult(spec *ProviderSpec, out providerOutput) (extractedResult, err
 		return extracted, fmt.Errorf("unknown result format %q", spec.Result.Format)
 	}
 
+	// Token usage may arrive on a channel entirely separate from the result. codex
+	// writes its final message to a file and reports usage only as a JSONL event, so
+	// looking for usage where the result was found would account for neither.
+	if spec.Result.UsageJSONLPath != "" {
+		if usage := usageFromJSONL(out.Stdout, spec.Result.UsageJSONLPath); usage != nil {
+			extracted.Tokens = usage
+		}
+	}
+
 	// Model identity from a regex applies to formats that report it in a text
 	// preamble rather than in a JSON field. This is client-side metadata echoing
 	// the resolved configuration, not the model's own claim about itself.
@@ -175,6 +184,30 @@ func reportedModelFrom(value any) string {
 	}
 }
 
+// usageFromJSONL scans a JSONL stream for the last object carrying a usage payload
+// at the given path.
+func usageFromJSONL(stdout []byte, path string) *TokenUsage {
+	var found *TokenUsage
+	for _, line := range strings.Split(string(stdout), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var document any
+		if err := json.Unmarshal([]byte(line), &document); err != nil {
+			continue
+		}
+		value, ok := resolveJSONPath(document, path)
+		if !ok {
+			continue
+		}
+		if usage := tokensFromObject(value); usage != nil {
+			found = usage
+		}
+	}
+	return found
+}
+
 // tokensFrom picks up the token counters both installed providers happen to spell
 // the same way. Absent counters simply yield nil; token accounting is a bonus on
 // top of the result, never a reason to fail a task.
@@ -183,15 +216,35 @@ func tokensFrom(document any) *TokenUsage {
 	if !ok {
 		return nil
 	}
-	source := root
 	if usage, ok := root["usage"].(map[string]any); ok {
-		source = usage
+		return tokensFromObject(usage)
+	}
+	return tokensFromObject(root)
+}
+
+// tokensFromObject reads token counters, accepting both providers' spellings.
+// claude says cache_creation_input_tokens and cache_read_input_tokens; codex says
+// cache_write_input_tokens and cached_input_tokens for the same two ideas, and adds
+// reasoning tokens of its own.
+func tokensFromObject(value any) *TokenUsage {
+	source, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	pick := func(names ...string) int {
+		for _, name := range names {
+			if n := jsonInt(source[name]); n != 0 {
+				return n
+			}
+		}
+		return 0
 	}
 	usage := TokenUsage{
-		Input:         jsonInt(source["input_tokens"]),
-		Output:        jsonInt(source["output_tokens"]),
-		CacheCreation: jsonInt(source["cache_creation_input_tokens"]),
-		CacheRead:     jsonInt(source["cache_read_input_tokens"]),
+		Input:         pick("input_tokens"),
+		Output:        pick("output_tokens"),
+		CacheCreation: pick("cache_creation_input_tokens", "cache_write_input_tokens"),
+		CacheRead:     pick("cache_read_input_tokens", "cached_input_tokens"),
+		Reasoning:     pick("reasoning_output_tokens"),
 	}
 	if usage == (TokenUsage{}) {
 		return nil

@@ -328,3 +328,69 @@ func TestBoundedBufferDiscardsWithoutFailingTheChild(t *testing.T) {
 		t.Error("truncation must be reported, not silent")
 	}
 }
+
+func TestUsageIsReadFromASeparateChannelThanTheResult(t *testing.T) {
+	// codex writes its final message to a file and reports token usage only as a
+	// JSONL event, so looking for usage where the result was found accounts for
+	// neither. It also spells two of the counters differently from claude.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "last.txt")
+	if err := os.WriteFile(path, []byte("the answer"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	spec := minimalSpec()
+	spec.Result = ResultSpec{
+		Format:         ResultFormatLastMessageFile,
+		OutputFileArgv: []string{"-o", PlaceholderOutputFile},
+		UsageJSONLPath: "usage",
+	}
+	stdout := `{"type":"thread.started"}` + "\n" +
+		`{"type":"turn.completed","usage":{"input_tokens":17892,"cached_input_tokens":9984,` +
+		`"cache_write_input_tokens":0,"output_tokens":144,"reasoning_output_tokens":130}}` + "\n"
+
+	extracted, err := extractResult(spec, providerOutput{
+		Stdout: []byte(stdout), OutputFile: path, MaxFileBytes: 1 << 20,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if extracted.Result != "the answer" {
+		t.Errorf("result = %q", extracted.Result)
+	}
+	if extracted.Tokens == nil {
+		t.Fatal("token usage was not read from the JSONL stream")
+	}
+	if extracted.Tokens.Input != 17892 || extracted.Tokens.Output != 144 {
+		t.Errorf("tokens = %+v", extracted.Tokens)
+	}
+	// codex's spellings must map onto the same fields claude's do.
+	if extracted.Tokens.CacheRead != 9984 {
+		t.Errorf("cached_input_tokens did not map to CacheRead: %+v", extracted.Tokens)
+	}
+	if extracted.Tokens.Reasoning != 130 {
+		t.Errorf("reasoning tokens dropped: %+v", extracted.Tokens)
+	}
+}
+
+func TestProbeUsesItsOwnBaseArgvWhenTheSpecDeclaresOne(t *testing.T) {
+	// A probe and a run want different things from codex: --json reports tokens but
+	// suppresses the model preamble, and the probe exists to verify the model.
+	spec := minimalSpec()
+	spec.BaseArgv = []string{"exec", "--json"}
+	spec.Probe = &ProbeOverride{BaseArgv: []string{"exec"}}
+
+	run, err := spec.BuildInvocation(TaskRequest{ID: "t", Prompt: "p"}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsString(run.Argv, "--json") {
+		t.Errorf("a normal run should keep --json for its token counts: %#v", run.Argv)
+	}
+	probe, err := spec.BuildInvocation(TaskRequest{ID: "t", Prompt: "p", ForProbe: true}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsString(probe.Argv, "--json") {
+		t.Errorf("a probe must drop --json so the model preamble survives: %#v", probe.Argv)
+	}
+}
