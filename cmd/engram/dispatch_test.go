@@ -168,7 +168,7 @@ func TestDispatchSpecPutValidatesAndStores(t *testing.T) {
 	isolatedHome(t)
 
 	spec := `{
-		"v": 2,
+		"v": 1,
 		"provider": "toy",
 		"executable": "toy-cli",
 		"prompt": {"transport": "stdin"},
@@ -202,7 +202,7 @@ func TestDispatchSpecPutValidatesAndStores(t *testing.T) {
 func TestDispatchSpecPutRefusesAMismatchedProvider(t *testing.T) {
 	isolatedHome(t)
 	rootCmd.SetIn(strings.NewReader(
-		`{"v":2,"provider":"toy","executable":"t","prompt":{"transport":"stdin"},"result":{"format":"text"}}`))
+		`{"v":1,"provider":"toy","executable":"t","prompt":{"transport":"stdin"},"result":{"format":"text"}}`))
 	t.Cleanup(func() { rootCmd.SetIn(nil) })
 
 	_, _, err := runDispatchCLI(t, "dispatch", "spec", "put", "other", "--from", "-")
@@ -214,7 +214,7 @@ func TestDispatchSpecPutRefusesAMismatchedProvider(t *testing.T) {
 func TestDispatchSpecValidateReportsABrokenDocument(t *testing.T) {
 	isolatedHome(t)
 	rootCmd.SetIn(strings.NewReader(
-		`{"v":2,"provider":"toy","executable":"t","prompt":{"transport":"stdin"},
+		`{"v":1,"provider":"toy","executable":"t","prompt":{"transport":"stdin"},
 		  "model":{"argv":["--model"]},"result":{"format":"text"}}`))
 	t.Cleanup(func() { rootCmd.SetIn(nil) })
 

@@ -56,11 +56,13 @@ in-repo companion.
     instead of surfacing as a bare smoke failure that sends someone hunting through
     their argv for a problem that is not there.
 ### Changed
-- dispatch spec schema is version 2: `authority` became a closed map of role names
-  to complete argv fragments, replacing one template with one substituted value per
-  role. That shape could not express a multi-flag read-only policy, which is what
-  forced claude onto plan mode. A v1 spec now fails with a version error naming the
-  fix rather than an unknown-field complaint.
+- dispatch spec: `authority` is now a closed map of role names to complete argv
+  fragments, replacing one template with one substituted value per role. That shape
+  could not express a multi-flag read-only policy, which is what forced claude onto
+  plan mode. The schema version stays at 1 -- dispatch is experimental and has no
+  other users, so a bump would buy a migration path nobody needs and cost a re-seed
+  that discards local probe results. Refresh stored specs with
+  `engram dispatch spec seed --overwrite`.
 
 - dispatch seeds: corrected against the installed CLIs, with the numbers measured
   rather than assumed.

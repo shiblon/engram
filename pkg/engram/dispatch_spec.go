@@ -17,11 +17,11 @@ import (
 // spec carries it explicitly and a reader refuses an unrecognized value rather
 // than guessing at a differently-shaped document.
 //
-// Version 2 changed `authority` from a template-plus-value fragment to a closed
-// map of role names to complete argv fragments. A v1 spec therefore fails with a
-// version error, which is the point: the alternative was an unknown-field
-// complaint that would not tell anyone what to do about it.
-const DispatchSpecVersion = 2
+// It stays at 1 while dispatch is experimental and we are its only users: bumping
+// on every shape change would buy a migration path nobody needs and cost a re-seed
+// that discards local probe results. The check still earns its place for a spec
+// arriving from a NEWER engram, which the design expects since specs travel.
+const DispatchSpecVersion = 1
 
 // DispatchSpecKeyPrefix is the memory key prefix for provider specs. Specs are
 // ordinary long-term memories rather than a new table or file location, so
