@@ -1,0 +1,55 @@
+{
+  "v": 1,
+  "provider": "claude",
+  "executable": "claude",
+  "base_argv": ["-p", "--output-format", "json"],
+  "prompt": {
+    "transport": "stdin"
+  },
+  "model": {
+    "argv": ["--model", "{{model}}"]
+  },
+  "system_prompt": {
+    "mode": "argv",
+    "argv": ["--append-system-prompt", "{{system_prompt}}"]
+  },
+  "authority": {
+    "argv": ["--permission-mode", "{{authority}}"],
+    "values": {
+      "read-only": "plan",
+      "edit": "acceptEdits",
+      "default": ""
+    }
+  },
+  "budget": {
+    "argv": ["--max-budget-usd", "{{budget_usd}}"]
+  },
+  "suppress_context": {
+    "argv": ["--bare"]
+  },
+  "workdir": {
+    "mode": "chdir"
+  },
+  "result": {
+    "format": "json",
+    "json_path": "result",
+    "error_path": "is_error",
+    "terminal_reason_path": "terminal_reason",
+    "cost_usd_path": "total_cost_usd",
+    "model_path": "modelUsage"
+  },
+  "version": {
+    "argv": ["--version"]
+  },
+  "exit_codes": {
+    "run_failure": 1
+  },
+  "provenance": {
+    "learned_version": "2.1.222",
+    "learned_at": "2026-08-04",
+    "verified_fields": ["prompt", "result"],
+    "inferred_fields": ["model", "system_prompt", "authority", "budget", "suppress_context", "exit_codes"],
+    "seed": true,
+    "notes": "Seed shipped with engram, drawn from a probe pass against claude 2.1.222 and re-checked against that version's help on 2026-08-05: every flag claimed here exists, and --permission-mode accepts acceptEdits, auto, bypassPermissions, manual, dontAsk, and plan. There is deliberately no `default` among them, so the default authority role maps to the empty string and omits the flag rather than passing an invalid value. Flag spellings were read from help, not probed, so nothing here is verified on THIS machine until you run `engram dispatch probe claude --model <M>`. Note that -p means print here and profile on codex, so a spec copied between providers is wrong in a way that runs."
+  }
+}

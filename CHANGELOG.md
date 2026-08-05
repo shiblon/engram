@@ -11,6 +11,44 @@ in-repo companion.
 
 ## [Unreleased]
 
+### Added
+- dispatch (experiment key `dispatch`): `engram dispatch` hands a decomposed task
+  to one or more provider CLIs as child processes, possibly on different providers
+  and models per slice, and joins the results. A batch is one invocation, N
+  children, and exit; it adds no database schema, and a run dies with its session
+  on purpose (put a long batch in a tmux pane). Its flags, schemas, and output may
+  change in patch releases; see `engram experiments` for the hypothesis and exit
+  conditions, and `docs/dispatch-notes.md` for the reasoning.
+  - `dispatch run --config <file|->` runs a batch and streams status to stdout as
+    JSON Lines (`batch_start`, `task_start`, `status`, `task_done`, `batch_done`),
+    every line carrying `v` and `type`. Status is emitted on state change and on a
+    heartbeat; `batch_done` is authoritative and self-contained. `--dry-run`
+    resolves and prints every invocation without spawning anything.
+  - `dispatch spec` stores each provider's invocation recipe as an ordinary
+    long-term memory (`dispatch-spec-<provider>`) holding one fenced JSON block, so
+    a moved upstream flag is repaired by editing JSON rather than by waiting for a
+    release. Recipes are argv arrays with placeholders, substituted into
+    already-split elements, so there is no shell and nothing to quote.
+  - `dispatch probe <provider> --model <M>` smokes a spec and positively verifies
+    the model against the CLI's own output metadata, falling back to an
+    invalid-model liveness check; findings are written into the spec's provenance.
+    A provider that silently accepts an invalid model is recorded as untrusted.
+  - `dispatch survey <exe>` captures top-level and subcommand help with a content
+    digest, for an agent to read when learning or re-learning a spec.
+  - Seed specs for `claude` and `codex` ship with engram so a fresh install works;
+    they are marked as seeds and unprobed until probed here.
+  - Children run in their own process group with an explicit stdin and a
+    wall-clock deadline; cancellation signals the group so a provider's
+    grandchildren are not orphaned. An argv that would exceed the kernel's
+    per-argument or total limit is refused with the transport that fixes it,
+    rather than surfacing as an opaque `E2BIG`.
+- agent guidance: `agentinfo` and the bootstrap protocol block gain a shared
+  "Experimental features" section covering how to look up an experiment's exit
+  conditions, plus the dispatch judgment that does not belong in help text: when
+  fan-out pays for its per-child context cost, that slicing destroys the seams and
+  amplifies false positives, that a dispatched child should not self-orient, and
+  how to repair a provider spec.
+
 ## [0.13.0] - 2026-08-05
 
 ### Added

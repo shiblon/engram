@@ -554,7 +554,9 @@ layer instead, for example:
 
 %s
 
-Do not skip this step.`, engramVersion(), cmd, layer, layerExample, memoryTierGuidance, memoryWriteSafetyGuidance, skillManagementGuidance)
+%s
+
+Do not skip this step.`, engramVersion(), cmd, layer, layerExample, memoryTierGuidance, memoryWriteSafetyGuidance, skillManagementGuidance, experimentalGuidance)
 }
 
 func runBootstrapGemini(cmd *cobra.Command, _ []string) error {

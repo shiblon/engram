@@ -73,6 +73,67 @@ Do not feed ` + "`engram mem read`" + ` output back into ` + "`engram mem write`
 display-formatted, not a round-trip format; after a failed write it also contains
 the old body, so a read-back retry can silently discard the intended edit.`
 
+// experimentalGuidance describes features whose user-facing contract is not stable
+// yet. It is deliberately one section rather than one per trial: an agent needs to
+// know that the class exists and how to look it up, and each experiment then gets a
+// short paragraph carrying only the judgment its help text cannot.
+const experimentalGuidance = `## Experimental features
+
+Some engram commands are experimental: their flags, schemas, and output may change
+in PATCH releases, which normal semver would forbid. They are labeled
+"[experimental: <key>]" in help. Run ` + "`engram experiments`" + ` to see every active trial
+with its hypothesis, the surfaces that may move, and the events that promote or
+remove it. Prefer these for real work when they fit, and expect to re-learn a
+detail after an upgrade rather than assuming last week's invocation still parses.
+
+### engram dispatch (experimental: dispatch)
+
+Hands a decomposed task to one or more provider CLIs (claude, codex, ...) as child
+processes -- possibly different providers and models per slice -- and collects the
+results. Read ` + "`engram dispatch --help`" + ` before using it. Two things belong here rather
+than in help text, because they are judgment and not usage:
+
+WHEN TO FAN OUT. Each child pays its context load before doing any work, and that
+is tens of thousands of tokens, so decomposition pays only when per-slice work is
+large relative to per-slice overhead AND the slices are genuinely independent. For a
+three-line diff, eight children is worse than one call in both money and quality.
+Two failure modes are non-obvious and both produce confident garbage:
+
+  - Slicing destroys the seams. Architectural and cross-file problems live exactly
+    where the slicing cut, so N deep-but-narrow reviewers can each be correct and
+    collectively miss the only bug that mattered. Always keep one child looking at
+    the whole change at a higher altitude alongside the deep slices.
+  - Fan-out amplifies false positives. A child asked to review something is
+    motivated to find something, so N children reliably produce N times the noise.
+    The per-slice prompt must explicitly license silence.
+
+The child does not self-orient. A dispatched reviewer needs no codename and no
+personality; paying to load them dilutes a focused task with instructions about how
+to be charming. So run children with context discovery suppressed and compose
+exactly the context the task needs in the system prompt.
+
+GET CONSENT FOR THE COST, at least once per kind of fan-out: propose the
+decomposition with its shape, its N, and a rough cost, and let the user answer. That
+answer is worth capturing in the skill, along with whatever they say about how they
+want the work done. Do not ask them to specify it in advance by questionnaire.
+
+FAN-OUT IS A SKILL DECISION, not a separate mechanism. Any skill can carry a
+dispatch plan: a fan-out predicate, a decomposition rule ("one child per changed
+file"), a per-slice prompt template, a provider and model policy per slice class,
+and an assembly rule for merging N results. Name providers by ROLE ("the
+architectural slice wants a strong model, the mechanical slices want a cheap one")
+so the skill stays portable, and say in the skill's own TRIGGER that it fans out --
+the trigger is in context every session, whereas this paragraph is not.
+
+REPAIRING A PROVIDER. Invocation is learned, not compiled in. Each provider's argv
+recipe is a long-term memory (key ` + "`dispatch-spec-<provider>`" + `) holding one fenced JSON
+block, so when a flag moves upstream you read the memory, edit the JSON, and write it
+back. A run that fails with state ` + "`spec_error`" + ` means the spec is wrong rather than the
+work; it carries a repair instruction. Re-learn with ` + "`engram dispatch survey <exe>`" + `,
+then ` + "`engram dispatch spec put`" + `, then ` + "`engram dispatch probe <provider> --model <M>`" + `.
+Always probe with an explicit model: a misread model flag is silent, and every child
+in a fan-out then quietly runs the default.`
+
 const memoryTierGuidance = `Engram's CLI tier tokens are fixed: ` + "`invariant`" + `, ` +
 	"`preference`" + `, ` + "`long`" + `, ` + "`short`" + `, and ` + "`cold`" + `. Human-facing prose
 often says "long-term" and "short-term"; the corresponding canonical flags are
@@ -246,6 +307,8 @@ same in any language:
   # engram-run: <runner command>          (optional; else inferred from extension or shebang)
 
 ` + skillManagementGuidance + `
+
+` + experimentalGuidance + `
 
 ## Staged restores
 

@@ -40,6 +40,24 @@ var experimentRegistry = []Experiment{
 		RemoveWhen:       "Curation actions turn out not to be a useful learning signal, or a different capture mechanism replaces this table.",
 		Commands:         []string{"engram curation"},
 	},
+	{
+		Key:    "dispatch",
+		Status: ExperimentExperimental,
+		Hypothesis: "An agent can usefully hand a decomposed task to several provider CLIs at once -- different providers, " +
+			"different models per slice -- if the invocation recipe is learned and probed rather than compiled in. Two " +
+			"claims are on trial: that a declarative argv spec stored as ordinary memory absorbs upstream flag churn " +
+			"without an engram release, and that fan-out is worth its per-child context cost on work that genuinely divides.",
+		UnstableSurfaces: "The invocation spec schema (`v: 1`), the batch config schema, the JSON Lines event types and their " +
+			"fields, the shipped seed specs, and the `engram dispatch` command layout may all change in patch releases. " +
+			"Specs are stored as long-term memories under the `dispatch-spec-` key prefix, so a schema change can " +
+			"invalidate a stored spec and require re-learning it.",
+		PromoteWhen: "The spec schema survives a real upstream flag change without an engram release, a probed spec catches " +
+			"at least one silent model-selection failure, and a fan-out has demonstrably beaten a single call on work " +
+			"that divides -- with the per-child context cost measured rather than assumed.",
+		RemoveWhen: "Per-child context loading makes fan-out lose to a single call on real work, or provider CLIs converge " +
+			"on a common headless interface that makes a learned spec unnecessary.",
+		Commands: []string{"engram dispatch"},
+	},
 }
 
 // Experiments returns a copy of the registry in deterministic key order.

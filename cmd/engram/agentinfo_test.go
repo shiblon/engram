@@ -101,3 +101,31 @@ func TestGuidanceDropsContextLongMd(t *testing.T) {
 		}
 	}
 }
+
+func TestGuidanceCarriesDispatchJudgmentInBothSurfaces(t *testing.T) {
+	// The two failure modes and the cost basis are judgment, so they must reach the
+	// agent through guidance rather than sitting only in --help. Both the standalone
+	// agentinfo file and the markdown protocol block carry them, from one source.
+	for name, got := range map[string]string{
+		"agentinfo":       renderAgentInfo(),
+		"protocolSection": engramProtocolSection("codex"),
+	} {
+		for _, want := range []string{
+			"## Experimental features",
+			"engram experiments",
+			"experimental: dispatch",
+			"Slicing destroys the seams",
+			"Fan-out amplifies false positives",
+			"license silence",
+			"higher altitude",
+			"does not self-orient",
+			"GET CONSENT FOR THE COST",
+			"dispatch-spec-<provider>",
+			"a misread model flag is silent",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("%s guidance missing %q", name, want)
+			}
+		}
+	}
+}

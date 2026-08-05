@@ -1,14 +1,16 @@
 # Dispatch notes
 
-A design plan, not a description of shipped code. Dispatch would let the agent
-hand a decomposed task to one or more provider CLIs running as child processes,
-possibly on different providers and models, and collect the results. This file
-records the shape we settled on and, more importantly, why the alternatives were
-set aside, so the plan can be adjusted without re-deriving the reasoning.
+`engram dispatch` lets the agent hand a decomposed task to one or more provider
+CLIs running as child processes, possibly on different providers and models, and
+collect the results. It ships behind the `dispatch` experiment key, so the
+surfaces named below may still move in a patch release. This file records the
+shape we settled on and, more importantly, why the alternatives were set aside, so
+the design can be adjusted without re-deriving the reasoning.
 
-The command name is provisional. `dispatch` is used throughout because it reads
-correctly for the 1-to-N case, where `run` implies a single thing. Ergonomics and
-flag spelling are deliberately unsettled; the ideas below are what matter.
+The name is settled: `dispatch` reads correctly for the 1-to-N case, where `run`
+implies a single thing and `exec` collides with codex's own subcommand. The ideas
+below are what matter; ergonomics and flag spelling remain the experiment's to
+change.
 
 See `docs/design-notes.md` for the memory-model principles this leans on, and
 `docs/memory-notes.md` for the "tool for the agent, not an autonomous actor" split
@@ -430,6 +432,16 @@ Through the existing channels, not a new one. `agentinfo` and `bootstrap` guidan
 gain a section on dispatch and on the decomposition judgment above, in the same
 place and the same voice as the existing skill-capture guidance.
 
+The shipped shape is one **"Experimental features"** section rather than a
+dispatch-specific one, and that turned out to be the better frame. An agent needs to
+know the *class* exists -- that some commands may change their contract in a patch
+release, and that `engram experiments` reports each trial's exit conditions -- before
+it needs to know about any particular trial. Each experiment then gets a short
+subsection carrying only what its `--help` cannot: judgment. For dispatch that is
+when fan-out pays, the two failure modes, that the child does not self-orient, the
+consent-for-cost rule, and how to repair a spec. The section is shared between
+`agentinfo` and the markdown protocol block from one source, so the two cannot drift.
+
 One refinement matters, from the retrieval principle in `docs/design-notes.md`:
 guidance prose is read at bootstrap and then competes with everything else, whereas
 the skill index is in context every session. So a dispatchable skill should say so in
@@ -475,10 +487,10 @@ reconsideration when any of these becomes true:
   consequential, infrequent operation is appropriate friction.
 - **Division of labor.** Engram reports deterministically; the decomposition judgment
   stays with the agent and is surfaced through guidance rather than baked into Go.
-- **Experiment framing.** If dispatch ships behind an experiment key, the registry
-  must name its hypothesis, the surfaces that may change (config schema, event types,
-  spec format), the event that promotes it, and the event that removes it, per
-  `docs/design-notes.md`.
+- **Experiment framing.** Dispatch ships behind the `dispatch` experiment key, and
+  the registry names its hypothesis, the surfaces that may change (spec schema,
+  config schema, event types, seed specs, command layout), the event that promotes
+  it, and the event that removes it, per `docs/design-notes.md`.
 
 ## What the probe pass established
 
@@ -522,15 +534,46 @@ the right first target because it is genuinely decomposable, it benefits from
 per-slice model choice, and it exercises the capability nothing else offers, which is
 a second opinion from a different provider carrying your own criteria.
 
+## What the build settled
+
+- **The spec shape is pinned at `v: 1`.** Executable, base argv, prompt transport,
+  and then optional argv *fragments* keyed by role: model, system prompt, authority,
+  budget, context suppression, working directory, result location, version, exit
+  codes, environment, provenance. Element order is fixed (executable, base argv,
+  fragments, prompt last) so a positional prompt works without a spec author
+  thinking about it. Two mechanisms earned their place while building: a fragment's
+  `values` map translates a role-level name into the provider's spelling, and
+  mapping a role to the **empty string omits the fragment entirely**. That second
+  one is not a nicety. claude's `--permission-mode` has no `default` among its
+  choices, so a spec that emitted one for the default authority role would produce
+  a usage error rather than a no-op.
+- **The argv per-element limit is measured, not guessed.** On Linux 6.12 a single
+  argument tops out at 131071 bytes (`MAX_ARG_STRLEN` is 32 pages, less the
+  terminating NUL) and the whole vector at about 2 MiB. So a diff slice over roughly
+  128 KB must travel by stdin or by file, and dispatch refuses an oversize argv with
+  the transport that fixes it instead of letting `execve` return an unexplained
+  `E2BIG`. stdin is therefore the better default wherever a provider accepts it,
+  which both installed providers do.
+- **Both seeds were re-checked against installed help.** Every flag the claude seed
+  claims exists in 2.1.222, and `codex exec` accepts `-m/--model`, `-s/--sandbox`,
+  `-C/--cd`, and `-o/--output-last-message`. The codex spec deliberately does *not*
+  pass `--json`, because that replaces the human preamble carrying the resolved
+  model line the spec reads for verification. Checking help is free; probing costs
+  money, so the seeds remain marked unprobed until someone probes them here.
+
 ## Open questions
 
-- The exact fixed shape of the invocation spec, which is the one contract that must
-  stay stable while everything behind it churns.
 - Whether gemini and the other providers accept stdin, which would let the transport
-  default to stdin rather than being learned per provider.
+  default to stdin rather than being learned per provider. Still untested: gemini is
+  not installed, and installing a CLI to satisfy a footnote is the wrong trade.
 - Whether `--bare` and its per-provider equivalents suppress enough context to make
-  probes cheap without breaking the run.
-- How large a diff slice can get before argv transport hits the per-element limit in
-  practice, and therefore how often the temp-file path is exercised.
+  probes cheap without breaking the run. This is the one open question that costs
+  real money to close, and it is what `engram dispatch probe` exists to answer on
+  first use. Note the asymmetry already visible: claude has `--bare`, codex has no
+  equivalent, so a codex child pays full context load and dispatch warns about it on
+  every task rather than absorbing the cost silently.
 - Whether the assembly rule belongs in the skill or in the config, given that the
-  skill knows the domain and the config knows the batch.
+  skill knows the domain and the config knows the batch. Nothing in the shipped
+  config schema takes a position, which keeps both doors open.
+- Whether fan-out actually beats a single call on real work. That is the
+  experiment's promotion condition, and it is not answerable from the design.
