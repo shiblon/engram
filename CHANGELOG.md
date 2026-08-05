@@ -10,6 +10,7 @@ independently from commit messages by goreleaser; this file is the curated,
 in-repo companion.
 
 ## [Unreleased]
+
 ### Fixed
 - dispatch authority: three failures found by reviewing dispatch with dispatch, all
   of which let a child do more than it was told it could.
