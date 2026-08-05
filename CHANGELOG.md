@@ -11,6 +11,8 @@ in-repo companion.
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-08-05
+
 ### Added
 - dispatch (experiment key `dispatch`): `engram dispatch` hands a decomposed task
   to one or more provider CLIs as child processes, possibly on different providers
@@ -401,7 +403,8 @@ _Internal changes only._
 - first take
 - Initial commit
 
-[Unreleased]: https://github.com/shiblon/engram/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/shiblon/engram/compare/v0.13.1...HEAD
+[0.13.1]: https://github.com/shiblon/engram/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/shiblon/engram/compare/v0.12.3...v0.13.0
 [0.12.3]: https://github.com/shiblon/engram/compare/v0.12.2...v0.12.3
 [0.12.2]: https://github.com/shiblon/engram/compare/v0.12.1...v0.12.2

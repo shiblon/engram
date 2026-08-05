@@ -7,7 +7,7 @@ import "runtime/debug"
 // builds, but local `go run` / `go install ./cmd/engram` builds report
 // "(devel)". Keep this fallback in step with each patch release so every
 // installation path can report a useful version.
-const sourceVersion = "v0.13.0"
+const sourceVersion = "v0.13.1"
 
 // engramVersion returns the module version stamped into the binary at build
 // time (e.g. "v0.12.3" from `go install ...@v0.12.3`), falling back to the
