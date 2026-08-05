@@ -490,16 +490,35 @@ func (s *ProviderSpec) BuildInvocation(request TaskRequest, tempDir string) (*In
 		}
 	}
 	if request.Authority != "" {
+		// Authority is the one guardrail a dispatched child cannot negotiate, so
+		// every way it fails to apply is reported rather than absorbed. A human
+		// reading the stream should never have to infer what a child could do.
 		switch {
 		case s.Authority == nil:
 			inv.Warnings = append(inv.Warnings, fmt.Sprintf(
-				"provider %s spec has no authority flag, so %q is not enforced by the child", s.Provider, request.Authority))
+				"provider %s spec has no authority flag, so %q is NOT enforced and this child runs with "+
+					"whatever authority the CLI defaults to", s.Provider, request.Authority))
 		default:
-			if resolved := s.Authority.resolve(request.Authority); resolved != "" {
+			resolved := s.Authority.resolve(request.Authority)
+			if resolved == "" && request.Authority != AuthorityDefault {
+				inv.Warnings = append(inv.Warnings, fmt.Sprintf(
+					"provider %s spec maps authority %q to nothing, so this child runs with the CLI's default "+
+						"authority rather than the level that was asked for", s.Provider, request.Authority))
+			}
+			if resolved != "" {
 				inv.Argv = append(inv.Argv, substituteArgv(s.Authority.Argv, map[string]string{
 					PlaceholderAuthority: resolved,
 				})...)
 			}
+		}
+		if request.Authority != AuthorityReadOnly {
+			// Not a spec problem, so not an error -- but a write-capable child is
+			// worth saying out loud on the stream. Nobody can interrupt it, N of
+			// them share one working tree with no coordination, and the edits are
+			// observed only after the join.
+			inv.Warnings = append(inv.Warnings, fmt.Sprintf(
+				"task runs with %q authority, not read-only: no human can intervene mid-run, and concurrent "+
+					"children writing the same tree are not coordinated", request.Authority))
 		}
 	}
 	if request.BudgetUSD > 0 {

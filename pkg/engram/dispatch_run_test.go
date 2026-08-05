@@ -517,3 +517,93 @@ func TestParseDispatchEventsRejectsAForeignVersion(t *testing.T) {
 		t.Fatal("a parser must fail loudly on schema drift rather than quietly misread")
 	}
 }
+
+func TestNormalizeDefaultsAuthorityToReadOnly(t *testing.T) {
+	// A config silent on authority must not inherit the provider's ambient default:
+	// the child has no human attached, and the config should record what it could do.
+	config, err := ParseBatchConfig([]byte(
+		`{"v":1,"defaults":{"provider":"claude"},"tasks":[{"id":"a","prompt":"p"},{"id":"b","prompt":"p","authority":"edit"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Tasks[0].Authority != AuthorityReadOnly {
+		t.Errorf("silent task got authority %q, want %q", config.Tasks[0].Authority, AuthorityReadOnly)
+	}
+	if config.Tasks[1].Authority != AuthorityEdit {
+		t.Errorf("an explicit authority must survive: %q", config.Tasks[1].Authority)
+	}
+}
+
+func TestSeedSpecsEnforceReadOnlyForASilentTask(t *testing.T) {
+	// The end-to-end property that matters: a config that says nothing about
+	// authority produces argv that actually constrains the child.
+	seeds, err := SeedProviderSpecs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for provider, spec := range seeds {
+		request := TaskConfig{ID: "t", Prompt: "p", Provider: provider, Authority: AuthorityReadOnly}.request()
+		inv, err := spec.BuildInvocation(request, t.TempDir())
+		if err != nil {
+			t.Fatalf("%s: %v", provider, err)
+		}
+		joined := strings.Join(inv.Argv, " ")
+		if !strings.Contains(joined, "read-only") && !strings.Contains(joined, "plan") {
+			t.Errorf("%s: read-only produced no constraining flag: %s", provider, joined)
+		}
+		for _, warning := range inv.Warnings {
+			if strings.Contains(warning, "authority") {
+				t.Errorf("%s: read-only should be enforceable, but got %q", provider, warning)
+			}
+		}
+	}
+}
+
+func TestWriteCapableAndUnenforceableAuthorityAreBothWarned(t *testing.T) {
+	spec := minimalSpec()
+	spec.Authority = &ArgvFragment{
+		Argv:   []string{"--mode", PlaceholderAuthority},
+		Values: map[string]string{AuthorityReadOnly: "ro", AuthorityEdit: ""},
+	}
+
+	// Write-capable: not an error, but it must be said out loud on the stream.
+	inv, err := spec.BuildInvocation(TaskRequest{ID: "t", Prompt: "p", Authority: AuthorityEdit}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(inv.Warnings, " | ")
+	if !strings.Contains(joined, "no human can intervene") {
+		t.Errorf("a write-capable child was not flagged: %q", joined)
+	}
+	// And a level the spec cannot express must not pass silently.
+	if !strings.Contains(joined, "maps authority") {
+		t.Errorf("an unenforceable authority level was absorbed: %q", joined)
+	}
+
+	// Read-only is the quiet path, since it is the expected posture.
+	inv, err = spec.BuildInvocation(TaskRequest{ID: "t", Prompt: "p", Authority: AuthorityReadOnly}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, warning := range inv.Warnings {
+		if strings.Contains(warning, "authority") || strings.Contains(warning, "intervene") {
+			t.Errorf("read-only should not warn: %q", warning)
+		}
+	}
+
+	// The provider-default role is the one deliberate way to hand off to the CLI,
+	// so it does not get the "maps to nothing" complaint -- but it is still not
+	// read-only, so it is still flagged.
+	spec.Authority.Values[AuthorityDefault] = ""
+	inv, err = spec.BuildInvocation(TaskRequest{ID: "t", Prompt: "p", Authority: AuthorityDefault}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined = strings.Join(inv.Warnings, " | ")
+	if strings.Contains(joined, "maps authority") {
+		t.Errorf("the default role opts into the CLI default on purpose: %q", joined)
+	}
+	if !strings.Contains(joined, "not read-only") {
+		t.Errorf("the default role is still not read-only and should say so: %q", joined)
+	}
+}

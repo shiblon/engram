@@ -104,6 +104,86 @@ The cost is measured, not theoretical. See the probe findings below: a nine-word
 prompt that produced a four-token answer loaded 44,227 tokens of context on spawn.
 Multiply by N.
 
+## Read-only is the default, and write authority is a different kind of decision
+
+A task that names no authority gets read-only. Inheriting the provider's ambient
+default is wrong twice over: the child has no human attached to answer for it, and
+the batch config should be the auditable record of what each child was allowed to do
+rather than a document that is silent on the question. This is the same instinct as
+passing authority explicitly through a call boundary instead of recovering it from
+ambient state.
+
+The interesting hazard is not a bad edit. It is the pressure to remove the guardrail.
+An approval prompt in a process with no controlling terminal does not degrade to
+"ask" -- it blocks until the deadline. So a permission gate doing its job and a
+broken child look identical from outside, and the obvious remedy for a hang is
+`bypassPermissions` or `--dangerously-bypass-approvals-and-sandbox`. The gradient
+runs toward disabling safety *because the safety worked*, which inverts the usual
+intuition and is why it belongs in writing.
+
+Three further reasons write-capable fan-out is a bigger step than write-capable
+single-agent work:
+
+- **Nobody can interrupt.** The same property that defers in-flight steering means
+  there is no "stop, wrong file." A one-shot CLI has no between-turns.
+- **N writers share one tree with no coordination.** Read-only children are
+  trivially parallel-safe, so dispatch has no locking story -- read-only work never
+  needed one. Two children editing one file is a lost update that no amount of
+  per-child correctness prevents.
+- **Side effects are observed last.** Per-task progress is unavailable by
+  construction. For a read-only child the result *is* the deliverable; for a writing
+  child, the thing most needing supervision is the thing seen latest.
+
+The cheap alternative is nearly always available: have the child emit a patch or a
+findings list and let the parent apply it, since the parent has a human attached.
+
+Dispatch therefore warns on the stream in three cases -- a write-capable task, a spec
+with no authority flag at all, and a spec that maps the requested level to nothing --
+rather than absorbing any of them. A reader should never have to infer what a child
+could do.
+
+### Scratch writes are a graded level, not an exception
+
+The obvious counterexample is a child that wants to dump intermediate research to a
+throwaway file so it does not flood its own context. That is plainly harmless work,
+and the question is how to permit only it.
+
+Two things sharpen it. First, "write to /tmp" is broader than the need: `/tmp` is a
+shared namespace, so a child granted it can clobber a sibling child's scratch,
+another batch's scratch, or anything else living there, with the classic
+world-writable-directory exposures on top. What makes the case safe is *what* is
+written (throwaway data nobody else depends on), not *where*. Second, a scratch file
+is only worth writing if something reads it, and dispatch currently removes its temp
+directory when the batch exits, so scratch that nobody collected simply vanishes.
+
+Both point the same way: the parent should allocate a per-task directory and tell the
+child its path, so the location is known, collectable, inspectable, and unshared.
+The child never chooses where. That makes this a third authority role between
+read-only and edit -- call it scratch: no writes to the workspace, writes permitted
+to one parent-allocated directory -- resolved per provider by the same
+role-to-spelling mapping everything else uses, and warned about honestly where a
+provider cannot express it.
+
+What the installed CLIs can actually express, checked against help on 2026-08-05:
+
+- **claude 2.1.222** has `--add-dir` (additional directories tool access is allowed
+  for), `--allowedTools` / `--disallowedTools` with rule-level granularity such as
+  `Bash(git *)` or `Edit`, and `--settings` taking a JSON document, which is the
+  fullest expression. So a narrowed grant is expressible; the exact rule syntax
+  wants verifying before a spec claims it.
+- **codex 0.146.0** has only three sandbox levels, and `--add-dir` is documented as
+  writable *alongside the primary workspace*, which suggests it widens
+  `workspace-write` rather than narrowing `read-only`. Its config vocabulary
+  (`-c sandbox_workspace_write.writable_roots=[...]`) is the more likely route. This
+  is the provider where the role may simply not be enforceable, and the spec should
+  say so rather than pretend.
+
+Two implementation notes for whoever picks this up. A new `{{scratch_dir}}`
+placeholder is needed so a spec can splice the parent-allocated path into its argv,
+and the batch needs a way to keep the temp directory rather than removing it, or the
+scratch dies with the run. Neither is large; both are deliberately not built yet,
+because the role is worth designing against a real need rather than a hypothesis.
+
 ## Provider invocation is learned and probed, not compiled in
 
 Hardcoding each provider's flags means a `codex` version bump can only be fixed by

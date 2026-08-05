@@ -88,8 +88,20 @@ Config shape:
 
 Defaults fill any field a task leaves unset, except the id and prompt: a shared
 prompt across every slice would be a decomposition that did not decompose.
-Authority is named by role (read-only, edit, default) and the spec maps it to
-whatever this provider spells it, so a config stays portable.
+
+AUTHORITY. Named by role -- read-only, edit, or default -- and the spec maps it to
+whatever this provider spells it, so a config stays portable. A task that says
+nothing gets READ-ONLY, so writing is opt-in by name and this document is the
+auditable record of what each child was allowed to do.
+
+Think hard before setting anything else. A dispatched child has no controlling
+terminal, so an approval prompt does not fall back to asking: it blocks until the
+deadline, which means a working guardrail is indistinguishable from a hang and the
+tempting fix is to disable the guardrail. Nobody can interrupt a one-shot CLI
+mid-run, concurrent writing children share one tree with no coordination, and their
+edits are observed only after the join. Prefer having a child emit a patch that the
+parent applies. Dispatch warns on the stream for every write-capable task, and for
+every task whose spec cannot enforce the level that was asked for.
 
 Every line of the status stream carries "v" and "type" so a parser fails loudly on
 schema drift. The types are batch_start, task_start, status, task_done, batch_done.

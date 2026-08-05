@@ -129,3 +129,27 @@ func TestGuidanceCarriesDispatchJudgmentInBothSurfaces(t *testing.T) {
 		}
 	}
 }
+
+func TestGuidanceWarnsAgainstWriteCapableDispatch(t *testing.T) {
+	// The hang-or-bypass trap is the non-obvious part: a guardrail doing its job
+	// looks like a broken child, so the pressure runs toward disabling it. That has
+	// to reach the agent in words, not just as a default in the code.
+	for name, got := range map[string]string{
+		"agentinfo":       renderAgentInfo(),
+		"protocolSection": engramProtocolSection("codex"),
+	} {
+		for _, want := range []string{
+			"READ-ONLY BY DEFAULT",
+			"looks exactly like a hang",
+			"BECAUSE the safety worked",
+			"Nobody can interrupt",
+			"lost update",
+			"observe the side effects last",
+			"produce a PATCH",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("%s guidance missing %q", name, want)
+			}
+		}
+	}
+}

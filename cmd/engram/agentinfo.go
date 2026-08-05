@@ -112,6 +112,34 @@ personality; paying to load them dilutes a focused task with instructions about 
 to be charming. So run children with context discovery suppressed and compose
 exactly the context the task needs in the system prompt.
 
+READ-ONLY BY DEFAULT, AND SUGGESTING OTHERWISE IS A BIG DEAL. A task that names no
+authority gets read-only; anything else must be asked for by name, and dispatch warns
+on the stream when a child is write-capable. Almost every good use of dispatch is
+read-only -- review, analysis, second opinions, research -- and you should propose a
+write-capable fan-out only when you can say why the parent cannot apply the changes
+itself. Four reasons, and the first is the one people miss:
+
+  - A blocked approval looks exactly like a hang. An approval prompt in a process
+    with no controlling terminal does not degrade to "ask"; it waits until the
+    deadline. So a guardrail doing its job is indistinguishable from a broken child,
+    and the obvious fix is to reach for bypassPermissions or
+    --dangerously-bypass-approvals-and-sandbox. The pressure runs toward removing
+    safety precisely BECAUSE the safety worked. Do not follow it; fix the task.
+  - Nobody can interrupt. A one-shot CLI has no between-turns for an outsider to
+    reach into, so there is no "wait, stop, that is the wrong file." A human sees
+    the run when it is over.
+  - N writing children share one tree with no coordination. Read-only children are
+    trivially parallel-safe; writing ones are not, and dispatch has no locking
+    because read-only work never needed any. Two children editing one file is a
+    lost update no amount of per-child correctness prevents.
+  - You observe the side effects last. Per-task progress does not exist, so for a
+    read-only child the result IS the deliverable, while for a writing child the
+    thing most needing supervision is the thing seen latest.
+
+The cheap alternative is almost always available: have the child produce a PATCH or a
+findings list, and let the parent apply it. The parent has a human attached. That puts
+judgment where a human can exercise it and costs a diff.
+
 GET CONSENT FOR THE COST, at least once per kind of fan-out: propose the
 decomposition with its shape, its N, and a rough cost, and let the user answer. That
 answer is worth capturing in the skill, along with whatever they say about how they

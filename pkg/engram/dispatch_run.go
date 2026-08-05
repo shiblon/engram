@@ -142,6 +142,15 @@ func (c *BatchConfig) normalize() error {
 		if task.DeadlineSeconds <= 0 {
 			task.DeadlineSeconds = c.DeadlineSeconds
 		}
+		// A child that says nothing about authority gets read-only, so writing
+		// requires naming it. Inheriting the provider's ambient default would be
+		// the wrong direction twice over: a dispatched child has no human attached
+		// to answer an approval prompt, and the batch config should be the
+		// auditable record of what each child was allowed to do rather than a
+		// document that is silent on the question.
+		if task.Authority == "" {
+			task.Authority = AuthorityReadOnly
+		}
 	}
 	return nil
 }

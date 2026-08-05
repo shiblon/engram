@@ -42,11 +42,20 @@ in-repo companion.
     grandchildren are not orphaned. An argv that would exceed the kernel's
     per-argument or total limit is refused with the transport that fixes it,
     rather than surfacing as an opaque `E2BIG`.
+  - Authority is read-only unless a task names otherwise, so write access is
+    opt-in by name and the batch config is the auditable record of what each
+    child was allowed to do. Dispatch warns on the status stream for every
+    write-capable task, every spec with no authority flag, and every spec that
+    maps the requested level to nothing. A dispatched child has no controlling
+    terminal, so an approval prompt blocks until the deadline instead of falling
+    back to asking; that makes a working guardrail look like a hang, and the
+    tempting fix is to disable the guardrail.
 - agent guidance: `agentinfo` and the bootstrap protocol block gain a shared
   "Experimental features" section covering how to look up an experiment's exit
   conditions, plus the dispatch judgment that does not belong in help text: when
   fan-out pays for its per-child context cost, that slicing destroys the seams and
-  amplifies false positives, that a dispatched child should not self-orient, and
+  amplifies false positives, that a dispatched child should not self-orient, why
+  write-capable dispatch is a materially bigger step than read-only dispatch, and
   how to repair a provider spec.
 
 ## [0.13.0] - 2026-08-05
