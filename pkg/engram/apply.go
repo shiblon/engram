@@ -153,9 +153,19 @@ func ApplyRestore(ctx context.Context, globalDB *sql.DB, identity string, sel Re
 	if _, statErr := os.Stat(targetDBPath); statErr == nil {
 		tdb, openErr := openRaw(ctx, targetDBPath)
 		if openErr == nil {
-			empty, _ := dbHasNoCuratedContent(ctx, tdb)
+			// This decides whether a restore may overwrite the target, so a failed
+			// check must be visible: treat it as populated (the safe direction) and
+			// say why, rather than discarding the reason.
+			empty, checkErr := dbHasNoCuratedContent(ctx, tdb)
+			if checkErr != nil {
+				log.Printf("engram restore: check %s for curated content: %v; treating it as populated",
+					targetDBPath, checkErr)
+				empty = false
+			}
 			populated = !empty
-			tdb.Close()
+			if err := tdb.Close(); err != nil {
+				log.Printf("engram restore: close %s: %v", targetDBPath, err)
+			}
 		}
 	}
 

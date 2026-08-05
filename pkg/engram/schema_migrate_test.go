@@ -321,3 +321,34 @@ func TestSchemaMigrationV8ToV9NormalizesTierAliases(t *testing.T) {
 			tier, fromTier, toTier)
 	}
 }
+
+func TestEveryMigrationIsIdempotent(t *testing.T) {
+	// design-notes.md states the invariant plainly: a fresh database applies
+	// schema.sql and then replays EVERY migration from version 0, so each must be
+	// safe against a schema that already reflects it. user_version normally keeps a
+	// replay from happening at all, so nothing otherwise checks the claim.
+	//
+	// A reviewer flagged migration 5->6 for creating triggers without IF NOT EXISTS.
+	// That is a false positive, and this test is how that was established: the
+	// migrations rebuild the memories table (DROP TABLE, then RENAME the copy), which
+	// drops its triggers, so recreating them unguarded is safe. Adding the guard
+	// could not make this test fail, which is what proved the finding wrong.
+	ctx := context.Background()
+	db := testDB(t)
+
+	// Force a replay from zero against an already-current schema. If any statement
+	// is not idempotent, this fails with "already exists".
+	if _, err := db.ExecContext(ctx, `PRAGMA user_version = 0`); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyMigrations(ctx, db); err != nil {
+		t.Fatalf("replaying migrations against a current schema failed, so a migration is not idempotent: %v", err)
+	}
+	// And again, to catch anything that only breaks on a third pass.
+	if _, err := db.ExecContext(ctx, `PRAGMA user_version = 0`); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyMigrations(ctx, db); err != nil {
+		t.Fatalf("second replay failed: %v", err)
+	}
+}
