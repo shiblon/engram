@@ -1241,7 +1241,13 @@ func budgetLines(lines []string, budget int) (kept []string, shown int) {
 	}
 	total := 0
 	for i, ln := range lines {
-		add := len(ln)
+		// Count RUNES, not bytes. Every caller passes an Inject*BudgetChars
+		// constant, and MaxTldrLen measures the same kind of limit with
+		// RuneCountInString -- so counting bytes here made the package disagree with
+		// itself and silently truncated non-ASCII content earlier than the budget
+		// promised. An em dash or an arrow in a tldr should cost one character, not
+		// three.
+		add := utf8.RuneCountInString(ln)
 		if i > 0 {
 			add++ // newline separator between lines
 		}

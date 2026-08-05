@@ -1727,3 +1727,25 @@ func TestSetMemoryTldr(t *testing.T) {
 		t.Error("expected validation error for over-length tldr")
 	}
 }
+
+func TestBudgetLinesCountsCharactersNotBytes(t *testing.T) {
+	// The callers all pass Inject*BudgetChars, and MaxTldrLen measures the same kind
+	// of limit in runes. Counting bytes made non-ASCII content consume up to 4x its
+	// share, so a memory index with em dashes or arrows was truncated well short of
+	// the budget it was given.
+	const budget = 20
+	// Five 3-byte runes per line: 5 chars, 15 bytes.
+	lines := []string{"→→→→→", "→→→→→", "→→→→→"}
+
+	kept, shown := budgetLines(lines, budget)
+	// 5 + (1+5) + (1+5) = 17 runes, so all three fit. Counting bytes gives
+	// 15 + 16 = 31 after two lines, which would drop the third.
+	if shown != 3 || len(kept) != 3 {
+		t.Fatalf("kept %d of 3 lines under a %d-character budget; bytes are being counted, not characters",
+			shown, budget)
+	}
+	// And the budget must still bite when it genuinely should.
+	if _, shown := budgetLines([]string{"→→→→→→→→→→", "→→→→→→→→→→", "→→→→→→→→→→"}, budget); shown >= 3 {
+		t.Errorf("a %d-character budget kept %d lines of 10 characters each", budget, shown)
+	}
+}
