@@ -1,13 +1,20 @@
 {
-  "v": 1,
+  "v": 2,
   "provider": "claude",
   "executable": "claude",
-  "base_argv": ["-p", "--output-format", "json"],
+  "base_argv": [
+    "-p",
+    "--output-format",
+    "json"
+  ],
   "prompt": {
     "transport": "stdin"
   },
   "model": {
-    "argv": ["--model", "{{model}}"],
+    "argv": [
+      "--model",
+      "{{model}}"
+    ],
     "values": {
       "cheap": "claude-haiku-4-5-20251001",
       "balanced": "claude-sonnet-5",
@@ -16,21 +23,37 @@
   },
   "system_prompt": {
     "mode": "argv",
-    "argv": ["--append-system-prompt", "{{system_prompt}}"]
+    "argv": [
+      "--append-system-prompt",
+      "{{system_prompt}}"
+    ]
   },
   "authority": {
-    "argv": ["--permission-mode", "{{authority}}"],
-    "values": {
-      "read-only": "plan",
-      "edit": "acceptEdits",
-      "default": ""
+    "roles": {
+      "read-only": [
+        "--permission-mode",
+        "dontAsk",
+        "--disallowedTools",
+        "Edit Write NotebookEdit"
+      ],
+      "edit": [
+        "--permission-mode",
+        "acceptEdits"
+      ],
+      "default": []
     }
   },
   "budget": {
-    "argv": ["--max-budget-usd", "{{budget_usd}}"]
+    "argv": [
+      "--max-budget-usd",
+      "{{budget_usd}}"
+    ]
   },
   "suppress_context": {
-    "argv": ["--setting-sources", "local"]
+    "argv": [
+      "--setting-sources",
+      ""
+    ]
   },
   "workdir": {
     "mode": "chdir"
@@ -44,7 +67,9 @@
     "model_path": "modelUsage"
   },
   "version": {
-    "argv": ["--version"]
+    "argv": [
+      "--version"
+    ]
   },
   "exit_codes": {
     "run_failure": 1
@@ -52,9 +77,19 @@
   "provenance": {
     "learned_version": "2.1.222",
     "learned_at": "2026-08-04",
-    "verified_fields": ["prompt", "result"],
-    "inferred_fields": ["model", "system_prompt", "authority", "budget", "suppress_context", "exit_codes"],
+    "verified_fields": [
+      "authority",
+      "prompt",
+      "result"
+    ],
+    "inferred_fields": [
+      "model",
+      "system_prompt",
+      "budget",
+      "suppress_context",
+      "exit_codes"
+    ],
     "seed": true,
-    "notes": "Seed shipped with engram, drawn from a probe pass against claude 2.1.222 and re-checked against that version's help on 2026-08-05: every flag claimed here exists, and --permission-mode accepts acceptEdits, auto, bypassPermissions, manual, dontAsk, and plan. There is deliberately no `default` among them, so the default authority role maps to the empty string and omits the flag rather than passing an invalid value. KNOWN IMPRECISION: read-only maps to `plan`, which is the only mode that structurally will not edit, but plan mode also shapes behavior -- the child plans and presents a plan rather than simply working without write access. That suits a reviewer and may surprise an analyze-and-report task. The more precise spelling is probably a non-prompting mode plus a --disallowedTools list naming Edit, Write, and NotebookEdit, which this spec cannot express today because an authority fragment contributes one argv group for every role rather than per-role argv. Revisit if the difference bites. Flag spellings were read from help, not probed, so nothing here is verified on THIS machine until you run `engram dispatch probe claude --model <M>`. Note that -p means print here and profile on codex, so a spec copied between providers is wrong in a way that runs. SUPPRESSION, measured 2026-08-05 on claude 2.1.222 with an identical prompt, reading cache_creation_input_tokens from --output-format json. Do NOT use --bare: it documents that Anthropic auth is strictly ANTHROPIC_API_KEY or apiKeyHelper via --settings and that OAuth and keychain are NEVER read, so on a subscription login it fails with `Not logged in`. It would also move billing to API credits, a different payment rail rather than merely a lower cost. --setting-sources is the right lever and it is strictly better here. Measured ladder: no flag = 36,888 cache tokens / $0.0751; `--setting-sources user` = 14,848 / $0.0325; `--setting-sources local` = 3,693 / $0.0126. A 10x context reduction with OAuth intact. The `user` rung is NOT sufficient for isolation: a child asked its codename under that setting answered with the parent operator's codename, because ~/.claude/CLAUDE.md pulls in engram identity. Under `local` it had none. Caveat: `local` still loads .claude/settings.local.json if a repo has one, so a repo with local hooks would reintroduce them. MODEL NAMES, same date: asking for the alias `haiku` silently ran claude-sonnet-5 with a clean exit and a plausible answer -- the exact silent substitution positive verification exists to catch. The flag itself is fine with a full model id, so the values map here uses full ids only and role names (cheap/balanced/strong) rather than aliases."
+    "notes": "Seed shipped with engram, drawn from a probe pass against claude 2.1.222 and re-checked against that version's help on 2026-08-05: every flag claimed here exists, and --permission-mode accepts acceptEdits, auto, bypassPermissions, manual, dontAsk, and plan. There is deliberately no `default` among them, so the default authority role maps to the empty string and omits the flag rather than passing an invalid value. AUTHORITY, verified by canary 2026-08-05: read-only is `--permission-mode dontAsk --disallowedTools \"Edit Write NotebookEdit\"`. A child so configured READ a file successfully and REFUSED to create one, with the denial recorded in permission_denials, and wrote no plan file. Do NOT use `--permission-mode plan` for read-only: plan mode does not withhold writes, it REDIRECTS the child into writing a plan file under ~/.claude/plans and returning a planning stub instead of the requested work. That cost a whole 8-child review batch its output channel on 2026-08-05. Flag spellings were read from help, not probed, so nothing here is verified on THIS machine until you run `engram dispatch probe claude --model <M>`. Note that -p means print here and profile on codex, so a spec copied between providers is wrong in a way that runs. SUPPRESSION, measured 2026-08-05 on claude 2.1.222 with an identical prompt, reading cache_creation_input_tokens from --output-format json. Do NOT use --bare: it documents that Anthropic auth is strictly ANTHROPIC_API_KEY or apiKeyHelper via --settings and that OAuth and keychain are NEVER read, so on a subscription login it fails with `Not logged in`. It would also move billing to API credits, a different payment rail rather than merely a lower cost. --setting-sources is the right lever and it is strictly better here. Measured ladder: no flag = 36,888 cache tokens / $0.0751; `--setting-sources user` = 14,848 / $0.0325; `--setting-sources local` = 3,693 / $0.0126; `--setting-sources ''` (no sources at all) = 3,685 / $0.0127. This spec uses the EMPTY form: identical cost to `local`, but `local` still loads .claude/settings.local.json if a repo has one, so it merely reduces the child's config where the empty form determines it. A 10x context reduction with OAuth intact. The `user` rung is NOT sufficient for isolation: a child asked its codename under that setting answered with the parent operator's codename, because ~/.claude/CLAUDE.md pulls in engram identity. Under `local` it had none. MODEL NAMES, same date: asking for the alias `haiku` silently ran claude-sonnet-5 with a clean exit and a plausible answer -- the exact silent substitution positive verification exists to catch. The flag itself is fine with a full model id, so the values map here uses full ids only and role names (cheap/balanced/strong) rather than aliases."
   }
 }

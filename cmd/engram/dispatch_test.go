@@ -94,15 +94,27 @@ func TestDispatchDryRunResolvesArgvWithoutSpawning(t *testing.T) {
 		// claude for the alias "haiku" silently ran claude-sonnet-5 with a clean
 		// exit, so a config that names a raw alias is a silent-substitution hazard.
 		"--model claude-haiku-4-5-20251001",
-		"--permission-mode plan",
-		// Suppression is --setting-sources, not --bare. Measured on the same day:
-		// --bare refuses OAuth credentials outright, while `--setting-sources local`
-		// keeps them and cuts cache-creation tokens from 36,888 to 3,693.
-		"--setting-sources local",
+		// read-only is dontAsk plus a write-tool denylist, NOT plan mode. Canaried
+		// 2026-08-05: plan mode does not withhold writes, it redirects the child into
+		// writing a plan file and returning a planning stub instead of the work.
+		"--permission-mode dontAsk",
+		"--disallowedTools Edit Write NotebookEdit",
 	} {
 		if !strings.Contains(slice, want) {
 			t.Errorf("resolved argv missing %q:\n%s", want, slice)
 		}
+	}
+	// Suppression is --setting-sources with an EMPTY value, not --bare. Measured
+	// 2026-08-05: --bare refuses OAuth credentials outright, while emptying the
+	// sources keeps them and cuts cache-creation tokens from 36,888 to 3,685. The
+	// empty value matters -- "local" still loads .claude/settings.local.json, so it
+	// reduces the child's config where the empty form determines it. Asserted
+	// against the argv slice because an empty element vanishes in a joined string.
+	if !hasFlagWithValue(byTask["slice-1"], "--setting-sources", "") {
+		t.Errorf("argv does not empty the setting sources:\n%#v", byTask["slice-1"])
+	}
+	if strings.Contains(slice, "--permission-mode plan") {
+		t.Errorf("plan mode writes plan files and returns a stub; it is not read-only:\n%s", slice)
 	}
 	if strings.Contains(slice, "--bare") {
 		t.Errorf("--bare is auth-hostile on an OAuth machine and must not be the suppression flag:\n%s", slice)
@@ -156,7 +168,7 @@ func TestDispatchSpecPutValidatesAndStores(t *testing.T) {
 	isolatedHome(t)
 
 	spec := `{
-		"v": 1,
+		"v": 2,
 		"provider": "toy",
 		"executable": "toy-cli",
 		"prompt": {"transport": "stdin"},
@@ -190,7 +202,7 @@ func TestDispatchSpecPutValidatesAndStores(t *testing.T) {
 func TestDispatchSpecPutRefusesAMismatchedProvider(t *testing.T) {
 	isolatedHome(t)
 	rootCmd.SetIn(strings.NewReader(
-		`{"v":1,"provider":"toy","executable":"t","prompt":{"transport":"stdin"},"result":{"format":"text"}}`))
+		`{"v":2,"provider":"toy","executable":"t","prompt":{"transport":"stdin"},"result":{"format":"text"}}`))
 	t.Cleanup(func() { rootCmd.SetIn(nil) })
 
 	_, _, err := runDispatchCLI(t, "dispatch", "spec", "put", "other", "--from", "-")
@@ -202,7 +214,7 @@ func TestDispatchSpecPutRefusesAMismatchedProvider(t *testing.T) {
 func TestDispatchSpecValidateReportsABrokenDocument(t *testing.T) {
 	isolatedHome(t)
 	rootCmd.SetIn(strings.NewReader(
-		`{"v":1,"provider":"toy","executable":"t","prompt":{"transport":"stdin"},
+		`{"v":2,"provider":"toy","executable":"t","prompt":{"transport":"stdin"},
 		  "model":{"argv":["--model"]},"result":{"format":"text"}}`))
 	t.Cleanup(func() { rootCmd.SetIn(nil) })
 
@@ -245,4 +257,17 @@ func TestDispatchStaysOutOfTheBootstrapAllowlist(t *testing.T) {
 			t.Errorf("dispatch appears to be pre-approved in bootstrap: %s", strings.TrimSpace(line))
 		}
 	}
+}
+
+// hasFlagWithValue reports whether argv contains flag immediately followed by
+// value. Needed because an empty argv element disappears when the vector is
+// joined for display, and "the value is empty" is exactly what some assertions
+// are about.
+func hasFlagWithValue(argv []string, flag, value string) bool {
+	for i, element := range argv {
+		if element == flag && i+1 < len(argv) && argv[i+1] == value {
+			return true
+		}
+	}
+	return false
 }

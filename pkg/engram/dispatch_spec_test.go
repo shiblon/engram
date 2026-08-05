@@ -110,10 +110,9 @@ func TestParseProviderSpecRejectsUnknownFields(t *testing.T) {
 func TestBuildInvocationArgvOrderAndQuoting(t *testing.T) {
 	spec := minimalSpec()
 	spec.Prompt = PromptSpec{Transport: PromptTransportArgv, Argv: []string{PlaceholderPrompt}}
-	spec.Authority = &ArgvFragment{
-		Argv:   []string{"--sandbox", PlaceholderAuthority},
-		Values: map[string]string{AuthorityReadOnly: "read-only"},
-	}
+	spec.Authority = &RoleFragment{Roles: map[string][]string{
+		AuthorityReadOnly: {"--sandbox", "read-only"},
+	}}
 	spec.SuppressContext = &ArgvFragment{Argv: []string{"--bare"}}
 
 	// A prompt full of shell metacharacters, spaces, and newlines. There is no
@@ -455,19 +454,16 @@ func TestBuildInvocationOmitsAFragmentMappedToTheEmptyString(t *testing.T) {
 	// role must omit the flag rather than pass an invalid value that a CLI would
 	// reject as a usage error.
 	spec := minimalSpec()
-	spec.Authority = &ArgvFragment{
-		Argv: []string{"--permission-mode", PlaceholderAuthority},
-		Values: map[string]string{
-			AuthorityReadOnly: "plan",
-			AuthorityDefault:  "",
-		},
-	}
+	spec.Authority = &RoleFragment{Roles: map[string][]string{
+		AuthorityReadOnly: {"--permission-mode", "plan"},
+		AuthorityDefault:  {},
+	}}
 	inv, err := spec.BuildInvocation(TaskRequest{ID: "t", Prompt: "p", Authority: AuthorityDefault}, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if containsString(inv.Argv, "--permission-mode") {
-		t.Fatalf("an empty mapping must omit the whole fragment: %#v", inv.Argv)
+		t.Fatalf("a role mapped to no flags must omit the whole fragment: %#v", inv.Argv)
 	}
 
 	// The mapped roles still resolve normally.
@@ -498,12 +494,15 @@ func TestSeedSpecsOnlyMapAuthorityToValuesTheProviderAccepts(t *testing.T) {
 		if !known || spec.Authority == nil {
 			continue
 		}
-		for role, value := range spec.Authority.Values {
-			if value == "" {
-				continue // deliberately omits the flag
-			}
-			if !valid[value] {
-				t.Errorf("seed %s maps authority role %q to %q, which the CLI does not accept", provider, role, value)
+		for role, argv := range spec.Authority.Roles {
+			for i, element := range argv {
+				// Only check values, which follow a flag; flags themselves start with -.
+				if i == 0 || strings.HasPrefix(element, "-") || strings.HasPrefix(argv[i-1], "--disallowedTools") {
+					continue
+				}
+				if !valid[element] {
+					t.Errorf("seed %s authority role %q passes %q, which the CLI does not accept", provider, role, element)
+				}
 			}
 		}
 	}

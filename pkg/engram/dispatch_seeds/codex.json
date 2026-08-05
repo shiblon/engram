@@ -1,14 +1,21 @@
 {
-  "v": 1,
+  "v": 2,
   "provider": "codex",
   "executable": "codex",
-  "base_argv": ["exec"],
+  "base_argv": [
+    "exec"
+  ],
   "prompt": {
     "transport": "argv",
-    "argv": ["{{prompt}}"]
+    "argv": [
+      "{{prompt}}"
+    ]
   },
   "model": {
-    "argv": ["-m", "{{model}}"],
+    "argv": [
+      "-m",
+      "{{model}}"
+    ],
     "values": {
       "cheap": "gpt-5.6-luna",
       "balanced": "gpt-5.6-terra",
@@ -19,24 +26,37 @@
     "mode": "prepend"
   },
   "authority": {
-    "argv": ["--sandbox", "{{authority}}"],
-    "values": {
-      "read-only": "read-only",
-      "edit": "workspace-write",
-      "default": ""
+    "roles": {
+      "read-only": [
+        "--sandbox",
+        "read-only"
+      ],
+      "edit": [
+        "--sandbox",
+        "workspace-write"
+      ],
+      "default": []
     }
   },
   "workdir": {
     "mode": "argv",
-    "argv": ["--cd", "{{workdir}}"]
+    "argv": [
+      "--cd",
+      "{{workdir}}"
+    ]
   },
   "result": {
     "format": "last-message-file",
-    "output_file_argv": ["-o", "{{output_file}}"],
+    "output_file_argv": [
+      "-o",
+      "{{output_file}}"
+    ],
     "model_regex": "(?im)^\\s*model:\\s*(\\S+)"
   },
   "version": {
-    "argv": ["--version"]
+    "argv": [
+      "--version"
+    ]
   },
   "exit_codes": {
     "usage_error": 2,
@@ -45,9 +65,17 @@
   "provenance": {
     "learned_version": "0.146.0",
     "learned_at": "2026-08-04",
-    "verified_fields": ["prompt", "exit_codes", "authority", "workdir"],
-    "inferred_fields": ["model", "result"],
+    "verified_fields": [
+      "prompt",
+      "exit_codes",
+      "workdir"
+    ],
+    "inferred_fields": [
+      "authority",
+      "model",
+      "result"
+    ],
     "seed": true,
-    "notes": "Seed shipped with engram, drawn from a probe pass against codex-cli 0.146.0. Two findings are baked in: top-level help documents -a/--ask-for-approval but `codex exec` rejects it, so this spec claims only flags the exec subcommand accepts; and codex reads stdin IN ADDITION to an argv prompt, appending it as a <stdin> block, which is why dispatch always sets a child's stdin explicitly. No context-suppression flag is claimed, so a codex child pays full context load on spawn -- that shows up as a warning on every task rather than as a silent cost. Re-checked against codex-cli 0.146.0 help on 2026-08-05: `codex exec` accepts -m/--model, -s/--sandbox (read-only, workspace-write, danger-full-access), -C/--cd, and -o/--output-last-message. --json is deliberately NOT used, because it replaces the human preamble that carries the resolved model line this spec reads for verification. Nothing here is verified on THIS machine until you run `engram dispatch probe codex --model <M>`."
+    "notes": "Seed shipped with engram, drawn from a probe pass against codex-cli 0.146.0. Two findings are baked in: top-level help documents -a/--ask-for-approval but `codex exec` rejects it, so this spec claims only flags the exec subcommand accepts; and codex reads stdin IN ADDITION to an argv prompt, appending it as a <stdin> block, which is why dispatch always sets a child's stdin explicitly. No context-suppression flag is claimed, so a codex child pays full context load on spawn -- that shows up as a warning on every task rather than as a silent cost. Re-checked against codex-cli 0.146.0 help on 2026-08-05: `codex exec` accepts -m/--model, -s/--sandbox (read-only, workspace-write, danger-full-access), -C/--cd, and -o/--output-last-message. --json is deliberately NOT used, because it replaces the human preamble that carries the resolved model line this spec reads for verification. Nothing here is verified on THIS machine until you run `engram dispatch probe codex --model <M>`. AUTHORITY IS NOT ENFORCED HERE, measured twice on 2026-08-05. codex echoed `sandbox: read-only` in its own preamble and then, under that very setting, (a) created a project skill in engram memory during a review batch and (b) created ./authz-canary-ws.txt inside the workspace on a direct canary -- once before and once after bubblewrap was installed. So `--sandbox read-only` is ADVISORY on this machine: the flag is accepted and reported as applied while writes still succeed. A flag the provider ACCEPTS is not a flag the provider ENFORCES. Never rely on codex authority to contain a child; dispatch warns on every task because authority is absent from verified_fields."
   }
 }

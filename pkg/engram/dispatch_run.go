@@ -151,6 +151,14 @@ func (c *BatchConfig) normalize() error {
 		if task.Authority == "" {
 			task.Authority = AuthorityReadOnly
 		}
+		// Reject a provider-specific authority string here, at config parse, before
+		// anything is spawned. This is the hole that let `danger-full-access` reach
+		// codex's --sandbox straight from an unreviewed batch file.
+		if !ValidAuthority(task.Authority) {
+			return fmt.Errorf("batch config: task %q requests authority %q, which is not one of %s; "+
+				"a provider-specific value must be mapped inside a reviewed spec, not named in a config",
+				task.ID, task.Authority, strings.Join(CanonicalAuthorities(), ", "))
+		}
 	}
 	return nil
 }

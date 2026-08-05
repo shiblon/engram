@@ -16,7 +16,12 @@ import (
 // the one contract that must stay stable while everything behind it churns, so a
 // spec carries it explicitly and a reader refuses an unrecognized value rather
 // than guessing at a differently-shaped document.
-const DispatchSpecVersion = 1
+//
+// Version 2 changed `authority` from a template-plus-value fragment to a closed
+// map of role names to complete argv fragments. A v1 spec therefore fails with a
+// version error, which is the point: the alternative was an unknown-field
+// complaint that would not tell anyone what to do about it.
+const DispatchSpecVersion = 2
 
 // DispatchSpecKeyPrefix is the memory key prefix for provider specs. Specs are
 // ordinary long-term memories rather than a new table or file location, so
@@ -32,7 +37,6 @@ const (
 	PlaceholderPromptFile   = "{{prompt_file}}"
 	PlaceholderModel        = "{{model}}"
 	PlaceholderSystemPrompt = "{{system_prompt}}"
-	PlaceholderAuthority    = "{{authority}}"
 	PlaceholderBudgetUSD    = "{{budget_usd}}"
 	PlaceholderWorkdir      = "{{workdir}}"
 	PlaceholderOutputFile   = "{{output_file}}"
@@ -88,11 +92,32 @@ const (
 
 // Authority levels a caller asks for by role. The spec maps each to whatever the
 // provider spells it, so a batch config never names a provider-specific value.
+//
+// This set is CLOSED, and that is a security property rather than tidiness. An
+// open set let a config pass an unmapped string straight through to the provider:
+// `{"authority": "danger-full-access"}` became `--sandbox danger-full-access` on
+// codex, so one typo in an unreviewed batch file could hand a child the strongest
+// authority the CLI offers. Widening a provider's authority now requires editing
+// the spec, which is the artifact that gets reviewed once and then reused.
 const (
 	AuthorityReadOnly = "read-only"
 	AuthorityEdit     = "edit"
 	AuthorityDefault  = "default"
 )
+
+// CanonicalAuthorities lists every authority role a batch config may name.
+func CanonicalAuthorities() []string {
+	return []string{AuthorityReadOnly, AuthorityEdit, AuthorityDefault}
+}
+
+// ValidAuthority reports whether value is a canonical authority role.
+func ValidAuthority(value string) bool {
+	switch value {
+	case AuthorityReadOnly, AuthorityEdit, AuthorityDefault:
+		return true
+	}
+	return false
+}
 
 // ArgvFragment is an optional group of argv elements contributed when its value
 // is supplied. Values maps a role-level name (a model alias, an authority level)
@@ -118,6 +143,31 @@ func (f *ArgvFragment) resolve(value string) string {
 		return mapped
 	}
 	return value
+}
+
+// RoleFragment maps each role in a closed vocabulary to a COMPLETE argv fragment.
+// It has no template and no placeholder: a role supplies its own full argument
+// list, which may be several flags, one, or none at all (an empty list omits the
+// fragment, meaning "let the CLI use its own default").
+//
+// This exists because the template-plus-substitution form could only ever express
+// one flag with one value per role, and that turned out to be a real constraint
+// rather than a theoretical one. claude has no single flag meaning "read-only":
+// mapping the role to `--permission-mode plan` was the only single-flag option,
+// and plan mode does not merely withhold write access, it redirects the child into
+// writing a plan file instead of doing the work. A read-only child that writes to
+// disk and returns a planning stub is exactly the failure this shape prevents.
+type RoleFragment struct {
+	Roles map[string][]string `json:"roles"`
+}
+
+// argvFor returns the argv for a role and whether the role is supported at all.
+func (f *RoleFragment) argvFor(role string) ([]string, bool) {
+	if f == nil || f.Roles == nil {
+		return nil, false
+	}
+	argv, ok := f.Roles[role]
+	return argv, ok
 }
 
 // PromptSpec describes how the prompt reaches the child.
@@ -207,7 +257,7 @@ type ProviderSpec struct {
 	Prompt          PromptSpec        `json:"prompt"`
 	Model           *ArgvFragment     `json:"model,omitempty"`
 	SystemPrompt    *SystemPromptSpec `json:"system_prompt,omitempty"`
-	Authority       *ArgvFragment     `json:"authority,omitempty"`
+	Authority       *RoleFragment     `json:"authority,omitempty"`
 	Budget          *ArgvFragment     `json:"budget,omitempty"`
 	SuppressContext *ArgvFragment     `json:"suppress_context,omitempty"`
 	Workdir         WorkdirSpec       `json:"workdir"`
@@ -222,6 +272,21 @@ type ProviderSpec struct {
 // when dispatch parses the block rather than when the memory is written, which is
 // the right trade for something meant to be hand-edited at 11pm.
 func ParseProviderSpec(data []byte) (*ProviderSpec, error) {
+	// Read the version FIRST, leniently. A spec from an older schema will trip the
+	// strict decoder on fields that have since moved, and "unknown field argv" tells
+	// nobody what to do; "this spec is v1, re-seed it" does.
+	var probe struct {
+		V int `json:"v"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return nil, fmt.Errorf("parse provider spec: %w", err)
+	}
+	if probe.V != DispatchSpecVersion {
+		return nil, fmt.Errorf("provider spec is schema version %d but this engram understands %d; "+
+			"refresh it with `engram dispatch spec seed --overwrite` (which discards local probe results), "+
+			"or hand-migrate the JSON block", probe.V, DispatchSpecVersion)
+	}
+
 	var spec ProviderSpec
 	decoder := json.NewDecoder(strings.NewReader(string(data)))
 	decoder.DisallowUnknownFields()
@@ -292,8 +357,21 @@ func (s *ProviderSpec) Validate() error {
 		}
 	}
 	if s.Authority != nil {
-		if err := s.requirePlaceholder("authority.argv", s.Authority.Argv, PlaceholderAuthority); err != nil {
-			return err
+		if len(s.Authority.Roles) == 0 {
+			return fmt.Errorf("provider spec %s: authority declared with no roles", s.Provider)
+		}
+		for role, argv := range s.Authority.Roles {
+			if !ValidAuthority(role) {
+				return fmt.Errorf("provider spec %s: authority role %q is not one of %s",
+					s.Provider, role, strings.Join(CanonicalAuthorities(), ", "))
+			}
+			if err := s.checkArgv("authority.roles."+role, argv, nil); err != nil {
+				return err
+			}
+		}
+		if _, ok := s.Authority.Roles[AuthorityReadOnly]; !ok {
+			return fmt.Errorf("provider spec %s: authority must define the %q role, since it is the default "+
+				"every task gets unless it asks for more", s.Provider, AuthorityReadOnly)
 		}
 	}
 	if s.Budget != nil {
@@ -499,26 +577,44 @@ func (s *ProviderSpec) BuildInvocation(request TaskRequest, tempDir string) (*In
 		}
 	}
 	if request.Authority != "" {
+		// The closed set is enforced here as well as at config parse, because this
+		// function is also the probe's path into a spec.
+		if !ValidAuthority(request.Authority) {
+			return nil, fmt.Errorf("task %s: authority %q is not one of %s; a provider-specific value cannot be "+
+				"passed through from a config, only mapped inside a reviewed spec",
+				request.ID, request.Authority, strings.Join(CanonicalAuthorities(), ", "))
+		}
 		// Authority is the one guardrail a dispatched child cannot negotiate, so
 		// every way it fails to apply is reported rather than absorbed. A human
 		// reading the stream should never have to infer what a child could do.
-		switch {
+		switch argv, supported := s.Authority.argvFor(request.Authority); {
 		case s.Authority == nil:
 			inv.Warnings = append(inv.Warnings, fmt.Sprintf(
-				"provider %s spec has no authority flag, so %q is NOT enforced and this child runs with "+
-					"whatever authority the CLI defaults to", s.Provider, request.Authority))
-		default:
-			resolved := s.Authority.resolve(request.Authority)
-			if resolved == "" && request.Authority != AuthorityDefault {
+				"provider %s spec declares no authority handling, so %q is NOT enforced and this child runs "+
+					"with whatever authority the CLI defaults to", s.Provider, request.Authority))
+		case !supported:
+			return nil, fmt.Errorf("task %s: provider %s spec defines no %q authority role, so that level cannot "+
+				"be honored; add the role to the spec or pick one it defines", request.ID, s.Provider, request.Authority)
+		case len(argv) == 0:
+			if request.Authority != AuthorityDefault {
 				inv.Warnings = append(inv.Warnings, fmt.Sprintf(
-					"provider %s spec maps authority %q to nothing, so this child runs with the CLI's default "+
-						"authority rather than the level that was asked for", s.Provider, request.Authority))
+					"provider %s spec maps authority %q to no flags at all, so this child runs with the CLI's "+
+						"own default authority rather than the level asked for", s.Provider, request.Authority))
 			}
-			if resolved != "" {
-				inv.Argv = append(inv.Argv, substituteArgv(s.Authority.Argv, map[string]string{
-					PlaceholderAuthority: resolved,
-				})...)
-			}
+		default:
+			inv.Argv = append(inv.Argv, argv...)
+		}
+
+		// A flag that the provider ACCEPTS is not a flag the provider ENFORCES.
+		// Measured 2026-08-05: codex echoed `sandbox: read-only` in its own preamble
+		// and then wrote a file into the workspace anyway. So a spec whose
+		// provenance has not positively verified authority gets a warning every
+		// time, because the alternative is a guardrail believed on the strength of
+		// the CLI agreeing it was asked for.
+		if s.Authority != nil && !containsField(s.Provenance.VerifiedFields, "authority") {
+			inv.Warnings = append(inv.Warnings, fmt.Sprintf(
+				"provider %s has not had authority ENFORCEMENT verified on this machine, only requested: treat "+
+					"%q as advisory and do not rely on it to contain a child", s.Provider, request.Authority))
 		}
 		if request.Authority != AuthorityReadOnly {
 			// Not a spec problem, so not an error -- but a write-capable child is
@@ -754,4 +850,14 @@ func FormatSpecMemory(spec *ProviderSpec) (Memory, error) {
 func HelpDigest(text string) string {
 	sum := sha256.Sum256([]byte(text))
 	return "sha256:" + fmt.Sprintf("%x", sum[:])
+}
+
+// containsField reports whether fields contains name.
+func containsField(fields []string, name string) bool {
+	for _, field := range fields {
+		if field == name {
+			return true
+		}
+	}
+	return false
 }

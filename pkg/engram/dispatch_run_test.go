@@ -547,13 +547,31 @@ func TestSeedSpecsEnforceReadOnlyForASilentTask(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", provider, err)
 		}
-		joined := strings.Join(inv.Argv, " ")
-		if !strings.Contains(joined, "read-only") && !strings.Contains(joined, "plan") {
-			t.Errorf("%s: read-only produced no constraining flag: %s", provider, joined)
+		argv, supported := spec.Authority.argvFor(AuthorityReadOnly)
+		if !supported || len(argv) == 0 {
+			t.Errorf("%s: read-only role produced no constraining flags at all", provider)
 		}
+
+		// Whether a provider WARNS is now the honest record of what was verified on
+		// this machine, so the two seeds are deliberately asymmetric. claude's
+		// read-only was canaried (a read succeeded, a write was refused, no plan
+		// file appeared) so it is quiet. codex accepted --sandbox read-only, echoed
+		// it in its own preamble, and wrote into the workspace anyway -- twice -- so
+		// it must warn on every task until someone demonstrates enforcement.
+		var authorityWarning string
 		for _, warning := range inv.Warnings {
-			if strings.Contains(warning, "authority") {
-				t.Errorf("%s: read-only should be enforceable, but got %q", provider, warning)
+			if strings.Contains(warning, "ENFORCEMENT verified") {
+				authorityWarning = warning
+			}
+		}
+		switch provider {
+		case "claude":
+			if authorityWarning != "" {
+				t.Errorf("claude authority is verified and should be quiet, got %q", authorityWarning)
+			}
+		case "codex":
+			if authorityWarning == "" {
+				t.Error("codex authority is NOT enforced on this machine and must warn every time")
 			}
 		}
 	}
@@ -561,10 +579,13 @@ func TestSeedSpecsEnforceReadOnlyForASilentTask(t *testing.T) {
 
 func TestWriteCapableAndUnenforceableAuthorityAreBothWarned(t *testing.T) {
 	spec := minimalSpec()
-	spec.Authority = &ArgvFragment{
-		Argv:   []string{"--mode", PlaceholderAuthority},
-		Values: map[string]string{AuthorityReadOnly: "ro", AuthorityEdit: ""},
-	}
+	spec.Authority = &RoleFragment{Roles: map[string][]string{
+		AuthorityReadOnly: {"--mode", "ro"},
+		AuthorityEdit:     {},
+	}}
+	// Declare enforcement verified so this test exercises the write-capable and
+	// no-flags warnings rather than the separate unverified-authority one.
+	spec.Provenance.VerifiedFields = append(spec.Provenance.VerifiedFields, "authority")
 
 	// Write-capable: not an error, but it must be said out loud on the stream.
 	inv, err := spec.BuildInvocation(TaskRequest{ID: "t", Prompt: "p", Authority: AuthorityEdit}, t.TempDir())
@@ -576,7 +597,7 @@ func TestWriteCapableAndUnenforceableAuthorityAreBothWarned(t *testing.T) {
 		t.Errorf("a write-capable child was not flagged: %q", joined)
 	}
 	// And a level the spec cannot express must not pass silently.
-	if !strings.Contains(joined, "maps authority") {
+	if !strings.Contains(joined, "no flags at all") {
 		t.Errorf("an unenforceable authority level was absorbed: %q", joined)
 	}
 
@@ -594,13 +615,13 @@ func TestWriteCapableAndUnenforceableAuthorityAreBothWarned(t *testing.T) {
 	// The provider-default role is the one deliberate way to hand off to the CLI,
 	// so it does not get the "maps to nothing" complaint -- but it is still not
 	// read-only, so it is still flagged.
-	spec.Authority.Values[AuthorityDefault] = ""
+	spec.Authority.Roles[AuthorityDefault] = nil
 	inv, err = spec.BuildInvocation(TaskRequest{ID: "t", Prompt: "p", Authority: AuthorityDefault}, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	joined = strings.Join(inv.Warnings, " | ")
-	if strings.Contains(joined, "maps authority") {
+	if strings.Contains(joined, "no flags at all") {
 		t.Errorf("the default role opts into the CLI default on purpose: %q", joined)
 	}
 	if !strings.Contains(joined, "not read-only") {

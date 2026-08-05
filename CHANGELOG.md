@@ -12,6 +12,34 @@ in-repo companion.
 ## [Unreleased]
 
 ### Fixed
+- dispatch authority: three failures found by reviewing dispatch with dispatch, all
+  of which let a child do more than it was told it could.
+  - Authority is now a CLOSED set (`read-only`, `edit`, `default`) rejected at config
+    parse. Previously an unmapped string passed straight through, so
+    `{"authority":"danger-full-access"}` became `--sandbox danger-full-access` on
+    codex: one typo in an unreviewed batch file could hand a child the strongest
+    authority the CLI offers. Widening a provider now requires editing the spec,
+    which is the artifact reviewed once and reused.
+  - claude's `read-only` no longer maps to `--permission-mode plan`. Plan mode does
+    not withhold writes, it REDIRECTS them: children wrote plan files under
+    `~/.claude/plans` and returned planning stubs instead of their work, costing an
+    eight-child review batch its output channel. It is now
+    `--permission-mode dontAsk --disallowedTools "Edit Write NotebookEdit"`, canaried
+    to read successfully, refuse a write with a recorded denial, and produce no plan.
+  - A spec whose provenance has not positively verified authority now warns on every
+    task. codex echoed `sandbox: read-only` in its own preamble and then created a
+    file in the workspace anyway, both before and after bubblewrap was installed. A
+    flag the provider ACCEPTS is not a flag the provider ENFORCES, and codex
+    authority is recorded as advisory rather than trusted.
+
+### Changed
+- dispatch spec schema is version 2: `authority` became a closed map of role names
+  to complete argv fragments, replacing one template with one substituted value per
+  role. That shape could not express a multi-flag read-only policy, which is what
+  forced claude onto plan mode. A v1 spec now fails with a version error naming the
+  fix rather than an unknown-field complaint.
+
+### Fixed
 - dispatch probe: five ways the probe reported findings it had not earned, all
   found by running it against real provider CLIs.
   - Model verification compared the role name a config asked for against the model
