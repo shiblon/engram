@@ -14,6 +14,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -731,7 +732,21 @@ func Prune(ctx context.Context, db *sql.DB, keepSessions int) (int64, error) {
 			ORDER BY last_ts DESC
 			LIMIT ?
 		)`
-	result, err := db.ExecContext(ctx,
+	// Both deletes share one retention decision, so they must land together. Run
+	// separately, a failure on the second left events pruned and the curation log
+	// still holding rows for sessions that no longer exist -- two tables disagreeing
+	// about which sessions are recent, with no record of why.
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("prune: begin: %w", err)
+	}
+	defer func() {
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			log.Printf("engram prune: rollback: %v", err)
+		}
+	}()
+
+	result, err := tx.ExecContext(ctx,
 		`DELETE FROM events WHERE session_id NOT IN (`+recent+`)`, keepSessions)
 	if err != nil {
 		return 0, fmt.Errorf("prune: %w", err)
@@ -740,10 +755,13 @@ func Prune(ctx context.Context, db *sql.DB, keepSessions int) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("prune: %w", err)
 	}
-	if _, err := db.ExecContext(ctx,
+	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM curation_events WHERE session_id != '' AND session_id NOT IN (`+recent+`)`,
 		keepSessions); err != nil {
 		return 0, fmt.Errorf("prune curation events: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("prune: commit: %w", err)
 	}
 	return eventsDeleted, nil
 }

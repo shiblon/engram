@@ -387,3 +387,21 @@ func TestInjectSurfacesPendingRestores(t *testing.T) {
 		}
 	}
 }
+
+func TestShortTierMemoriesBlockASilentOverwrite(t *testing.T) {
+	// Short-term is the ephemeral tier, but it holds in-flight working state with a
+	// "Retire when" trigger on each entry. Treating a database that holds only
+	// short-term memories as empty let a restore overwrite it with no conflict and
+	// no warning.
+	ctx := context.Background()
+	db := testDB(t)
+	mustWriteMemory(t, ctx, db, Memory{Tier: TierShort, Key: "in-flight", Content: "resume here"})
+
+	empty, err := dbHasNoCuratedContent(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if empty {
+		t.Fatal("a database holding short-term memories was reported empty, so a restore would silently destroy them")
+	}
+}

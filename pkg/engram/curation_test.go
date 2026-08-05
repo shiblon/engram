@@ -213,3 +213,35 @@ func TestPruneKeepsCurationEvents(t *testing.T) {
 		t.Fatalf("session-less curation event was pruned: got %d, want 1", len(evs))
 	}
 }
+
+func TestCurationVocabularyIsChecked(t *testing.T) {
+	// Every constant must pass its own validator, or the check is worse than none:
+	// it would cry wolf on correct code and get muted.
+	for _, action := range []CurationAction{
+		CurationCreate, CurationUpdate, CurationDelete, CurationMove,
+		CurationTldrSet, CurationSkillAdopt, CurationSkillClassify,
+	} {
+		if problem := validCurationAction(action); problem != "" {
+			t.Errorf("declared action %q reported as out-of-vocabulary: %s", action, problem)
+		}
+	}
+	for _, source := range []CurationSource{
+		SourceInteractive, SourceLoad, SourceImport, SourceMigrate, SourceBootstrap,
+	} {
+		if problem := validCurationSource(source); problem != "" {
+			t.Errorf("declared source %q reported as out-of-vocabulary: %s", source, problem)
+		}
+	}
+	for _, scope := range []string{"project", "global", ""} {
+		if problem := validCurationScope(scope); problem != "" {
+			t.Errorf("scope %q reported as out-of-vocabulary: %s", scope, problem)
+		}
+	}
+	// And a typo must be caught, which is the whole point.
+	if validCurationAction("crete") == "" {
+		t.Error("a misspelled action was accepted into the append-only log")
+	}
+	if validCurationScope("Global") == "" {
+		t.Error("a wrong-case scope was accepted")
+	}
+}

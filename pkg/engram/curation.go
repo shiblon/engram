@@ -183,9 +183,57 @@ func RecordCuration(ctx context.Context, db curationExecer, ev CurationEvent) er
 // never fail the mutation it instruments. The failure is logged, never silently
 // discarded, so a broken capture is visible rather than a hidden data loss.
 func captureCuration(ctx context.Context, db curationExecer, ev CurationEvent) {
+	// The log is append-only and exists to be a learning signal, so a value that is
+	// not part of the vocabulary corrupts that signal permanently and silently. Every
+	// one of these fields is set by engram's own code, so an unknown value is a
+	// developer mistake rather than untrusted input -- which is exactly the kind that
+	// survives review unnoticed. Complain loudly, then write the row anyway: an event
+	// with a flagged field is more useful than no event, and capture must never fail
+	// the mutation it is recording.
+	for field, problem := range map[string]string{
+		"action": validCurationAction(ev.Action),
+		"source": validCurationSource(ev.Source),
+		"scope":  validCurationScope(ev.DBScope),
+	} {
+		if problem != "" {
+			log.Printf("engram: curation event for %s/%s has an out-of-vocabulary %s: %s",
+				ev.Tier, ev.Key, field, problem)
+		}
+	}
 	if err := RecordCuration(ctx, db, ev); err != nil {
 		log.Printf("engram: capture curation event (%s %s/%s): %v", ev.Action, ev.Tier, ev.Key, err)
 	}
+}
+
+// validCurationAction returns an empty string when action is in the vocabulary,
+// otherwise a description of the problem.
+func validCurationAction(action CurationAction) string {
+	switch action {
+	case CurationCreate, CurationUpdate, CurationDelete, CurationMove,
+		CurationTldrSet, CurationSkillAdopt, CurationSkillClassify:
+		return ""
+	case "":
+		return "empty"
+	}
+	return fmt.Sprintf("%q", action)
+}
+
+func validCurationSource(source CurationSource) string {
+	switch source {
+	case SourceInteractive, SourceLoad, SourceImport, SourceMigrate, SourceBootstrap, "":
+		return ""
+	}
+	return fmt.Sprintf("%q", source)
+}
+
+// validCurationScope allows empty: DBScope is documented as optional, since which
+// database a row lives in is already implied by which log it was written to.
+func validCurationScope(scope string) string {
+	switch scope {
+	case "project", "global", "":
+		return ""
+	}
+	return fmt.Sprintf("%q", scope)
 }
 
 // CurationFilter narrows a ListCurationEvents query. Zero values match all.

@@ -1749,3 +1749,52 @@ func TestBudgetLinesCountsCharactersNotBytes(t *testing.T) {
 		t.Errorf("a %d-character budget kept %d lines of 10 characters each", budget, shown)
 	}
 }
+
+func TestPruneIsAtomicAcrossBothTables(t *testing.T) {
+	// events and curation_events share one retention decision. Pruned separately, a
+	// failure on the second left the two tables disagreeing about which sessions are
+	// recent, with nothing recording why.
+	ctx := context.Background()
+	db := testDB(t)
+
+	for _, session := range []string{"old-1", "old-2", "recent-1"} {
+		if err := Record(ctx, db, Event{SessionID: session, Tool: ToolEdit, FilePath: "a.go"}); err != nil {
+			t.Fatal(err)
+		}
+		mustWriteMemory(t, ctx, db, Memory{
+			Tier: TierShort, Key: "k-" + session, Content: "c", SessionID: session,
+		})
+	}
+
+	if _, err := Prune(ctx, db, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	// Whatever survived, both tables must agree on the surviving session set.
+	sessionsIn := func(table string) map[string]bool {
+		t.Helper()
+		rows, err := db.QueryContext(ctx, `SELECT DISTINCT session_id FROM `+table+` WHERE session_id != ''`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		out := map[string]bool{}
+		for rows.Next() {
+			var s string
+			if err := rows.Scan(&s); err != nil {
+				t.Fatal(err)
+			}
+			out[s] = true
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	events, curation := sessionsIn("events"), sessionsIn("curation_events")
+	for session := range curation {
+		if !events[session] {
+			t.Errorf("session %q survives in curation_events but was pruned from events: the tables disagree", session)
+		}
+	}
+}

@@ -194,6 +194,14 @@ func Restore(ctx context.Context, r io.Reader) (RestoreResult, error) {
 			   status    = 'pending'`,
 			sp.Identity, stagePath, time.Now().UnixMilli())
 		if err != nil {
+			// The staged files and this manifest row are one logical unit, and a
+			// file write cannot join a SQL transaction -- so failure is compensated
+			// rather than rolled back. Without this, a failed registration left an
+			// orphaned slot directory on disk that nothing pointed at and no later
+			// operation would clean up.
+			if rmErr := os.RemoveAll(slotDir); rmErr != nil {
+				log.Printf("engram restore: remove orphaned stage slot %s: %v", slotDir, rmErr)
+			}
 			return fmt.Errorf("restore: register pending %s: %w", sp.Identity, err)
 		}
 		res.StagedCount++
@@ -249,14 +257,21 @@ func Restore(ctx context.Context, r io.Reader) (RestoreResult, error) {
 	return res, nil
 }
 
-// dbHasNoCuratedContent returns true when the DB contains no memories in the
-// invariant, preference, long, or cold tiers. Short-tier events are session-
-// ephemeral and do not count as curated content.
+// dbHasNoCuratedContent returns true when the DB holds no memories a restore
+// would be destroying.
+//
+// Short-tier memories COUNT, despite being the ephemeral tier. Excluding them
+// meant a database holding only short-term entries looked empty, so a restore
+// overwrote it with no conflict and no warning -- and short-term is where in-flight
+// working state lives, each entry carrying its own "Retire when" trigger. Losing
+// that silently is worse than an extra conflict, and a conflict is cheap here: the
+// snapshot is re-staged under a new slot for the user to decide about, rather than
+// refused.
 func dbHasNoCuratedContent(ctx context.Context, db *sql.DB) (bool, error) {
 	var n int
 	err := db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM memories
-		 WHERE tier IN ('invariant','preference','long','cold')`).Scan(&n)
+		 WHERE tier IN ('invariant','preference','long','short','cold')`).Scan(&n)
 	if err != nil {
 		return false, err
 	}
