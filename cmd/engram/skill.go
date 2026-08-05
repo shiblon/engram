@@ -41,6 +41,10 @@ func openSkillDB(ctx context.Context) (*engram.DBHandle, error) {
 	return openScopeDB(ctx, skillGlobal)
 }
 
+func openSkillDBReadOnly(ctx context.Context) (*engram.DBHandle, error) {
+	return openScopeDBReadOnly(ctx, skillGlobal)
+}
+
 var skillWriteCmd = &cobra.Command{
 	Use:   "write <key> <content>",
 	Short: "Write or update a task-triggered skill",
@@ -150,7 +154,7 @@ var skillReadCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
-		h, err := openSkillDB(ctx)
+		h, err := openSkillDBReadOnly(ctx)
 		if err != nil {
 			return err
 		}
@@ -174,7 +178,7 @@ var skillListCmd = &cobra.Command{
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		ctx := context.Background()
-		h, err := openSkillDB(ctx)
+		h, err := openSkillDBReadOnly(ctx)
 		if err != nil {
 			return err
 		}
@@ -200,7 +204,7 @@ var skillSearchCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
-		h, err := openSkillDB(ctx)
+		h, err := openSkillDBReadOnly(ctx)
 		if err != nil {
 			return err
 		}

@@ -133,6 +133,18 @@ context. If session-start context appears twice, a markdown init file probably
 still has an unconditional engram inject startup line while hooks also inject; ask
 the user which to keep.
 
+Compact list and search output use copyable memory addresses. Prefer passing one
+back to an entry command when it is available: engram:tier/key is in the current
+project, engram:/tier/key is global, and engram:/preference/@codex/key selects a
+global agent layer. An address supplies scope, tier, and layer without extra flags.
+Bare keys plus --tier/--global/--agent remain supported.
+
+Linked Git worktrees share the main checkout's Engram database. Read-only
+commands normally work without write access to that checkout. If Engram reports
+that SQLite needs WAL coordination files, request narrowly scoped filesystem
+access to the exact directory in the error and retry once. Do not create a
+separate .engram directory in the linked worktree.
+
 ## Memory tiers
 
 ` + memoryTierGuidance + `
@@ -146,7 +158,7 @@ either database. Run engram mem --help for the full command reference.
 - long:  settled decisions, facts, durable backlog.
 - short: in-flight working state, the live stack.
 - cold:  archive; injected as an index only. Do not read cold entries unprompted --
-         fetch on demand with engram mem --tier cold read <key>.
+         fetch on demand with engram mem read engram:cold/<key>.
 
 Global vs project database. Identity is global by nature; who you are does not
 change per repo. A preference is global if it should hold in every project, project
@@ -176,10 +188,10 @@ primary vs layer silently: say which and why.
 Every memory carries a one-line tldr, and inject surfaces that summary -- not the
 full content -- for every tier except invariants (identity always shows in full,
 because it is your voice). When a summary looks relevant to what you are doing, read
-the whole entry with engram mem read <key>.
+the whole entry by passing its listed address to engram mem read.
 
 Write a tldr with every memory:
-  engram mem ... write <key> <content> --tldr "<one-line summary>"
+  engram mem write engram:<tier>/<key> <content> --tldr "<one-line summary>"
 It has a hard character limit, so compress deliberately -- the tldr is what future
 sessions see first. Omit it and inject falls back to the first line of the content.
 

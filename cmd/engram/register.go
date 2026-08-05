@@ -47,15 +47,25 @@ stray .engram directory from disk (never the global ~/.engram).`,
 func runRegister(_ *cobra.Command, _ []string) error {
 	ctx := context.Background()
 
-	gdb, err := engram.OpenGlobalDB(ctx)
+	if registerPurge && registerForget == "" {
+		return fmt.Errorf("register: --purge requires --forget")
+	}
+
+	var (
+		gdb *sql.DB
+		err error
+	)
+	// --forget takes precedence over --list below, so keep that combination
+	// writable even though the list flag is also present.
+	if registerList && registerForget == "" {
+		gdb, err = engram.OpenGlobalDBReadOnly(ctx)
+	} else {
+		gdb, err = engram.OpenGlobalDB(ctx)
+	}
 	if err != nil {
 		return fmt.Errorf("register: open global db: %w", err)
 	}
 	defer gdb.Close()
-
-	if registerPurge && registerForget == "" {
-		return fmt.Errorf("register: --purge requires --forget")
-	}
 
 	if registerForget != "" {
 		return runRegisterForget(ctx, gdb, registerForget)

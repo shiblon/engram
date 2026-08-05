@@ -14,7 +14,7 @@ var memSearchCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
-		h, err := openMemDB(ctx)
+		h, err := openMemDBReadOnly(ctx)
 		if err != nil {
 			return err
 		}
@@ -57,7 +57,7 @@ var memSearchCmd = &cobra.Command{
 			return nil
 		}
 		for i, m := range results {
-			fmt.Printf("%d. %s %s\n", i+1, engram.MemoryLabel(m), m.Content)
+			fmt.Printf("%d. %s %s\n", i+1, engram.MemoryAddressFor(memUsesGlobal(), m), m.Content)
 		}
 		return nil
 	},

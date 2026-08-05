@@ -182,6 +182,9 @@ func ApplyRestore(ctx context.Context, globalDB *sql.DB, identity string, sel Re
 	if err := os.MkdirAll(engDir, 0o755); err != nil {
 		return res, fmt.Errorf("apply: create .engram dir: %w", err)
 	}
+	if err := removeSQLiteSidecars(targetDBPath); err != nil {
+		return res, fmt.Errorf("apply: remove old database sidecars: %w", err)
+	}
 
 	destDB := targetDBPath
 	data, err := os.ReadFile(stagedMemDB)

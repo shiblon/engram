@@ -44,7 +44,7 @@ The exact query behind this command:
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		ctx := context.Background()
-		h, err := openScopeDB(ctx, curationGlobal)
+		h, err := openScopeDBReadOnly(ctx, curationGlobal)
 		if err != nil {
 			return err
 		}

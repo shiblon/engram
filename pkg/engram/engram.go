@@ -429,6 +429,45 @@ func openWithFallback(ctx context.Context, canonical, legacy string) (*sql.DB, e
 	return Open(ctx, canonical)
 }
 
+// openReadOnlyWithFallback opens an existing database without creating files,
+// applying schema, or running migrations. The canonical path wins when both
+// exist, matching openWithFallback.
+func openReadOnlyWithFallback(ctx context.Context, canonical, legacy string) (*sql.DB, error) {
+	path := canonical
+	if _, err := os.Stat(path); err != nil {
+		if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("stat database %s: %w", path, err)
+		}
+		if legacy == "" {
+			return openEmptyReadOnly(ctx)
+		}
+		if _, legacyErr := os.Stat(legacy); legacyErr != nil {
+			if os.IsNotExist(legacyErr) {
+				return openEmptyReadOnly(ctx)
+			}
+			return nil, fmt.Errorf("stat database %s: %w", legacy, legacyErr)
+		}
+		path = legacy
+	}
+	db, err := openReadOnly(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("open database read-only %s: %w", path, err)
+	}
+	return db, nil
+}
+
+func openEmptyReadOnly(ctx context.Context) (*sql.DB, error) {
+	db, err := Open(ctx, ":memory:")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := db.ExecContext(ctx, "PRAGMA query_only=ON"); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return db, nil
+}
+
 // ProjectDBExists reports whether any project database exists at root.
 func ProjectDBExists(root string) bool {
 	return dbExists(DBPath(root), LegacyDBPath(root))
@@ -460,6 +499,26 @@ func OpenProjectDB(ctx context.Context, root string) (*sql.DB, error) {
 	return db, nil
 }
 
+// OpenProjectDBReadOnly opens existing project memory without creating files or
+// applying schema changes. Linked worktrees resolve to the main checkout's
+// shared database just like OpenProjectDB.
+func OpenProjectDBReadOnly(ctx context.Context, root string) (*sql.DB, error) {
+	db, err := openReadOnlyWithFallback(ctx, DBPath(root), LegacyDBPath(root))
+	if err == nil {
+		return db, nil
+	}
+	storageRoot := ProjectStorageRoot(root)
+	if filepath.Clean(storageRoot) == filepath.Clean(root) {
+		return nil, err
+	}
+	return nil, fmt.Errorf(
+		"linked worktree memory is stored in the main checkout at %s: %w; "+
+			"retry once with write access to %s so SQLite can create WAL coordination files; "+
+			"do not create a separate .engram directory in this worktree",
+		DBPath(root), err, filepath.Dir(DBPath(root)),
+	)
+}
+
 // OpenGlobalDB opens the global database, falling back to the legacy path if
 // the canonical path does not yet exist.
 func OpenGlobalDB(ctx context.Context) (*sql.DB, error) {
@@ -469,6 +528,25 @@ func OpenGlobalDB(ctx context.Context) (*sql.DB, error) {
 	}
 	legacy, _ := LegacyGlobalDBPath()
 	return openWithFallback(ctx, path, legacy)
+}
+
+// OpenGlobalDBReadOnly opens existing global memory without creating files or
+// applying schema changes.
+func OpenGlobalDBReadOnly(ctx context.Context) (*sql.DB, error) {
+	path, err := GlobalDBPath()
+	if err != nil {
+		return nil, err
+	}
+	legacy, _ := LegacyGlobalDBPath()
+	db, err := openReadOnlyWithFallback(ctx, path, legacy)
+	if err == nil {
+		return db, nil
+	}
+	return nil, fmt.Errorf(
+		"open global memory read-only: %w; if this is a sandboxed filesystem, "+
+			"retry once with write access to %s so SQLite can create WAL coordination files",
+		err, filepath.Dir(path),
+	)
 }
 
 // Open opens (and initializes) the engram database at path. The caller is

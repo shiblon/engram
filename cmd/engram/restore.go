@@ -49,7 +49,7 @@ func runRestore(_ *cobra.Command, args []string) error {
 
 	// --status: list pending entries.
 	if restoreStatus {
-		gdb, err := engram.OpenGlobalDB(ctx)
+		gdb, err := engram.OpenGlobalDBReadOnly(ctx)
 		if err != nil {
 			return err
 		}

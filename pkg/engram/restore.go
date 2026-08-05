@@ -96,6 +96,12 @@ func Restore(ctx context.Context, r io.Reader) (RestoreResult, error) {
 				return res, fmt.Errorf("restore: write global db: %w", err)
 			}
 			globalDB.Close()
+			if err := removeSQLiteSidecars(globalDBPath); err != nil {
+				if rerr := os.Remove(tmp); rerr != nil {
+					log.Printf("engram: restore cleanup temp db %s: %v", tmp, rerr)
+				}
+				return res, fmt.Errorf("restore: remove old global db sidecars: %w", err)
+			}
 			if err := os.Rename(tmp, globalDBPath); err != nil {
 				if rerr := os.Remove(tmp); rerr != nil {
 					log.Printf("engram: restore cleanup temp db %s: %v", tmp, rerr)
