@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/shiblon/engram/pkg/engram"
 	"github.com/spf13/cobra"
@@ -68,7 +69,14 @@ func runStatus(_ *cobra.Command, _ []string) error {
 		}
 	}
 
-	fmt.Print(engram.FormatStatusLine(codename, project, longCount, shortCount))
+	line := engram.FormatStatusLine(codename, project, longCount, shortCount)
+	// A running batch is appended only while one exists. This is decoration and must
+	// never be able to break the status line, so nothing here returns an error: a
+	// missing, malformed, or stale progress file simply yields no segment.
+	if segment := engram.FormatDispatchProgress(engram.ReadDispatchProgress(), time.Now()); segment != "" {
+		line += " · " + segment
+	}
+	fmt.Print(line)
 	return nil
 }
 

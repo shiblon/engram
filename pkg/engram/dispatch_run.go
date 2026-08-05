@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -344,11 +345,30 @@ func RunBatch(ctx context.Context, config BatchConfig, opts DispatchOptions) (Ba
 		dispatchLogf("engram dispatch: emit batch_start: %v", err)
 	}
 
+	pid := os.Getpid()
+	project := ""
+	if root, err := FindProjectRoot("."); err == nil {
+		project = filepath.Base(root)
+	}
+	defer ClearDispatchProgress(pid)
+
 	tracker := &progressTracker{pending: len(config.Tasks), running: map[string]bool{}}
+	// Publish progress for a status line. Best-effort decoration: see
+	// dispatch_progress.go for why this is a transient file rather than a table, and
+	// why it must never fail a batch.
+	publish := func() {
+		running, _, completed, failed := tracker.snapshot()
+		PublishDispatchProgress(DispatchProgress{
+			PID: pid, StartedAt: start.UnixMilli(), UpdatedAt: now().UnixMilli(),
+			Project: project, Total: len(config.Tasks),
+			Running: len(running), Completed: completed, Failed: failed,
+		})
+	}
+	publish()
 	heartbeatDone := make(chan struct{})
 	heartbeatStopped := make(chan struct{})
 	go heartbeat(batchCtx, opts.Emitter, tracker, start, now,
-		time.Duration(config.HeartbeatSeconds)*time.Second, heartbeatDone, heartbeatStopped)
+		time.Duration(config.HeartbeatSeconds)*time.Second, heartbeatDone, heartbeatStopped, publish)
 
 	// Results are collected under a mutex rather than by indexing a shared slice,
 	// because the barrier that used to make indexing safe is no longer absolute:
@@ -385,6 +405,7 @@ func RunBatch(ctx context.Context, config BatchConfig, opts DispatchOptions) (Ba
 				}
 			}
 			collected.store(index, result)
+			publish()
 			emitTaskDone(opts.Emitter, result)
 		}(i, task)
 	}
@@ -726,7 +747,7 @@ func (t *progressTracker) snapshot() (running []string, pending, completed, fail
 // gets, so it is load-bearing rather than decorative.
 func heartbeat(ctx context.Context, emitter *EventEmitter, tracker *progressTracker,
 	start time.Time, now func() time.Time, interval time.Duration,
-	done <-chan struct{}, stopped chan<- struct{}) {
+	done <-chan struct{}, stopped chan<- struct{}, publish func()) {
 
 	// stopped lets RunBatch join this goroutine, so batch_done is provably the last
 	// line rather than merely the last line requested.
@@ -740,6 +761,7 @@ func heartbeat(ctx context.Context, emitter *EventEmitter, tracker *progressTrac
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			publish()
 			running, pending, completed, failed := tracker.snapshot()
 			if err := emitter.Emit(DispatchEvent{
 				Type:           EventStatus,

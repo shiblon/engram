@@ -54,3 +54,10 @@ func terminateProcessGroup(cmd *exec.Cmd, grace time.Duration) (stop func()) {
 func openNoFollow(path string) (*os.File, error) {
 	return os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 }
+
+// processAlive reports whether pid names a live process. Signal 0 performs the
+// permission and existence checks without delivering anything.
+func processAlive(pid int) bool {
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
+}

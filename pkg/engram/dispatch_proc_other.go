@@ -42,3 +42,10 @@ func openNoFollow(path string) (*os.File, error) {
 	}
 	return os.Open(path)
 }
+
+// processAlive reports whether pid names a live process. FindProcess is not a
+// liveness check on unix, but on platforms without signals it is what there is.
+func processAlive(pid int) bool {
+	_, err := os.FindProcess(pid)
+	return err == nil
+}
