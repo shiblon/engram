@@ -23,8 +23,8 @@ func TestSaveRestoreRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = WriteMemory(ctx, globalDB, Memory{Tier: TierInvariant, Key: "codename", Content: "Cadence"})
-	_ = WriteMemory(ctx, globalDB, Memory{Tier: TierPreference, Key: "style", Content: "terse"})
+	mustWriteMemory(t, ctx, globalDB, Memory{Tier: TierInvariant, Key: "codename", Content: "Cadence"})
+	mustWriteMemory(t, ctx, globalDB, Memory{Tier: TierPreference, Key: "style", Content: "terse"})
 	globalDB.Close()
 
 	// A project with memories.
@@ -37,14 +37,14 @@ func TestSaveRestoreRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = WriteMemory(ctx, projDB, Memory{Tier: TierLong, Key: "design", Content: "manifest-based enumeration"})
+	mustWriteMemory(t, ctx, projDB, Memory{Tier: TierLong, Key: "design", Content: "manifest-based enumeration"})
 	projDB.Close()
 
 	// Register in global manifest (normally happens at creation; the test DB
 	// is created by OpenProjectDB above which calls registerSelf, but HOME is
 	// set so it should have run; register explicitly to be certain).
-	globalDB, _ = OpenGlobalDB(ctx)
-	_ = RegisterProject(ctx, globalDB, projRoot)
+	globalDB = mustOpenGlobalDB(t, ctx)
+	mustRegisterProject(t, ctx, globalDB, projRoot)
 	globalDB.Close()
 
 	// Save.
@@ -147,8 +147,8 @@ func TestRestoreSkipsPopulatedGlobal(t *testing.T) {
 	// Source.
 	homeA := t.TempDir()
 	t.Setenv("HOME", homeA)
-	gdb, _ := OpenGlobalDB(ctx)
-	_ = WriteMemory(ctx, gdb, Memory{Tier: TierPreference, Key: "k", Content: "source"})
+	gdb := mustOpenGlobalDB(t, ctx)
+	mustWriteMemory(t, ctx, gdb, Memory{Tier: TierPreference, Key: "k", Content: "source"})
 	gdb.Close()
 
 	var buf bytes.Buffer
@@ -159,8 +159,8 @@ func TestRestoreSkipsPopulatedGlobal(t *testing.T) {
 	// Destination already has curated content.
 	homeB := t.TempDir()
 	t.Setenv("HOME", homeB)
-	gdb, _ = OpenGlobalDB(ctx)
-	_ = WriteMemory(ctx, gdb, Memory{Tier: TierPreference, Key: "k", Content: "local"})
+	gdb = mustOpenGlobalDB(t, ctx)
+	mustWriteMemory(t, ctx, gdb, Memory{Tier: TierPreference, Key: "k", Content: "local"})
 	gdb.Close()
 
 	result, err := Restore(ctx, bytes.NewReader(buf.Bytes()))
@@ -175,7 +175,7 @@ func TestRestoreSkipsPopulatedGlobal(t *testing.T) {
 	}
 
 	// Local content must be untouched.
-	gdb, _ = OpenGlobalDB(ctx)
+	gdb = mustOpenGlobalDB(t, ctx)
 	defer gdb.Close()
 	mems, _ := ListMemories(ctx, gdb, TierPreference)
 	if len(mems) != 1 || mems[0].Content != "local" {

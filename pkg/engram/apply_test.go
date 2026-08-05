@@ -22,7 +22,7 @@ func makeStageSlot(t *testing.T, ctx context.Context, stageDir, identity, origin
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = WriteMemory(ctx, db, Memory{Tier: TierLong, Key: "restored-key", Content: "restored-value"})
+	mustWriteMemory(t, ctx, db, Memory{Tier: TierLong, Key: "restored-key", Content: "restored-value"})
 	db.Close()
 
 	sidecar, _ := json.Marshal(SaveProject{Identity: identity, Path: originalPath})
@@ -105,7 +105,7 @@ func TestApplyRestoreEmptyTarget(t *testing.T) {
 
 	// Manifest entry should now be live.
 	var status string
-	_ = gdb.QueryRowContext(ctx, `SELECT status FROM projects WHERE identity = ?`, identity).Scan(&status)
+	mustScan(t, gdb.QueryRowContext(ctx, `SELECT status FROM projects WHERE identity = ?`, identity), &status)
 	if status != "live" {
 		t.Errorf("manifest status = %q, want 'live'", status)
 	}
@@ -128,7 +128,7 @@ func TestApplyRestoreConflict(t *testing.T) {
 
 	slug := identitySlug(identity)
 	stagePath := filepath.Join(".engram", "project-stage", slug)
-	_, _ = gdb.ExecContext(ctx,
+	mustExec(t, ctx, gdb,
 		`INSERT INTO projects (identity, path, last_seen, status) VALUES (?, ?, 1, 'pending')`,
 		identity, stagePath)
 
@@ -141,7 +141,7 @@ func TestApplyRestoreConflict(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = WriteMemory(ctx, pdb, Memory{Tier: TierLong, Key: "local-key", Content: "local-value"})
+	mustWriteMemory(t, ctx, pdb, Memory{Tier: TierLong, Key: "local-key", Content: "local-value"})
 	pdb.Close()
 
 	result, err := ApplyRestore(ctx, gdb, identity, RestoreSelector{}, projRoot)
@@ -159,7 +159,7 @@ func TestApplyRestoreConflict(t *testing.T) {
 	}
 
 	// Local memories must be untouched.
-	pdb, _ = Open(ctx, DBPath(projRoot))
+	pdb = mustOpen(t, ctx, DBPath(projRoot))
 	defer pdb.Close()
 	mems, _ := ListMemories(ctx, pdb, TierLong)
 	if len(mems) != 1 || mems[0].Key != "local-key" {
@@ -168,7 +168,7 @@ func TestApplyRestoreConflict(t *testing.T) {
 
 	// Entry stays pending under the new slot.
 	var status string
-	_ = gdb.QueryRowContext(ctx, `SELECT status FROM projects WHERE identity = ?`, identity).Scan(&status)
+	mustScan(t, gdb.QueryRowContext(ctx, `SELECT status FROM projects WHERE identity = ?`, identity), &status)
 	if status != "pending" {
 		t.Errorf("manifest status = %q, want 'pending' after conflict", status)
 	}
@@ -190,7 +190,7 @@ func TestDiscardRestore(t *testing.T) {
 	defer gdb.Close()
 
 	stagePath := filepath.Join(".engram", "project-stage", slug)
-	_, _ = gdb.ExecContext(ctx,
+	mustExec(t, ctx, gdb,
 		`INSERT INTO projects (identity, path, last_seen, status) VALUES (?, ?, 1, 'pending')`,
 		identity, stagePath)
 
@@ -205,7 +205,7 @@ func TestDiscardRestore(t *testing.T) {
 
 	// Manifest row should be gone.
 	var n int
-	_ = gdb.QueryRowContext(ctx, `SELECT COUNT(*) FROM projects WHERE identity = ?`, identity).Scan(&n)
+	mustScan(t, gdb.QueryRowContext(ctx, `SELECT COUNT(*) FROM projects WHERE identity = ?`, identity), &n)
 	if n != 0 {
 		t.Errorf("manifest rows after discard = %d, want 0", n)
 	}
@@ -229,7 +229,7 @@ func TestListPendingRestores(t *testing.T) {
 	defer gdb.Close()
 
 	for _, pair := range [][2]string{{id1, slug1}, {id2, slug2}} {
-		_, _ = gdb.ExecContext(ctx,
+		mustExec(t, ctx, gdb,
 			`INSERT INTO projects (identity, path, last_seen, status) VALUES (?, ?, 1, 'pending')`,
 			pair[0], filepath.Join(".engram", "project-stage", pair[1]))
 	}
@@ -259,7 +259,7 @@ func makeStageSlotNamed(t *testing.T, ctx context.Context, stageDir, slug, ident
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = WriteMemory(ctx, db, Memory{Tier: TierLong, Key: "restored-key", Content: "restored-value"})
+	mustWriteMemory(t, ctx, db, Memory{Tier: TierLong, Key: "restored-key", Content: "restored-value"})
 	db.Close()
 	sidecar, _ := json.Marshal(SaveProject{Identity: identity, Path: originalPath})
 	if err := os.WriteFile(filepath.Join(slotDir, "project.json"), sidecar, 0o644); err != nil {
@@ -335,7 +335,7 @@ func TestApplyRestoreMultipleCopies(t *testing.T) {
 	}
 
 	// The other copy remains pending and untouched.
-	pending, _ = ListPendingRestores(ctx, gdb)
+	pending = mustListPendingRestores(t, ctx, gdb)
 	if len(pending) != 1 || pending[0].Slot != "parallel" {
 		t.Errorf("remaining pending = %v, want one entry with slot 'parallel'", pending)
 	}
@@ -358,7 +358,7 @@ func TestInjectSurfacesPendingRestores(t *testing.T) {
 
 	slug := identitySlug(identity)
 	stagePath := filepath.Join(".engram", "project-stage", slug)
-	_, _ = gdb.ExecContext(ctx,
+	mustExec(t, ctx, gdb,
 		`INSERT INTO projects (identity, path, last_seen, status) VALUES (?, ?, 1, 'pending')`,
 		identity, stagePath)
 

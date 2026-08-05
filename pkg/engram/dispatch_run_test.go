@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,6 +20,10 @@ import (
 // the code under test.
 
 const fakeProviderEnv = "ENGRAM_FAKE_PROVIDER"
+
+// fakeGrandchildPidFile names where the fake writes the pid of a process it spawns,
+// so a test can check whether teardown reached the whole group.
+const fakeGrandchildPidFile = "ENGRAM_FAKE_GRANDCHILD_PIDFILE"
 
 // TestFakeProviderProcess is not a test. It is the fake provider CLI, and it exits
 // early unless the marker env var is set.
@@ -54,6 +59,22 @@ func TestFakeProviderProcess(t *testing.T) {
 		os.Exit(1)
 	case "hang":
 		// Sleep past any test deadline; the point is that teardown reaches it.
+		time.Sleep(60 * time.Second)
+	case "hang-with-child":
+		// Spawn a GRANDCHILD of the supervisor and report its pid, then sleep.
+		// Without this the teardown test proved nothing: killing only the direct
+		// child made it pass, which is exactly the bug it claimed to guard.
+		child := exec.Command("sleep", "60")
+		if err := child.Start(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		if path := os.Getenv(fakeGrandchildPidFile); path != "" {
+			if err := os.WriteFile(path, []byte(strconv.Itoa(child.Process.Pid)), 0o600); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+		}
 		time.Sleep(60 * time.Second)
 	}
 	os.Exit(0)
@@ -161,8 +182,12 @@ func TestRunBatchHappyPath(t *testing.T) {
 		if result.State != TaskStateOK {
 			t.Errorf("task %s: state %q error %q", result.Task, result.State, result.Error)
 		}
-		if !strings.HasPrefix(result.Result, "echo:") {
-			t.Errorf("task %s: result did not come from the provider's own output channel: %q", result.Task, result.Result)
+		// Assert the EXACT echoed prompt. Checking only the prefix and that two
+		// results differ would pass with the prompts swapped between tasks, which
+		// is a real dispatch bug this test claimed to cover.
+		wantPrompt := map[string]string{"slice-1": "first slice", "slice-2": "second slice", "whole": "the whole change"}
+		if want := "echo:" + wantPrompt[result.Task]; result.Result != want {
+			t.Errorf("task %s got result %q, want %q: the wrong prompt reached this child", result.Task, result.Result, want)
 		}
 		if !result.ModelVerified {
 			t.Errorf("task %s: model %q was not confirmed against the reported %q",

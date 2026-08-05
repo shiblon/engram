@@ -45,7 +45,7 @@ func setupProjectDB(t *testing.T, root string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = WriteMemory(ctx, db, Memory{Tier: TierLong, Key: "k", Content: "v"})
+	mustWriteMemory(t, ctx, db, Memory{Tier: TierLong, Key: "k", Content: "v"})
 	db.Close()
 }
 

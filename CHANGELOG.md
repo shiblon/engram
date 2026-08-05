@@ -12,6 +12,26 @@ in-repo companion.
 ## [Unreleased]
 
 ### Fixed
+- dispatch tests: the test-quality reviewer found tests that could not fail, so
+  they proved nothing about the code they named.
+  - The process-group teardown test spawned no descendant, so killing only the
+    direct child passed it -- guarding exactly the bug it existed to catch. Its fake
+    now spawns a real grandchild and the test asserts that grandchild is gone after
+    the deadline. Verified by regressing `terminateProcessGroup` to a direct kill and
+    confirming the test fails.
+  - `ProbeSpec` had no coverage at all; only pure helpers were tested. The smoke run,
+    output extraction, model verification, and the invalid-model fallback are now
+    exercised end to end against the fake provider, including the silent-substitution
+    and failed-baseline cases.
+  - The happy-path assertion checked only that results began with `echo:` and
+    differed, which would pass with the prompts swapped between tasks. It now asserts
+    each task's exact echoed prompt.
+  - The prompt-file transport test asserted a path reached argv but never read it, so
+    deleting the `os.WriteFile` would still pass. It now reads the file and compares
+    contents.
+  - Test setup no longer discards errors. A dropped setup error reappears later as a
+    behavioral assertion failing for an unrelated reason, and the package forbids
+    silent discards in its own code.
 - dispatch: four ways a child's output could harm the parent, found by the security
   reviewer in the same batch.
   - Prompts no longer reach the status stream. `task_start` emits resolved argv, which

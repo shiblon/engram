@@ -3,6 +3,7 @@ package engram
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -190,6 +191,16 @@ func TestBuildInvocationPromptFileTransport(t *testing.T) {
 	}
 	if inv.PromptFile == "" || !containsString(inv.Argv, inv.PromptFile) {
 		t.Fatalf("prompt file was not written and passed: %#v", inv)
+	}
+	// Read the file. Asserting only that a path reached argv would still pass if the
+	// os.WriteFile call were deleted, which is the whole failure mode: a provider
+	// receives a path to a file that does not exist, or exists with the wrong text.
+	written, err := os.ReadFile(inv.PromptFile)
+	if err != nil {
+		t.Fatalf("the promised prompt file was never written: %v", err)
+	}
+	if string(written) != "a very large slice" {
+		t.Fatalf("prompt file holds %q, want the requested prompt", written)
 	}
 }
 
