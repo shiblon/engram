@@ -524,6 +524,10 @@ type Invocation struct {
 	// correct configs teaches everyone to ignore it -- which then conceals a real
 	// silent substitution, the one thing it exists to catch.
 	ResolvedModel string
+	// Secrets lists values substituted into argv that must be redacted before the
+	// argv is reported anywhere. The prompt and the composed system prompt are the
+	// caller's content, not diagnostics.
+	Secrets []string
 	// Warnings records deliberate accommodations the caller should see, such as
 	// a system prompt folded into the user prompt because the provider has no
 	// flag for it, or a requested guardrail this provider cannot express.
@@ -645,6 +649,7 @@ func (s *ProviderSpec) BuildInvocation(request TaskRequest, tempDir string) (*In
 		}
 	}
 	if request.SystemPrompt != "" && s.SystemPrompt != nil && s.SystemPrompt.Mode == SystemPromptModeArgv {
+		inv.Secrets = append(inv.Secrets, request.SystemPrompt)
 		inv.Argv = append(inv.Argv, substituteArgv(s.SystemPrompt.Argv, map[string]string{
 			PlaceholderSystemPrompt: request.SystemPrompt,
 		})...)
@@ -670,7 +675,7 @@ func (s *ProviderSpec) BuildInvocation(request TaskRequest, tempDir string) (*In
 			return nil, fmt.Errorf("task %s: provider %s reports its result through a file, but no temp dir was provided",
 				request.ID, s.Provider)
 		}
-		inv.OutputFile = filepath.Join(tempDir, sanitizeFileComponent(request.ID)+".last-message.txt")
+		inv.OutputFile = filepath.Join(tempDir, uniqueFileComponent(request.ID)+".last-message.txt")
 		inv.Argv = append(inv.Argv, substituteArgv(s.Result.OutputFileArgv, map[string]string{
 			PlaceholderOutputFile: inv.OutputFile,
 		})...)
@@ -680,6 +685,7 @@ func (s *ProviderSpec) BuildInvocation(request TaskRequest, tempDir string) (*In
 	case PromptTransportStdin:
 		inv.Stdin = []byte(prompt)
 	case PromptTransportArgv:
+		inv.Secrets = append(inv.Secrets, prompt)
 		inv.Argv = append(inv.Argv, substituteArgv(s.Prompt.Argv, map[string]string{
 			PlaceholderPrompt: prompt,
 		})...)
@@ -688,7 +694,8 @@ func (s *ProviderSpec) BuildInvocation(request TaskRequest, tempDir string) (*In
 			return nil, fmt.Errorf("task %s: provider %s takes its prompt from a file, but no temp dir was provided",
 				request.ID, s.Provider)
 		}
-		inv.PromptFile = filepath.Join(tempDir, sanitizeFileComponent(request.ID)+".prompt.txt")
+		inv.Secrets = append(inv.Secrets, prompt)
+		inv.PromptFile = filepath.Join(tempDir, uniqueFileComponent(request.ID)+".prompt.txt")
 		if err := os.WriteFile(inv.PromptFile, []byte(prompt), 0o600); err != nil {
 			return nil, fmt.Errorf("task %s: write prompt file: %w", request.ID, err)
 		}
@@ -737,6 +744,34 @@ func substituteArgv(template []string, values map[string]string) []string {
 			element = strings.ReplaceAll(element, placeholder, value)
 		}
 		out = append(out, element)
+	}
+	return out
+}
+
+// RedactArgv returns argv with any prompt-bearing element replaced by a bounded
+// placeholder, for the status stream.
+//
+// task_start emits the resolved argv, which is genuinely useful for --dry-run and
+// for diagnosis. But a provider carrying its prompt in argv -- codex does -- means
+// the whole prompt lands in the JSONL, including a prompt the caller deliberately
+// supplied through prompt_file to keep it out of view. Captured streams then retain
+// it wherever they are shipped.
+//
+// Redaction is by exact match against the values actually substituted, not by
+// pattern matching: guessing which argument looks like a prompt would both miss
+// some and mangle innocent ones.
+func RedactArgv(argv []string, secrets []string) []string {
+	out := make([]string, 0, len(argv))
+	for _, element := range argv {
+		redacted := element
+		for _, secret := range secrets {
+			if secret == "" || !strings.Contains(redacted, secret) {
+				continue
+			}
+			redacted = strings.ReplaceAll(redacted, secret,
+				fmt.Sprintf("<redacted %d bytes>", len(secret)))
+		}
+		out = append(out, redacted)
 	}
 	return out
 }
@@ -860,4 +895,16 @@ func containsField(fields []string, name string) bool {
 		}
 	}
 	return false
+}
+
+// uniqueFileComponent turns a task id into a file-name component that cannot
+// collide with another id's.
+//
+// Sanitizing alone was not enough: distinct ids "a/b" and "a?b" both sanitized to
+// "a-b" and so shared one result file, which duplicate-id rejection did not catch
+// because it compares raw ids. Two tasks then read each other's results. Appending
+// a digest of the original id keeps the name readable while making it injective.
+func uniqueFileComponent(id string) string {
+	sum := sha256.Sum256([]byte(id))
+	return sanitizeFileComponent(id) + "-" + fmt.Sprintf("%x", sum[:4])
 }

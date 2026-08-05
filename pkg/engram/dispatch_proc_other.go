@@ -3,7 +3,9 @@
 package engram
 
 import (
+	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"time"
 )
@@ -25,4 +27,18 @@ func terminateProcessGroup(cmd *exec.Cmd, grace time.Duration) (stop func()) {
 	}
 	// Nothing is scheduled here, so there is nothing to cancel.
 	return func() {}
+}
+
+// openNoFollow approximates O_NOFOLLOW where the flag does not exist. Lstat then
+// open leaves a small window between the check and the open, so this is weaker than
+// the unix path -- worth stating rather than implying parity.
+func openNoFollow(path string) (*os.File, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("refusing to read result file %s: it is a symlink", path)
+	}
+	return os.Open(path)
 }

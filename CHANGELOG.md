@@ -12,6 +12,24 @@ in-repo companion.
 ## [Unreleased]
 
 ### Fixed
+- dispatch: four ways a child's output could harm the parent, found by the security
+  reviewer in the same batch.
+  - Prompts no longer reach the status stream. `task_start` emits resolved argv, which
+    is what makes `--dry-run` useful, but a provider carrying its prompt in argv
+    (codex does) published the caller's content into every captured stream --
+    including a prompt supplied via `prompt_file` precisely to keep it out of view.
+    Argv is now redacted by exact match against the values substituted into it, so
+    flags stay readable and content does not.
+  - A child's stdout and stderr are bounded as they are captured rather than
+    truncated afterwards. Unbounded buffers let a runaway or hostile child write
+    until the deadline and exhaust the supervisor, taking the batch with it.
+  - The result file is opened with `O_NOFOLLOW`, checked for being a regular file,
+    and read under a size cap. A child is told its result path but does not own it:
+    replacing it with a symlink made dispatch read any file the user could read and
+    publish the contents as that task's result.
+  - Task ids that differ but sanitize alike (`a/b` and `a?b` both became `a-b`) no
+    longer share a result file. Duplicate rejection compares raw ids, so both passed
+    it and then collided, letting two tasks read each other's results.
 - dispatch authority: three failures found by reviewing dispatch with dispatch, all
   of which let a child do more than it was told it could.
   - Authority is now a CLOSED set (`read-only`, `edit`, `default`) rejected at config

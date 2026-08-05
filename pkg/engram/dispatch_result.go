@@ -3,7 +3,7 @@ package engram
 import (
 	"encoding/json"
 	"fmt"
-	"os"
+	"io"
 	"regexp"
 	"strconv"
 	"strings"
@@ -19,6 +19,9 @@ type providerOutput struct {
 	Stdout     []byte
 	Stderr     []byte
 	OutputFile string
+	// MaxFileBytes caps the result file read. Zero means unlimited, which only
+	// tests should use.
+	MaxFileBytes int
 }
 
 // extractedResult is what a spec's result section yields.
@@ -56,7 +59,7 @@ func extractResult(spec *ProviderSpec, out providerOutput) (extractedResult, err
 			resultErr = fmt.Errorf("spec reports its result in a file, but no output file was allocated")
 			break
 		}
-		data, err := os.ReadFile(out.OutputFile)
+		data, err := readResultFile(out.OutputFile, out.MaxFileBytes)
 		if err != nil {
 			// A provider that failed before writing its last message is the
 			// common case here, not a broken spec.
@@ -312,4 +315,38 @@ func sortStrings(values []string) {
 			values[j], values[j-1] = values[j-1], values[j]
 		}
 	}
+}
+
+// readResultFile reads a child's result file without following a symlink and
+// without trusting its size.
+//
+// The child is told the path but does not own it. A malicious or compromised child
+// can replace that path with a symlink to anything the dispatch user can read, and
+// os.ReadFile would follow it and publish the contents as that task's result --
+// into task_done, into batch_done, into whatever captured the stream. O_NOFOLLOW
+// refuses the open instead. The regular-file check rejects a fifo, which would
+// otherwise block the read until the deadline, and the size cap keeps a huge file
+// from doing what an unbounded buffer used to.
+func readResultFile(path string, maxBytes int) ([]byte, error) {
+	file, err := openNoFollow(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err := file.Close(); err != nil {
+			dispatchLogf("engram dispatch: close result file %s: %v", path, err)
+		}
+	}()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("result path is not a regular file (mode %s); refusing to read it", info.Mode())
+	}
+	reader := io.Reader(file)
+	if maxBytes > 0 {
+		reader = io.LimitReader(file, int64(maxBytes))
+	}
+	return io.ReadAll(reader)
 }

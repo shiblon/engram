@@ -3,6 +3,7 @@ package engram
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -276,5 +277,54 @@ func TestApplyProbeKeepsSeedFlagWhenTheProbeFailed(t *testing.T) {
 	succeeded := ApplyProbe(spec, ProbeResult{SmokeOK: true, ExitCode: 0, Version: "9.9.9"}, time.Now())
 	if succeeded.Provenance.Seed {
 		t.Error("a successful probe should retire the seed flag")
+	}
+}
+
+func TestReadResultFileRefusesASymlink(t *testing.T) {
+	// A child is told its result path but does not own it. Replacing that path with
+	// a symlink used to make dispatch read any file the user could read and publish
+	// the contents as that task's result.
+	dir := t.TempDir()
+	secret := filepath.Join(dir, "secret.txt")
+	if err := os.WriteFile(secret, []byte("private material"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "result.txt")
+	if err := os.Symlink(secret, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := readResultFile(link, 1<<20); err == nil {
+		t.Fatal("a symlinked result file must be refused, not followed")
+	}
+}
+
+func TestReadResultFileIsBounded(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "big.txt")
+	if err := os.WriteFile(path, []byte(strings.Repeat("x", 5000)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	data, err := readResultFile(path, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) != 100 {
+		t.Fatalf("read %d bytes despite a 100-byte cap", len(data))
+	}
+}
+
+func TestBoundedBufferDiscardsWithoutFailingTheChild(t *testing.T) {
+	// A short write would make exec treat this as an error and kill the child, when
+	// discarding excess output is precisely the intent.
+	buffer := &boundedBuffer{limit: 10}
+	n, err := buffer.Write([]byte(strings.Repeat("y", 5000)))
+	if err != nil || n != 5000 {
+		t.Fatalf("Write reported (%d, %v); it must claim the full write", n, err)
+	}
+	if len(buffer.Bytes()) != 10 {
+		t.Fatalf("buffer kept %d bytes, want 10", len(buffer.Bytes()))
+	}
+	if !buffer.Truncated() {
+		t.Error("truncation must be reported, not silent")
 	}
 }

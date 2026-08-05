@@ -5,6 +5,7 @@ package engram
 import (
 	"errors"
 	"log"
+	"os"
 	"os/exec"
 	"syscall"
 	"time"
@@ -45,4 +46,11 @@ func terminateProcessGroup(cmd *exec.Cmd, grace time.Duration) (stop func()) {
 		}
 	})
 	return func() { timer.Stop() }
+}
+
+// openNoFollow opens path for reading and refuses if it is a symlink, so a child
+// cannot redirect its own result file at something else the dispatch user can read.
+// O_NOFOLLOW makes the kernel enforce this, with no window between check and open.
+func openNoFollow(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 }

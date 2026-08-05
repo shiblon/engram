@@ -29,6 +29,10 @@ const (
 	// DefaultStderrTailBytes bounds the diagnostic excerpt kept per task, so one
 	// chatty provider cannot make batch_done unreadable.
 	DefaultStderrTailBytes = 4000
+	// DefaultMaxChildOutputBytes caps how much of a child's stdout, stderr, or
+	// result file is read into memory. Generous enough for a real review, small
+	// enough that N children cannot exhaust the supervisor.
+	DefaultMaxChildOutputBytes = 8 << 20
 )
 
 // TaskConfig is one slice of a fan-out, expressed in role-level terms. It names a
@@ -228,6 +232,9 @@ type DispatchOptions struct {
 	GraceSeconds int
 	// StderrTailBytes bounds the per-task diagnostic excerpt.
 	StderrTailBytes int
+	// MaxChildOutputBytes caps how much of a child's stdout, stderr, and result
+	// file is read at all. Zero uses DefaultMaxChildOutputBytes.
+	MaxChildOutputBytes int
 	// SkipVersionCheck omits the one `--version` spawn per provider. Dispatch
 	// already spawns processes, so the check is free here in a way it never
 	// would be at session start.
@@ -265,6 +272,9 @@ func RunBatch(ctx context.Context, config BatchConfig, opts DispatchOptions) (Ba
 	}
 	if opts.StderrTailBytes <= 0 {
 		opts.StderrTailBytes = DefaultStderrTailBytes
+	}
+	if opts.MaxChildOutputBytes <= 0 {
+		opts.MaxChildOutputBytes = DefaultMaxChildOutputBytes
 	}
 	emitDeadline := time.Duration(opts.GraceSeconds) * time.Second
 
@@ -484,7 +494,10 @@ func runTask(ctx context.Context, task TaskConfig, resolved ResolvedSpec, opts D
 		Provider:   task.Provider,
 		Model:      task.Model,
 		SpecOrigin: string(resolved.Origin),
-		Argv:       invocation.Argv,
+		// Redacted, because a provider that carries its prompt in argv would
+		// otherwise publish the caller's content -- including a prompt supplied by
+		// file specifically to keep it out of view -- into every captured stream.
+		Argv: RedactArgv(invocation.Argv, invocation.Secrets),
 	}); err != nil {
 		dispatchLogf("engram dispatch: emit task_start: %v", err)
 	}
@@ -499,10 +512,14 @@ func runTask(ctx context.Context, task TaskConfig, resolved ResolvedSpec, opts D
 	taskCtx, cancelTask := context.WithTimeout(ctx, time.Duration(task.DeadlineSeconds)*time.Second)
 	defer cancelTask()
 
-	var stdout, stderr bytes.Buffer
+	// Bound the capture, not just the excerpt kept afterwards. Unbounded buffers let
+	// a runaway or malicious child write until the deadline and exhaust the
+	// supervisor's memory, taking the whole batch with it.
+	stdout := &boundedBuffer{limit: opts.MaxChildOutputBytes}
+	stderr := &boundedBuffer{limit: opts.MaxChildOutputBytes}
 	cmd := exec.CommandContext(taskCtx, invocation.Argv[0], invocation.Argv[1:]...)
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	cmd.Dir = invocation.Dir
 	if len(invocation.Env) > 0 {
 		cmd.Env = append(os.Environ(), invocation.Env...)
@@ -552,10 +569,16 @@ func runTask(ctx context.Context, task TaskConfig, resolved ResolvedSpec, opts D
 	timedOut := errors.Is(taskCtx.Err(), context.DeadlineExceeded)
 
 	extracted, extractErr := extractResult(spec, providerOutput{
-		Stdout:     stdout.Bytes(),
-		Stderr:     stderr.Bytes(),
-		OutputFile: invocation.OutputFile,
+		Stdout:       stdout.Bytes(),
+		Stderr:       stderr.Bytes(),
+		OutputFile:   invocation.OutputFile,
+		MaxFileBytes: opts.MaxChildOutputBytes,
 	})
+	if stdout.Truncated() || stderr.Truncated() {
+		result.Warnings = append(result.Warnings, fmt.Sprintf(
+			"this child produced more than the %d-byte capture limit, so its output was truncated",
+			opts.MaxChildOutputBytes))
+	}
 	result.Result = extracted.Result
 	result.TerminalReason = extracted.TerminalReason
 	result.CostUSD = extracted.CostUSD
@@ -793,4 +816,47 @@ func (r *resultSet) ordered(count int, tasks []TaskConfig) []TaskResult {
 		})
 	}
 	return out
+}
+
+// boundedBuffer accumulates up to limit bytes and discards the rest, reporting that
+// it did so. An io.Writer handed to exec must never grow without bound: the child
+// on the other end may be runaway or hostile, and "we ran out of memory" is a much
+// worse failure than "that child said too much".
+type boundedBuffer struct {
+	mu        sync.Mutex
+	buf       bytes.Buffer
+	limit     int
+	truncated bool
+}
+
+func (b *boundedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if room := b.limit - b.buf.Len(); room > 0 {
+		if len(p) <= room {
+			b.buf.Write(p)
+		} else {
+			b.buf.Write(p[:room])
+			b.truncated = true
+		}
+	} else if len(p) > 0 {
+		b.truncated = true
+	}
+	// Always report a full write: a short write would make exec treat this as an
+	// error and kill the child, when discarding excess output is the intent.
+	return len(p), nil
+}
+
+func (b *boundedBuffer) Bytes() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Bytes()
+}
+
+func (b *boundedBuffer) String() string { return string(b.Bytes()) }
+
+func (b *boundedBuffer) Truncated() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.truncated
 }

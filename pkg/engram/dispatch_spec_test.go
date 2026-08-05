@@ -3,6 +3,7 @@ package engram
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -505,5 +506,68 @@ func TestSeedSpecsOnlyMapAuthorityToValuesTheProviderAccepts(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestArgvIsRedactedBeforeItReachesTheStream(t *testing.T) {
+	// task_start emits resolved argv, which is what makes --dry-run useful. But a
+	// provider carrying its prompt in argv would publish the caller's content into
+	// every captured stream -- including a prompt supplied via prompt_file
+	// specifically to keep it out of view.
+	spec := minimalSpec()
+	spec.Prompt = PromptSpec{Transport: PromptTransportArgv, Argv: []string{PlaceholderPrompt}}
+	spec.SystemPrompt = &SystemPromptSpec{Mode: SystemPromptModeArgv, Argv: []string{"--sys", PlaceholderSystemPrompt}}
+
+	secret := "the confidential diff nobody should see in a log"
+	sysSecret := "composed reviewer context"
+	inv, err := spec.BuildInvocation(TaskRequest{
+		ID: "t", Prompt: secret, SystemPrompt: sysSecret, Model: "m",
+	}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The real argv must still carry the real prompt, or the child gets nothing.
+	if !containsString(inv.Argv, secret) {
+		t.Fatal("the child must still receive the actual prompt")
+	}
+	redacted := strings.Join(RedactArgv(inv.Argv, inv.Secrets), " ")
+	for _, leaked := range []string{secret, sysSecret} {
+		if strings.Contains(redacted, leaked) {
+			t.Errorf("redaction missed %q:\n%s", leaked, redacted)
+		}
+	}
+	if !strings.Contains(redacted, "<redacted") {
+		t.Errorf("redaction should say something was removed, not silently drop it:\n%s", redacted)
+	}
+	// Flags must survive, or the redacted argv is useless for diagnosis.
+	if !strings.Contains(redacted, "--model m") || !strings.Contains(redacted, "--sys") {
+		t.Errorf("redaction destroyed the diagnostic value of the argv:\n%s", redacted)
+	}
+}
+
+func TestTaskIDsThatSanitizeAlikeGetDistinctFiles(t *testing.T) {
+	// Duplicate-id rejection compares RAW ids, so "a/b" and "a?b" both passed it and
+	// then both sanitized to "a-b" -- sharing one result file, so two tasks could
+	// read each other's results.
+	spec := minimalSpec()
+	spec.Result = ResultSpec{
+		Format:         ResultFormatLastMessageFile,
+		OutputFileArgv: []string{"-o", PlaceholderOutputFile},
+	}
+	dir := t.TempDir()
+	first, err := spec.BuildInvocation(TaskRequest{ID: "a/b", Prompt: "p"}, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := spec.BuildInvocation(TaskRequest{ID: "a?b", Prompt: "p"}, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.OutputFile == second.OutputFile {
+		t.Fatalf("two distinct task ids share a result file: %s", first.OutputFile)
+	}
+	// And the name should still be recognizable to a human debugging a temp dir.
+	if !strings.Contains(filepath.Base(first.OutputFile), "a-b") {
+		t.Errorf("the file name lost all trace of the task id: %s", first.OutputFile)
 	}
 }
