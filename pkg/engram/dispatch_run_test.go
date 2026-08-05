@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -689,4 +690,131 @@ func TestModelVerificationStillCatchesASubstitutionBehindARole(t *testing.T) {
 	if !strings.Contains(joined, "fake-cheap-model-1") || !strings.Contains(joined, `role "cheap"`) {
 		t.Errorf("the warning should show the resolution chain: %q", joined)
 	}
+}
+
+// stallingWriter permits a few writes and then blocks forever, standing in for a
+// status-stream consumer that stops draining its pipe.
+type stallingWriter struct {
+	mu      sync.Mutex
+	allowed int
+	written int
+	blocked chan struct{}
+}
+
+func (w *stallingWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	w.written++
+	stall := w.written > w.allowed
+	w.mu.Unlock()
+	if stall {
+		select {
+		case <-w.blocked: // released only when the test tears down
+		case <-time.After(30 * time.Second):
+		}
+	}
+	return len(p), nil
+}
+
+func TestRunBatchExitsAtItsDeadlineDespiteAStalledStreamConsumer(t *testing.T) {
+	// The guarantee under test is the one the whole no-daemon design rests on: a
+	// batch terminates. Emit holds a mutex across a raw Write with no deadline, and
+	// task goroutines emit before wg.Done(), so a consumer that stops reading used
+	// to block wg.Wait() forever -- with the batch deadline unable to help, because
+	// a deadline cannot unblock a blocking Write.
+	writer := &stallingWriter{allowed: 1, blocked: make(chan struct{})}
+	defer close(writer.blocked)
+
+	spec := fakeSpec(t, "ok")
+	options := DispatchOptions{
+		Specs:            map[string]ResolvedSpec{"fake": {Spec: spec, Origin: SpecOriginMemory}},
+		Emitter:          NewEventEmitter(writer, nil),
+		SkipVersionCheck: true,
+		GraceSeconds:     1,
+	}
+	config := BatchConfig{
+		V:               DispatchConfigVersion,
+		DeadlineSeconds: 2,
+		Tasks: []TaskConfig{
+			{ID: "a", Prompt: "one", Provider: "fake"},
+			{ID: "b", Prompt: "two", Provider: "fake"},
+		},
+	}
+
+	done := make(chan BatchOutcome, 1)
+	go func() {
+		outcome, err := RunBatch(context.Background(), config, options)
+		if err != nil {
+			t.Error(err)
+		}
+		done <- outcome
+	}()
+
+	select {
+	case outcome := <-done:
+		// Every task must still be accounted for, even the ones whose reports were
+		// swallowed by the stalled writer.
+		if len(outcome.Results) != 2 {
+			t.Fatalf("expected 2 results even when abandoned, got %d", len(outcome.Results))
+		}
+		for _, result := range outcome.Results {
+			if result.Task == "" {
+				t.Error("a synthesized result lost its task id")
+			}
+		}
+	case <-time.After(25 * time.Second):
+		t.Fatal("RunBatch never returned: a stalled stream consumer still hangs the batch past its deadline")
+	}
+}
+
+func TestRunBatchClosesWithBatchDone(t *testing.T) {
+	// batch_done is documented as authoritative and terminal, so nothing may follow
+	// it. Closing the heartbeat channel without joining the goroutine let an
+	// in-flight status emission win the writer and land after it.
+	var stream bytes.Buffer
+	options := fakeOptions(fakeSpec(t, "ok"), &stream)
+	config := BatchConfig{
+		V:                DispatchConfigVersion,
+		HeartbeatSeconds: 1, // fire often, to race the finish on purpose
+		MaxConcurrent:    2,
+		Tasks: []TaskConfig{
+			{ID: "a", Prompt: "one", Provider: "fake"},
+			{ID: "b", Prompt: "two", Provider: "fake"},
+			{ID: "c", Prompt: "three", Provider: "fake"},
+		},
+	}
+	if _, err := RunBatch(context.Background(), config, options); err != nil {
+		t.Fatal(err)
+	}
+	events, err := ParseDispatchEvents(bytes.NewReader(stream.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last := events[len(events)-1]; last.Type != EventBatchDone {
+		t.Fatalf("stream ended with %q, not batch_done: a consumer that stops at batch_done would miss it", last.Type)
+	}
+}
+
+func TestProgressTrackerCountersStayAPartition(t *testing.T) {
+	// pending + running + completed must always equal the task count. A task
+	// abandoned before it took a running slot used to be counted twice: still
+	// pending forever, and also folded into completed.
+	tracker := &progressTracker{pending: 3, running: map[string]bool{}}
+	check := func(stage string) {
+		t.Helper()
+		running, pending, completed, _ := tracker.snapshot()
+		if total := len(running) + pending + completed; total != 3 {
+			t.Errorf("%s: pending=%d running=%d completed=%d sums to %d, want 3",
+				stage, pending, len(running), completed, total)
+		}
+	}
+	check("initial")
+	tracker.start("a")
+	check("one running")
+	tracker.finish("a", true)
+	check("one finished")
+	tracker.neverStarted("b")
+	check("one abandoned before starting")
+	tracker.start("c")
+	tracker.finish("c", false)
+	check("all accounted for")
 }

@@ -16,11 +16,13 @@ import (
 
 func configureProcessGroup(cmd *exec.Cmd) {}
 
-func terminateProcessGroup(cmd *exec.Cmd, grace time.Duration) {
+func terminateProcessGroup(cmd *exec.Cmd, grace time.Duration) (stop func()) {
 	if cmd == nil || cmd.Process == nil {
-		return
+		return func() {}
 	}
 	if err := cmd.Process.Kill(); err != nil {
 		log.Printf("engram dispatch: kill child %d: %v", cmd.Process.Pid, err)
 	}
+	// Nothing is scheduled here, so there is nothing to cancel.
+	return func() {}
 }

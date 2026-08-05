@@ -285,8 +285,9 @@ func runProbeOnce(ctx context.Context, spec *ProviderSpec, request TaskRequest,
 	}
 	configureProcessGroup(cmd)
 	grace := time.Duration(DefaultDispatchGraceSeconds) * time.Second
+	var stopEscalation func()
 	cmd.Cancel = func() error {
-		terminateProcessGroup(cmd, grace)
+		stopEscalation = terminateProcessGroup(cmd, grace)
 		return nil
 	}
 	cmd.WaitDelay = grace + time.Second
@@ -298,8 +299,12 @@ func runProbeOnce(ctx context.Context, spec *ProviderSpec, request TaskRequest,
 	// A nonzero exit is data here, not an error: the flag-liveness probe is
 	// specifically looking for one. Only a failure to spawn is an error, and
 	// Start already reported that.
-	if err := cmd.Wait(); err != nil {
-		dispatchLogf("engram dispatch probe: %s exited with %v", spec.Provider, err)
+	waitErr := cmd.Wait()
+	if stopEscalation != nil {
+		stopEscalation()
+	}
+	if waitErr != nil {
+		dispatchLogf("engram dispatch probe: %s exited with %v", spec.Provider, waitErr)
 	}
 	return probeRun{
 		exitCode:      cmd.ProcessState.ExitCode(),

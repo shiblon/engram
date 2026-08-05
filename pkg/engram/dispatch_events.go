@@ -176,6 +176,34 @@ func (e *EventEmitter) Emit(event DispatchEvent) error {
 	return nil
 }
 
+// EmitWithin writes an event but gives up after d, reporting an error instead of
+// waiting forever.
+//
+// This exists for the emits the supervisor makes on its own goroutine, batch_start
+// and batch_done. A task goroutine that blocks in Emit is survivable, because the
+// supervisor stops waiting for it -- but the supervisor blocking on its own final
+// line means RunBatch never returns at all, and no amount of deadline elsewhere
+// helps, because a deadline cannot interrupt a blocking io.Writer.Write.
+//
+// The abandoned write is left running: it holds the emitter's mutex, so every later
+// Emit fails the same way, which is the correct outcome for a stream whose consumer
+// has stopped reading. Losing status lines is a far smaller failure than a batch
+// that never exits.
+func (e *EventEmitter) EmitWithin(event DispatchEvent, d time.Duration) error {
+	if e == nil || e.w == nil {
+		return nil
+	}
+	done := make(chan error, 1)
+	go func() { done <- e.Emit(event) }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(d):
+		return fmt.Errorf("gave up writing a %s event after %s: the status stream consumer is not reading",
+			event.Type, d)
+	}
+}
+
 // ParseDispatchEvents reads a JSON Lines stream, rejecting a line whose version
 // this build does not understand. Watching code should fail loudly on drift.
 func ParseDispatchEvents(r io.Reader) ([]DispatchEvent, error) {

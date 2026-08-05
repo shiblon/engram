@@ -266,6 +266,7 @@ func RunBatch(ctx context.Context, config BatchConfig, opts DispatchOptions) (Ba
 	if opts.StderrTailBytes <= 0 {
 		opts.StderrTailBytes = DefaultStderrTailBytes
 	}
+	emitDeadline := time.Duration(opts.GraceSeconds) * time.Second
 
 	tempDir := opts.TempDir
 	if tempDir == "" {
@@ -323,22 +324,27 @@ func RunBatch(ctx context.Context, config BatchConfig, opts DispatchOptions) (Ba
 	defer cancelBatch()
 
 	start := now()
-	if err := opts.Emitter.Emit(DispatchEvent{
+	if err := opts.Emitter.EmitWithin(DispatchEvent{
 		Type:          EventBatchStart,
 		TaskCount:     len(config.Tasks),
 		MaxConcurrent: config.MaxConcurrent,
 		Deadline:      start.Add(time.Duration(config.DeadlineSeconds) * time.Second).UTC().Format(time.RFC3339),
 		Warnings:      warnings,
-	}); err != nil {
+	}, emitDeadline); err != nil {
 		dispatchLogf("engram dispatch: emit batch_start: %v", err)
 	}
 
 	tracker := &progressTracker{pending: len(config.Tasks), running: map[string]bool{}}
 	heartbeatDone := make(chan struct{})
+	heartbeatStopped := make(chan struct{})
 	go heartbeat(batchCtx, opts.Emitter, tracker, start, now,
-		time.Duration(config.HeartbeatSeconds)*time.Second, heartbeatDone)
+		time.Duration(config.HeartbeatSeconds)*time.Second, heartbeatDone, heartbeatStopped)
 
-	results := make([]TaskResult, len(config.Tasks))
+	// Results are collected under a mutex rather than by indexing a shared slice,
+	// because the barrier that used to make indexing safe is no longer absolute:
+	// the wait below can be abandoned at the batch deadline, and a task goroutine
+	// may still be alive when that happens.
+	collected := &resultSet{results: make(map[int]TaskResult, len(config.Tasks))}
 	semaphore := make(chan struct{}, config.MaxConcurrent)
 	var wg sync.WaitGroup
 	for i, task := range config.Tasks {
@@ -349,14 +355,17 @@ func RunBatch(ctx context.Context, config BatchConfig, opts DispatchOptions) (Ba
 			case semaphore <- struct{}{}:
 				defer func() { <-semaphore }()
 			case <-batchCtx.Done():
-				results[index] = TaskResult{
+				result := TaskResult{
 					Task:     task.ID,
 					Provider: task.Provider,
 					State:    TaskStateTimeout,
 					Error:    "batch deadline expired before this task started",
 				}
-				tracker.finish(task.ID, false)
-				emitTaskDone(opts.Emitter, results[index])
+				collected.store(index, result)
+				// neverStarted, not finish: this task never took a running slot,
+				// so only the pending count should move.
+				tracker.neverStarted(task.ID)
+				emitTaskDone(opts.Emitter, result)
 				return
 			}
 			result := runTask(batchCtx, task, opts.Specs[task.Provider], opts, tempDir, tracker, now)
@@ -365,13 +374,52 @@ func RunBatch(ctx context.Context, config BatchConfig, opts DispatchOptions) (Ba
 					result.Repair = joinRepair(result.Repair, note)
 				}
 			}
-			results[index] = result
+			collected.store(index, result)
 			emitTaskDone(opts.Emitter, result)
 		}(i, task)
 	}
-	wg.Wait()
-	close(heartbeatDone)
 
+	// A batch must exit at its deadline, and waiting on the WaitGroup alone did not
+	// guarantee that. Emit holds a mutex across a raw io.Writer.Write with no
+	// deadline, and every task goroutine emits before its wg.Done() runs, so one
+	// stalled stream consumer -- a pipe nobody drains, a full buffer -- blocked
+	// wg.Wait() forever. Every other blocking point here has a deadline attached;
+	// this one now does too. Abandoning the wait cannot unblock the stuck write, but
+	// it stops the whole batch from being held hostage by it.
+	waitDone := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(waitDone)
+	}()
+	abandoned := false
+	select {
+	case <-waitDone:
+	case <-batchCtx.Done():
+		// Give in-flight children the grace period they would get anyway, then
+		// proceed with whatever has been collected.
+		select {
+		case <-waitDone:
+		case <-time.After(time.Duration(opts.GraceSeconds) * time.Second):
+			abandoned = true
+		}
+	}
+
+	// Join the heartbeat before batch_done so the terminal line is provably last.
+	// Closing the channel and racing ahead let an in-flight status emission win the
+	// writer, which would put a line after the event documented as authoritative and
+	// break any consumer that stops reading there.
+	close(heartbeatDone)
+	select {
+	case <-heartbeatStopped:
+	case <-time.After(2 * time.Second):
+		dispatchLogf("engram dispatch: heartbeat did not stop; a status line may follow batch_done")
+	}
+
+	results := collected.ordered(len(config.Tasks), config.Tasks)
+	if abandoned {
+		warnings = append(warnings, "the batch deadline expired while tasks were still reporting, so some results "+
+			"below are incomplete; a stalled status-stream consumer is the usual cause")
+	}
 	outcome := BatchOutcome{Results: results, Warnings: warnings}
 	failures := 0
 	for _, result := range results {
@@ -391,7 +439,7 @@ func RunBatch(ctx context.Context, config BatchConfig, opts DispatchOptions) (Ba
 
 	// batch_done is authoritative and self-contained, so a caller that read
 	// nothing until exit still receives the whole answer.
-	if err := opts.Emitter.Emit(DispatchEvent{
+	if err := opts.Emitter.EmitWithin(DispatchEvent{
 		Type:           EventBatchDone,
 		State:          outcome.State,
 		Results:        outcome.Results,
@@ -399,8 +447,10 @@ func RunBatch(ctx context.Context, config BatchConfig, opts DispatchOptions) (Ba
 		TaskCount:      len(results),
 		Warnings:       outcome.Warnings,
 		ElapsedSeconds: now().Sub(start).Seconds(),
-	}); err != nil {
+	}, emitDeadline); err != nil {
 		dispatchLogf("engram dispatch: emit batch_done: %v", err)
+		outcome.Warnings = append(outcome.Warnings, "the final batch_done line could not be written: "+
+			"the status stream consumer stopped reading, so this outcome exists only as a return value")
 	}
 	return outcome, nil
 }
@@ -470,8 +520,11 @@ func runTask(ctx context.Context, task TaskConfig, resolved ResolvedSpec, opts D
 	grace := time.Duration(opts.GraceSeconds) * time.Second
 	// exec.CommandContext would kill only the direct child, orphaning the
 	// provider's grandchildren; killing the group inverts that.
+	// stopEscalation cancels the deferred SIGKILL once Wait has confirmed the child
+	// is gone, so the timer can never fire at a recycled pid.
+	var stopEscalation func()
 	cmd.Cancel = func() error {
-		terminateProcessGroup(cmd, grace)
+		stopEscalation = terminateProcessGroup(cmd, grace)
 		return nil
 	}
 	cmd.WaitDelay = grace + time.Second
@@ -489,6 +542,9 @@ func runTask(ctx context.Context, task TaskConfig, resolved ResolvedSpec, opts D
 		return result
 	}
 	waitErr := cmd.Wait()
+	if stopEscalation != nil {
+		stopEscalation()
+	}
 	result.DurationSeconds = now().Sub(started).Seconds()
 	result.ExitCode = cmd.ProcessState.ExitCode()
 	result.StderrTail = tailString(stderr.String(), opts.StderrTailBytes)
@@ -606,6 +662,21 @@ func (t *progressTracker) start(id string) {
 	}
 }
 
+// neverStarted records a task that was abandoned before it took a running slot.
+// finish alone would leave it counted in pending forever while also folding it into
+// completed, so pending + running + completed could exceed the task count in every
+// subsequent status event.
+func (t *progressTracker) neverStarted(id string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.running, id)
+	if t.pending > 0 {
+		t.pending--
+	}
+	t.completed++
+	t.failed++
+}
+
 func (t *progressTracker) finish(id string, ok bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -631,8 +702,12 @@ func (t *progressTracker) snapshot() (running []string, pending, completed, fail
 // report too late; the heartbeat is the only liveness signal a watching agent
 // gets, so it is load-bearing rather than decorative.
 func heartbeat(ctx context.Context, emitter *EventEmitter, tracker *progressTracker,
-	start time.Time, now func() time.Time, interval time.Duration, done <-chan struct{}) {
+	start time.Time, now func() time.Time, interval time.Duration,
+	done <-chan struct{}, stopped chan<- struct{}) {
 
+	// stopped lets RunBatch join this goroutine, so batch_done is provably the last
+	// line rather than merely the last line requested.
+	defer close(stopped)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -683,4 +758,39 @@ func tailString(s string, n int) string {
 // either: a silent discard would hide exactly the bug worth finding.
 func dispatchLogf(format string, args ...any) {
 	log.Printf(format, args...)
+}
+
+// resultSet collects task results without indexing a shared slice, so the wait for
+// them can be abandoned at the batch deadline without racing a live goroutine.
+type resultSet struct {
+	mu      sync.Mutex
+	results map[int]TaskResult
+}
+
+func (r *resultSet) store(index int, result TaskResult) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.results[index] = result
+}
+
+// ordered returns one result per task in config order, synthesizing an entry for
+// any task that never reported. A missing result is itself a finding, so it is
+// reported as such rather than appearing as a zero-valued success.
+func (r *resultSet) ordered(count int, tasks []TaskConfig) []TaskResult {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]TaskResult, 0, count)
+	for i := 0; i < count; i++ {
+		if result, ok := r.results[i]; ok {
+			out = append(out, result)
+			continue
+		}
+		out = append(out, TaskResult{
+			Task:     tasks[i].ID,
+			Provider: tasks[i].Provider,
+			State:    TaskStateTimeout,
+			Error:    "the batch stopped waiting before this task reported a result",
+		})
+	}
+	return out
 }

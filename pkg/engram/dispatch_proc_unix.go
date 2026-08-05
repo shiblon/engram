@@ -19,21 +19,30 @@ func configureProcessGroup(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 }
 
-// terminateProcessGroup signals the whole group, then escalates after grace.
+// terminateProcessGroup signals the whole group, then escalates after grace. It
+// returns a stop function that cancels the pending escalation.
+//
 // exec.CommandContext kills only the direct child, so a timeout would otherwise
 // leave the grandchildren running -- and it fails silently, as leaked processes
 // rather than as an error, which is exactly the kind of bug nobody reports.
-func terminateProcessGroup(cmd *exec.Cmd, grace time.Duration) {
+//
+// The escalation timer MUST be cancellable. In the common case SIGTERM works and
+// the process is gone long before grace elapses, but an uncancelled timer still
+// fires and signals -pid -- and by then the OS may have recycled that pid for an
+// unrelated process group. The ESRCH check guards "pid is gone", not "pid belongs
+// to someone else now". An untracked timer also outlives the batch that made it.
+func terminateProcessGroup(cmd *exec.Cmd, grace time.Duration) (stop func()) {
 	if cmd == nil || cmd.Process == nil {
-		return
+		return func() {}
 	}
 	pid := cmd.Process.Pid
 	if err := syscall.Kill(-pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
 		log.Printf("engram dispatch: SIGTERM process group %d: %v", pid, err)
 	}
-	time.AfterFunc(grace, func() {
+	timer := time.AfterFunc(grace, func() {
 		if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
 			log.Printf("engram dispatch: SIGKILL process group %d: %v", pid, err)
 		}
 	})
+	return func() { timer.Stop() }
 }
