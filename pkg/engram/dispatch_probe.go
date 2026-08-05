@@ -153,6 +153,11 @@ func ProbeSpec(ctx context.Context, spec *ProviderSpec, opts ProbeOptions) (Prob
 		result.Notes = append(result.Notes, fmt.Sprintf("exit %d is a usage error for this provider, so the spec "+
 			"itself was rejected: fix the argv rather than retrying", run.exitCode))
 	}
+	if !result.SmokeOK && suppress && spec.SuppressContext != nil {
+		if hint := authSuppressionConflict(run.stdout + "\n" + run.stderr + "\n" + result.Result); hint != "" {
+			result.Notes = append(result.Notes, hint)
+		}
+	}
 
 	if opts.Model == "" {
 		result.Notes = append(result.Notes, "no model was requested, so nothing was verified about model selection; "+
@@ -162,14 +167,31 @@ func ProbeSpec(ctx context.Context, spec *ProviderSpec, opts ProbeOptions) (Prob
 
 	switch {
 	case result.ReportedModel != "":
-		result.ModelVerified = modelMatches(opts.Model, result.ReportedModel)
+		want := run.resolvedModel
+		if want == "" {
+			want = opts.Model
+		}
+		result.ModelVerified = modelMatches(want, result.ReportedModel)
 		if !result.ModelVerified {
-			result.Notes = append(result.Notes, fmt.Sprintf("asked for %q but the provider reported %q: "+
-				"treat the model field as inferred and untrusted", opts.Model, result.ReportedModel))
+			asked := fmt.Sprintf("%q", want)
+			if want != opts.Model {
+				asked = fmt.Sprintf("%q (role %q)", want, opts.Model)
+			}
+			result.Notes = append(result.Notes, fmt.Sprintf("asked for %s but the provider reported %q: "+
+				"treat the model field as inferred and untrusted", asked, result.ReportedModel))
 		}
 	case opts.SkipFlagLiveness:
 		result.Notes = append(result.Notes, "the provider reported no effective model and the flag-liveness probe "+
 			"was skipped, so the model field stays inferred and untrusted")
+	case !result.SmokeOK:
+		// The liveness probe asks "does an invalid model name get rejected?" and
+		// reads a nonzero exit as yes. That inference is only sound when the
+		// VALID model exited cleanly. If the baseline already failed, a second
+		// failure is the same failure, and reading it as evidence about the model
+		// flag is how a broken login gets recorded as "the flag is live".
+		result.FlagLiveness = "inconclusive-baseline-failed"
+		result.Notes = append(result.Notes, "the smoke probe itself failed, so the flag-liveness check was skipped: "+
+			"a second failing run would prove nothing about the model flag. Fix the smoke failure and probe again")
 	default:
 		// Fallback: pass a deliberately invalid model and confirm it errors. If a
 		// provider silently falls back instead, that is the finding.
@@ -200,13 +222,40 @@ func ProbeSpec(ctx context.Context, spec *ProviderSpec, opts ProbeOptions) (Prob
 	return result, nil
 }
 
+// authComplaintPattern matches the ways a CLI says it has no usable credentials.
+// Deliberately narrow: this drives a diagnostic note, never a control decision, so
+// a false negative costs a hint while a false positive would mislead.
+var authComplaintPattern = regexp.MustCompile(`(?i)(not logged in|please run /login|no api key|unauthorized|authentication (failed|required)|invalid api key)`)
+
+// authSuppressionConflict recognizes the specific trap where a context-suppression
+// flag also disables the credential path, so the run dies on authentication rather
+// than on anything to do with the spec's argv.
+//
+// This is not hypothetical. claude's --bare documents that "Anthropic auth is
+// strictly ANTHROPIC_API_KEY or apiKeyHelper via --settings (OAuth and keychain are
+// never read)", so an OAuth-authenticated user gets "Not logged in" from the very
+// flag that was supposed to make dispatch cheap. Reporting that as a bare smoke
+// failure sends someone hunting through their argv for a problem that is not there.
+func authSuppressionConflict(output string) string {
+	if !authComplaintPattern.MatchString(output) {
+		return ""
+	}
+	return "the provider reports missing credentials, and this probe ran WITH context suppression: " +
+		"a suppression flag may also be disabling the credential path it would otherwise read. " +
+		"Re-probe with --keep-context to tell the two apart. If that succeeds, suppression and this " +
+		"machine's auth mode are in conflict, so either supply the credentials the suppressed mode " +
+		"accepts, or narrow the spec's suppress_context to flags that leave authentication alone -- " +
+		"and note that every child then pays full context load"
+}
+
 // probeRun is one spawn's raw outcome.
 type probeRun struct {
-	exitCode   int
-	stdout     string
-	stderr     string
-	outputFile string
-	argv       []string
+	exitCode      int
+	stdout        string
+	stderr        string
+	outputFile    string
+	argv          []string
+	resolvedModel string
 }
 
 // runProbeOnce spawns a child under the same process hygiene a dispatched task
@@ -243,7 +292,8 @@ func runProbeOnce(ctx context.Context, spec *ProviderSpec, request TaskRequest,
 	cmd.WaitDelay = grace + time.Second
 
 	if err := cmd.Start(); err != nil {
-		return probeRun{argv: invocation.Argv}, fmt.Errorf("start %s: %w", invocation.Argv[0], err)
+		return probeRun{argv: invocation.Argv, resolvedModel: invocation.ResolvedModel},
+			fmt.Errorf("start %s: %w", invocation.Argv[0], err)
 	}
 	// A nonzero exit is data here, not an error: the flag-liveness probe is
 	// specifically looking for one. Only a failure to spawn is an error, and
@@ -252,11 +302,12 @@ func runProbeOnce(ctx context.Context, spec *ProviderSpec, request TaskRequest,
 		dispatchLogf("engram dispatch probe: %s exited with %v", spec.Provider, err)
 	}
 	return probeRun{
-		exitCode:   cmd.ProcessState.ExitCode(),
-		stdout:     stdout.String(),
-		stderr:     stderr.String(),
-		outputFile: invocation.OutputFile,
-		argv:       invocation.Argv,
+		exitCode:      cmd.ProcessState.ExitCode(),
+		stdout:        stdout.String(),
+		stderr:        stderr.String(),
+		outputFile:    invocation.OutputFile,
+		argv:          invocation.Argv,
+		resolvedModel: invocation.ResolvedModel,
 	}, nil
 }
 
@@ -309,7 +360,13 @@ func ApplyProbe(spec *ProviderSpec, probe ProbeResult, now time.Time) *ProviderS
 	if probe.Version != "" {
 		updated.Provenance.LearnedVersion = probe.Version
 	}
-	updated.Provenance.Seed = false
+	// Only a probe that actually ran may retire the seed flag. A failed probe
+	// proved nothing, so clearing it would destroy the one signal that says "this
+	// spec is a shipped guess", and would do so precisely when the guess is most
+	// suspect.
+	if probe.SmokeOK {
+		updated.Provenance.Seed = false
+	}
 	updated.Provenance.Probe = &ProbeRecord{
 		At:             now.UTC().Format(time.RFC3339),
 		Version:        probe.Version,

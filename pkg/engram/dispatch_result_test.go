@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestResolveJSONPath(t *testing.T) {
@@ -194,5 +195,86 @@ func TestNormalizeVersion(t *testing.T) {
 		if got := normalizeVersion(input); got != want {
 			t.Errorf("normalizeVersion(%q) = %q, want %q", input, got, want)
 		}
+	}
+}
+
+func TestExtractResultKeepsModelWhenTheResultReadFails(t *testing.T) {
+	// The bug this pins: codex printed "model: gpt-5-codex" in its preamble on a run
+	// that failed before writing its last-message file, and the early return threw
+	// that away -- reporting "model reported: unknown" while the answer sat in the
+	// captured output. A failed result read must not discard metadata already read.
+	spec := minimalSpec()
+	spec.Result = ResultSpec{
+		Format:         ResultFormatLastMessageFile,
+		OutputFileArgv: []string{"-o", PlaceholderOutputFile},
+		ModelRegex:     `(?im)^\s*model:\s*(\S+)`,
+	}
+	extracted, err := extractResult(spec, providerOutput{
+		Stderr:     []byte("workdir: /tmp\nmodel: gpt-5-codex\nsandbox: read-only\nERROR: request failed\n"),
+		OutputFile: filepath.Join(t.TempDir(), "never-written.txt"),
+	})
+	if err == nil {
+		t.Fatal("the missing result file must still be reported as an error")
+	}
+	if extracted.ReportedModel != "gpt-5-codex" {
+		t.Fatalf("model identity was discarded along with the result: %q", extracted.ReportedModel)
+	}
+}
+
+func TestExtractResultKeepsMetadataWhenJSONIsUnparseable(t *testing.T) {
+	spec := minimalSpec()
+	spec.Result = ResultSpec{Format: ResultFormatJSON, JSONPath: "result", ModelRegex: `(?im)^model:\s*(\S+)`}
+	extracted, err := extractResult(spec, providerOutput{
+		Stdout: []byte("model: some-model-1\nthis is not JSON at all"),
+	})
+	if err == nil {
+		t.Fatal("unparseable JSON must still be reported")
+	}
+	if extracted.ReportedModel != "some-model-1" {
+		t.Fatalf("metadata was discarded on a parse failure: %q", extracted.ReportedModel)
+	}
+}
+
+func TestAuthSuppressionConflictRecognizesCredentialComplaints(t *testing.T) {
+	// The real string claude emits under --bare with OAuth credentials.
+	for _, output := range []string{
+		"Not logged in · Please run /login",
+		"Error: no API key found",
+		"authentication required",
+	} {
+		if authSuppressionConflict(output) == "" {
+			t.Errorf("failed to recognize a credential complaint: %q", output)
+		}
+	}
+	// It must stay quiet on unrelated failures, or the hint becomes noise that
+	// sends people chasing an auth problem they do not have.
+	for _, output := range []string{
+		"ERROR: the 'gpt-5-codex' model is not supported",
+		"error: unexpected argument '--model' found",
+		"",
+	} {
+		if hint := authSuppressionConflict(output); hint != "" {
+			t.Errorf("false positive on %q: %s", output, hint)
+		}
+	}
+}
+
+func TestApplyProbeKeepsSeedFlagWhenTheProbeFailed(t *testing.T) {
+	// A failed probe proved nothing, so it must not retire the "this is a shipped
+	// guess" signal -- least of all when the guess is most suspect.
+	spec := minimalSpec()
+	spec.Provenance.Seed = true
+
+	failed := ApplyProbe(spec, ProbeResult{SmokeOK: false, ExitCode: 1, Version: "9.9.9"}, time.Now())
+	if !failed.Provenance.Seed {
+		t.Error("a failed probe cleared the seed flag")
+	}
+	if failed.Provenance.Probe == nil {
+		t.Error("the failed attempt should still be recorded")
+	}
+
+	succeeded := ApplyProbe(spec, ProbeResult{SmokeOK: true, ExitCode: 0, Version: "9.9.9"}, time.Now())
+	if succeeded.Provenance.Seed {
+		t.Error("a successful probe should retire the seed flag")
 	}
 }

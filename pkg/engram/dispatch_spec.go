@@ -438,6 +438,14 @@ type Invocation struct {
 	Dir        string
 	OutputFile string
 	PromptFile string
+	// ResolvedModel is the provider's own spelling after the role name was mapped
+	// through the spec, and it is what model verification must compare against.
+	// Comparing the ROLE name to what the provider reports fails every time a
+	// config uses the portable style the design recommends ("cheap" versus
+	// "claude-haiku-4-5-20251001"), and a verification check that cries wolf on
+	// correct configs teaches everyone to ignore it -- which then conceals a real
+	// silent substitution, the one thing it exists to catch.
+	ResolvedModel string
 	// Warnings records deliberate accommodations the caller should see, such as
 	// a system prompt folded into the user prompt because the provider has no
 	// flag for it, or a requested guardrail this provider cannot express.
@@ -484,6 +492,7 @@ func (s *ProviderSpec) BuildInvocation(request TaskRequest, tempDir string) (*In
 				"omit the model or re-learn the spec", request.ID, s.Provider, request.Model)
 		}
 		if resolved := s.Model.resolve(request.Model); resolved != "" {
+			inv.ResolvedModel = resolved
 			inv.Argv = append(inv.Argv, substituteArgv(s.Model.Argv, map[string]string{
 				PlaceholderModel: resolved,
 			})...)

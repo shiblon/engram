@@ -50,8 +50,8 @@ func TestDispatchDryRunResolvesArgvWithoutSpawning(t *testing.T) {
 		"max_concurrent": 2,
 		"defaults": {"provider": "claude", "authority": "read-only"},
 		"tasks": [
-			{"id": "slice-1", "prompt": "review pkg/a", "model": "haiku"},
-			{"id": "whole", "prompt": "review the whole change at a higher altitude", "model": "opus"}
+			{"id": "slice-1", "prompt": "review pkg/a", "model": "cheap"},
+			{"id": "whole", "prompt": "review the whole change at a higher altitude", "model": "strong"}
 		]
 	}`
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
@@ -87,10 +87,28 @@ func TestDispatchDryRunResolvesArgvWithoutSpawning(t *testing.T) {
 		t.Fatalf("expected argv for both tasks, got %v", byTask)
 	}
 	slice := strings.Join(byTask["slice-1"], " ")
-	for _, want := range []string{"claude", "--output-format json", "--model haiku", "--permission-mode plan", "--bare"} {
+	for _, want := range []string{
+		"claude",
+		"--output-format json",
+		// A role name must resolve to a FULL model id. Measured 2026-08-05: asking
+		// claude for the alias "haiku" silently ran claude-sonnet-5 with a clean
+		// exit, so a config that names a raw alias is a silent-substitution hazard.
+		"--model claude-haiku-4-5-20251001",
+		"--permission-mode plan",
+		// Suppression is --setting-sources, not --bare. Measured on the same day:
+		// --bare refuses OAuth credentials outright, while `--setting-sources local`
+		// keeps them and cuts cache-creation tokens from 36,888 to 3,693.
+		"--setting-sources local",
+	} {
 		if !strings.Contains(slice, want) {
 			t.Errorf("resolved argv missing %q:\n%s", want, slice)
 		}
+	}
+	if strings.Contains(slice, "--bare") {
+		t.Errorf("--bare is auth-hostile on an OAuth machine and must not be the suppression flag:\n%s", slice)
+	}
+	if whole := strings.Join(byTask["whole"], " "); !strings.Contains(whole, "--model claude-opus-5") {
+		t.Errorf("the strong role did not resolve to a full model id:\n%s", whole)
 	}
 	// The prompt rides stdin on this spec, so it must not appear in argv.
 	if strings.Contains(slice, "review pkg/a") {

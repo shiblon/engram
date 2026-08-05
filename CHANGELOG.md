@@ -11,6 +11,48 @@ in-repo companion.
 
 ## [Unreleased]
 
+### Fixed
+- dispatch probe: five ways the probe reported findings it had not earned, all
+  found by running it against real provider CLIs.
+  - Model verification compared the role name a config asked for against the model
+    the provider reported, so a correctly honored `"model": "cheap"` came back
+    unverified. A check that cries wolf on correct portable configs trains everyone
+    to ignore it, concealing the real substitution it exists to catch. It now
+    compares the provider's own spelling after role resolution, and a genuine
+    mismatch names both the resolved id and the role.
+  - The flag-liveness fallback read "an invalid model name errored" as proof the
+    model flag is live, without checking that the valid model had succeeded. With a
+    broken login both runs exit nonzero, so a second identical failure was recorded
+    as evidence. It is now skipped, and reported inconclusive, unless the baseline
+    smoke passed.
+  - A failed result read discarded metadata already obtained: the provider's
+    preamble named the model it actually ran, and an early return threw that away
+    while reporting the model as unknown. The result error is now held and returned
+    after every other field has had its chance.
+  - A failed probe cleared the spec's `seed` flag, promoting a shipped guess to
+    "learned" on the strength of a run that proved nothing. Only a probe whose
+    smoke passed may retire it.
+  - A credential complaint under context suppression is now recognized and named,
+    instead of surfacing as a bare smoke failure that sends someone hunting through
+    their argv for a problem that is not there.
+
+### Changed
+- dispatch seeds: corrected against the installed CLIs, with the numbers measured
+  rather than assumed.
+  - claude's context suppression is `--setting-sources local`, not `--bare`.
+    `--bare` documents that Anthropic auth is strictly `ANTHROPIC_API_KEY` or
+    `apiKeyHelper`, and that OAuth and keychain are never read, so on a
+    subscription login it fails outright; it would also move billing to API credits,
+    a different payment rail rather than a lower cost. Measured on claude 2.1.222
+    with an identical prompt: no flag = 36,888 cache-creation tokens at $0.0751,
+    `--setting-sources user` = 14,848 at $0.0325, `--setting-sources local` = 3,693
+    at $0.0126. The `user` rung is not isolation: a child asked its codename under
+    it answered with the parent operator's codename, because the user-level
+    `CLAUDE.md` carries engram identity.
+  - Both specs now map role names (`cheap`, `balanced`, `strong`) to full model ids.
+    Asking claude for the alias `haiku` silently ran `claude-sonnet-5` with a clean
+    exit and a plausible answer, so the maps avoid aliases entirely.
+
 ## [0.13.1] - 2026-08-05
 
 ### Added

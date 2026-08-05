@@ -36,8 +36,16 @@ type extractedResult struct {
 
 // extractResult reads the final answer and reported metadata out of a child's
 // output according to the spec.
+// The one rule that governs the flow below: a failure to read the RESULT must not
+// discard metadata that was read successfully. The provider's preamble often names
+// the model it actually ran even on a run that failed, and that is the single most
+// valuable diagnostic there is -- reporting "model reported: unknown" while the
+// answer sits in the captured output is the tool lying at the exact moment someone
+// needs it. So the result error is held and returned at the end, after every other
+// field has had its chance.
 func extractResult(spec *ProviderSpec, out providerOutput) (extractedResult, error) {
 	var extracted extractedResult
+	var resultErr error
 
 	switch spec.Result.Format {
 	case ResultFormatText:
@@ -45,18 +53,23 @@ func extractResult(spec *ProviderSpec, out providerOutput) (extractedResult, err
 
 	case ResultFormatLastMessageFile:
 		if out.OutputFile == "" {
-			return extracted, fmt.Errorf("spec reports its result in a file, but no output file was allocated")
+			resultErr = fmt.Errorf("spec reports its result in a file, but no output file was allocated")
+			break
 		}
 		data, err := os.ReadFile(out.OutputFile)
 		if err != nil {
-			return extracted, fmt.Errorf("read last-message file: %w", err)
+			// A provider that failed before writing its last message is the
+			// common case here, not a broken spec.
+			resultErr = fmt.Errorf("read last-message file: %w", err)
+			break
 		}
 		extracted.Result = strings.TrimSpace(string(data))
 
 	case ResultFormatJSON:
 		var document any
 		if err := json.Unmarshal(out.Stdout, &document); err != nil {
-			return extracted, fmt.Errorf("parse provider JSON output: %w", err)
+			resultErr = fmt.Errorf("parse provider JSON output: %w", err)
+			break
 		}
 		extracted.readPaths(spec, document)
 
@@ -79,11 +92,14 @@ func extractResult(spec *ProviderSpec, out providerOutput) (extractedResult, err
 			}
 		}
 		if chosen == nil {
-			return extracted, fmt.Errorf("no JSONL line carried result path %q", spec.Result.JSONPath)
+			resultErr = fmt.Errorf("no JSONL line carried result path %q", spec.Result.JSONPath)
+			break
 		}
 		extracted.readPaths(spec, chosen)
 
 	default:
+		// An unknown format is a spec error rather than a run failure, and there
+		// is nothing to salvage from output we do not know how to read.
 		return extracted, fmt.Errorf("unknown result format %q", spec.Result.Format)
 	}
 
@@ -100,7 +116,7 @@ func extractResult(spec *ProviderSpec, out providerOutput) (extractedResult, err
 			extracted.ReportedModel = strings.TrimSpace(match[1])
 		}
 	}
-	return extracted, nil
+	return extracted, resultErr
 }
 
 // readPaths pulls each configured path out of a parsed JSON document.

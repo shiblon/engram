@@ -7,7 +7,12 @@
     "transport": "stdin"
   },
   "model": {
-    "argv": ["--model", "{{model}}"]
+    "argv": ["--model", "{{model}}"],
+    "values": {
+      "cheap": "claude-haiku-4-5-20251001",
+      "balanced": "claude-sonnet-5",
+      "strong": "claude-opus-5"
+    }
   },
   "system_prompt": {
     "mode": "argv",
@@ -25,7 +30,7 @@
     "argv": ["--max-budget-usd", "{{budget_usd}}"]
   },
   "suppress_context": {
-    "argv": ["--bare"]
+    "argv": ["--setting-sources", "local"]
   },
   "workdir": {
     "mode": "chdir"
@@ -50,6 +55,6 @@
     "verified_fields": ["prompt", "result"],
     "inferred_fields": ["model", "system_prompt", "authority", "budget", "suppress_context", "exit_codes"],
     "seed": true,
-    "notes": "Seed shipped with engram, drawn from a probe pass against claude 2.1.222 and re-checked against that version's help on 2026-08-05: every flag claimed here exists, and --permission-mode accepts acceptEdits, auto, bypassPermissions, manual, dontAsk, and plan. There is deliberately no `default` among them, so the default authority role maps to the empty string and omits the flag rather than passing an invalid value. KNOWN IMPRECISION: read-only maps to `plan`, which is the only mode that structurally will not edit, but plan mode also shapes behavior -- the child plans and presents a plan rather than simply working without write access. That suits a reviewer and may surprise an analyze-and-report task. The more precise spelling is probably a non-prompting mode plus a --disallowedTools list naming Edit, Write, and NotebookEdit, which this spec cannot express today because an authority fragment contributes one argv group for every role rather than per-role argv. Revisit if the difference bites. Flag spellings were read from help, not probed, so nothing here is verified on THIS machine until you run `engram dispatch probe claude --model <M>`. Note that -p means print here and profile on codex, so a spec copied between providers is wrong in a way that runs."
+    "notes": "Seed shipped with engram, drawn from a probe pass against claude 2.1.222 and re-checked against that version's help on 2026-08-05: every flag claimed here exists, and --permission-mode accepts acceptEdits, auto, bypassPermissions, manual, dontAsk, and plan. There is deliberately no `default` among them, so the default authority role maps to the empty string and omits the flag rather than passing an invalid value. KNOWN IMPRECISION: read-only maps to `plan`, which is the only mode that structurally will not edit, but plan mode also shapes behavior -- the child plans and presents a plan rather than simply working without write access. That suits a reviewer and may surprise an analyze-and-report task. The more precise spelling is probably a non-prompting mode plus a --disallowedTools list naming Edit, Write, and NotebookEdit, which this spec cannot express today because an authority fragment contributes one argv group for every role rather than per-role argv. Revisit if the difference bites. Flag spellings were read from help, not probed, so nothing here is verified on THIS machine until you run `engram dispatch probe claude --model <M>`. Note that -p means print here and profile on codex, so a spec copied between providers is wrong in a way that runs. SUPPRESSION, measured 2026-08-05 on claude 2.1.222 with an identical prompt, reading cache_creation_input_tokens from --output-format json. Do NOT use --bare: it documents that Anthropic auth is strictly ANTHROPIC_API_KEY or apiKeyHelper via --settings and that OAuth and keychain are NEVER read, so on a subscription login it fails with `Not logged in`. It would also move billing to API credits, a different payment rail rather than merely a lower cost. --setting-sources is the right lever and it is strictly better here. Measured ladder: no flag = 36,888 cache tokens / $0.0751; `--setting-sources user` = 14,848 / $0.0325; `--setting-sources local` = 3,693 / $0.0126. A 10x context reduction with OAuth intact. The `user` rung is NOT sufficient for isolation: a child asked its codename under that setting answered with the parent operator's codename, because ~/.claude/CLAUDE.md pulls in engram identity. Under `local` it had none. Caveat: `local` still loads .claude/settings.local.json if a repo has one, so a repo with local hooks would reintroduce them. MODEL NAMES, same date: asking for the alias `haiku` silently ran claude-sonnet-5 with a clean exit and a plausible answer -- the exact silent substitution positive verification exists to catch. The flag itself is fine with a full model id, so the values map here uses full ids only and role names (cheap/balanced/strong) rather than aliases."
   }
 }

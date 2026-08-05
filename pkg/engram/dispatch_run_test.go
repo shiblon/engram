@@ -607,3 +607,65 @@ func TestWriteCapableAndUnenforceableAuthorityAreBothWarned(t *testing.T) {
 		t.Errorf("the default role is still not read-only and should say so: %q", joined)
 	}
 }
+
+func TestModelVerificationComparesResolvedSpellingNotRoleName(t *testing.T) {
+	// The bug this pins: a config saying model "cheap" resolved correctly to
+	// claude-haiku-4-5-20251001, claude ran exactly that and reported it, and
+	// verification still failed because it compared the ROLE NAME against the
+	// reported id. Verification that cries wolf on correct portable configs trains
+	// everyone to ignore it, which then conceals the real silent substitution it
+	// exists to catch.
+	var stream bytes.Buffer
+	spec := fakeSpec(t, "ok")
+	spec.Model = &ArgvFragment{
+		Argv:   []string{"--model", PlaceholderModel},
+		Values: map[string]string{"cheap": "fake-cheap-model-1"},
+	}
+	config := BatchConfig{
+		V:     DispatchConfigVersion,
+		Tasks: []TaskConfig{{ID: "t", Prompt: "p", Provider: "fake", Model: "cheap"}},
+	}
+	outcome, err := RunBatch(context.Background(), config, fakeOptions(spec, &stream))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := outcome.Results[0]
+	if result.ReportedModel != "fake-cheap-model-1" {
+		t.Fatalf("the fake provider did not receive the resolved model: %q", result.ReportedModel)
+	}
+	if !result.ModelVerified {
+		t.Fatalf("a correctly honored role name was reported unverified; warnings: %v", result.Warnings)
+	}
+	for _, warning := range result.Warnings {
+		if strings.Contains(warning, "default model") {
+			t.Errorf("false alarm on a correct config: %q", warning)
+		}
+	}
+}
+
+func TestModelVerificationStillCatchesASubstitutionBehindARole(t *testing.T) {
+	// The role indirection must not hide a real substitution: the warning has to
+	// name both the resolved id and the role, so the chain is legible.
+	var stream bytes.Buffer
+	spec := fakeSpec(t, "ok")
+	spec.Model = &ArgvFragment{
+		Argv:   []string{"--profile", PlaceholderModel}, // the fake ignores --profile
+		Values: map[string]string{"cheap": "fake-cheap-model-1"},
+	}
+	config := BatchConfig{
+		V:     DispatchConfigVersion,
+		Tasks: []TaskConfig{{ID: "t", Prompt: "p", Provider: "fake", Model: "cheap"}},
+	}
+	outcome, err := RunBatch(context.Background(), config, fakeOptions(spec, &stream))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := outcome.Results[0]
+	if result.ModelVerified {
+		t.Fatal("a child that ran the default model was reported as verified")
+	}
+	joined := strings.Join(result.Warnings, " | ")
+	if !strings.Contains(joined, "fake-cheap-model-1") || !strings.Contains(joined, `role "cheap"`) {
+		t.Errorf("the warning should show the resolution chain: %q", joined)
+	}
+}

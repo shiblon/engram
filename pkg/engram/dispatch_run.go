@@ -499,11 +499,20 @@ func runTask(ctx context.Context, task TaskConfig, resolved ResolvedSpec, opts D
 	result.Tokens = extracted.Tokens
 	result.Warnings = append(result.Warnings, extracted.Notes...)
 	if task.Model != "" && extracted.ReportedModel != "" {
-		result.ModelVerified = modelMatches(task.Model, extracted.ReportedModel)
+		// Compare the provider's own spelling, not the role name the config used.
+		want := invocation.ResolvedModel
+		if want == "" {
+			want = task.Model
+		}
+		result.ModelVerified = modelMatches(want, extracted.ReportedModel)
 		if !result.ModelVerified {
+			asked := want
+			if want != task.Model {
+				asked = fmt.Sprintf("%s (role %q)", want, task.Model)
+			}
 			result.Warnings = append(result.Warnings, fmt.Sprintf(
-				"requested model %q but %s reported %q: this child may have run the default model",
-				task.Model, task.Provider, extracted.ReportedModel))
+				"requested model %s but %s reported %q: this child may have run the default model",
+				asked, task.Provider, extracted.ReportedModel))
 		}
 	}
 

@@ -8,7 +8,12 @@
     "argv": ["{{prompt}}"]
   },
   "model": {
-    "argv": ["-m", "{{model}}"]
+    "argv": ["-m", "{{model}}"],
+    "values": {
+      "cheap": "gpt-5.6-luna",
+      "balanced": "gpt-5.6-terra",
+      "strong": "gpt-5.6-sol"
+    }
   },
   "system_prompt": {
     "mode": "prepend"
