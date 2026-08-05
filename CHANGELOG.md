@@ -10,7 +10,6 @@ independently from commit messages by goreleaser; this file is the curated,
 in-repo companion.
 
 ## [Unreleased]
-
 ### Fixed
 - dispatch authority: three failures found by reviewing dispatch with dispatch, all
   of which let a child do more than it was told it could.
@@ -32,14 +31,6 @@ in-repo companion.
     flag the provider ACCEPTS is not a flag the provider ENFORCES, and codex
     authority is recorded as advisory rather than trusted.
 
-### Changed
-- dispatch spec schema is version 2: `authority` became a closed map of role names
-  to complete argv fragments, replacing one template with one substituted value per
-  role. That shape could not express a multi-flag read-only policy, which is what
-  forced claude onto plan mode. A v1 spec now fails with a version error naming the
-  fix rather than an unknown-field complaint.
-
-### Fixed
 - dispatch probe: five ways the probe reported findings it had not earned, all
   found by running it against real provider CLIs.
   - Model verification compared the role name a config asked for against the model
@@ -63,8 +54,13 @@ in-repo companion.
   - A credential complaint under context suppression is now recognized and named,
     instead of surfacing as a bare smoke failure that sends someone hunting through
     their argv for a problem that is not there.
-
 ### Changed
+- dispatch spec schema is version 2: `authority` became a closed map of role names
+  to complete argv fragments, replacing one template with one substituted value per
+  role. That shape could not express a multi-flag read-only policy, which is what
+  forced claude onto plan mode. A v1 spec now fails with a version error naming the
+  fix rather than an unknown-field complaint.
+
 - dispatch seeds: corrected against the installed CLIs, with the numbers measured
   rather than assumed.
   - claude's context suppression is `--setting-sources local`, not `--bare`.
