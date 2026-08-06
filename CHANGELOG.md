@@ -11,7 +11,60 @@ in-repo companion.
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-08-06
+
+### Added
+- dispatch: a running batch appears in the status line as `⚡ 4/8 1✗ 1m03s`, via a
+  transient per-pid progress file rather than a table -- its lifetime is exactly the
+  supervisor's, so the no-schema decision holds. A file for a dead pid is reaped on
+  the next read, since a SIGKILLed supervisor cannot clean up after itself. The
+  segment is absent when nothing is running, and a missing or malformed file fails
+  silently: it is decoration, and a broken status line is worse than an absent one.
+- dispatch: codex token usage is now accounted for. `codex exec --json` reports token
+  counts but suppresses the model preamble, while plain `codex exec` is the reverse,
+  so a spec can now declare `probe.base_argv` and let a probe (which must verify the
+  model) differ from a run (which wants the counts). `result.usage_jsonl_path` reads
+  usage from a JSONL stream independently of wherever the result came from, and the
+  reader accepts both providers' spellings for the cache counters. codex reports no
+  dollar cost in either mode, which is a provider limit.
+
 ### Fixed
+- cli: a local build no longer claims to BE the release. Current Go toolchains stamp
+  a pseudo-version (`v0.0.0-<timestamp>-<hash>`, plus `+dirty`) instead of the
+  `(devel)` this code checked for, so local builds silently passed through as
+  releases; separately, Go does not stamp `vcs.*` at all when building from a linked
+  git worktree. Both mattered because inject compares the running version against
+  the version stamped into the shipped guidance, so two builds laundered into one
+  release number compared equal and the drift check stayed silent. A local build now
+  reports `v0.13.1+<commit>`, `+<commit>.dirty`, or `+devel` when no revision is
+  available. Note this makes the guidance drift check fire after most rebuilds on a
+  development tree, which is truthful but noisier than before.
+- dispatch: a batch now terminates at its deadline. `Emit` held a mutex across a raw
+  `Write` with no deadline and every task goroutine emitted before its `wg.Done()`,
+  so one status-stream consumer that stopped draining blocked the join forever -- and
+  a deadline cannot interrupt a blocking write. The wait is bounded and the
+  supervisor's own emits give up rather than hang. Also: `batch_done` is now provably
+  the last line (the heartbeat goroutine is joined, not just signalled), the progress
+  counters stay a true partition of the task count, and the deferred SIGKILL
+  escalation is cancelled once the child is confirmed gone, so it cannot fire at a
+  recycled pid.
+- inject: budget truncation counts characters rather than bytes. Every caller passes
+  an `Inject*BudgetChars` constant and `MaxTldrLen` measures runes, but the truncation
+  counted bytes -- so an index containing em dashes, arrows, or emoji was cut well
+  short of the budget it was given.
+- restore: a database holding only short-term memories is no longer treated as empty,
+  so a restore re-stages under a new slot instead of silently overwriting in-flight
+  working state. A failed curated-content check is reported rather than discarded, and
+  a failed stage registration removes the slot directory it had just written instead
+  of orphaning it.
+- prune: `events` and `curation_events` share one retention decision and are now
+  deleted in a single transaction, instead of leaving the two tables disagreeing about
+  which sessions are recent when the second delete failed.
+- curation log: action, source, and scope are checked against their vocabularies where
+  they become permanent. All three are set by engram's own code, so an unknown value
+  is a developer mistake that would otherwise corrupt an append-only learning signal
+  silently; it is now logged loudly and the row still written, since capture must
+  never fail the mutation it records.
 - dispatch tests: the test-quality reviewer found tests that could not fail, so
   they proved nothing about the code they named.
   - The process-group teardown test spawned no descendant, so killing only the
@@ -510,7 +563,8 @@ _Internal changes only._
 - first take
 - Initial commit
 
-[Unreleased]: https://github.com/shiblon/engram/compare/v0.13.1...HEAD
+[Unreleased]: https://github.com/shiblon/engram/compare/v0.13.2...HEAD
+[0.13.2]: https://github.com/shiblon/engram/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/shiblon/engram/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/shiblon/engram/compare/v0.12.3...v0.13.0
 [0.12.3]: https://github.com/shiblon/engram/compare/v0.12.2...v0.12.3
