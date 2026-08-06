@@ -22,22 +22,56 @@ func TestRootCommandAlwaysCarriesVersion(t *testing.T) {
 }
 
 func TestResolveEngramVersion(t *testing.T) {
+	// The rule: a local build never claims to BE the release. It used to, and that
+	// both misled and silenced the guidance drift check, which compares the running
+	// version against the version stamped into the shipped guidance.
 	tests := []struct {
 		name         string
 		buildVersion string
+		revision     string
+		modified     bool
 		want         string
 	}{
-		{"released module", "v9.8.7", "v9.8.7"},
-		{"development module", "(devel)", sourceVersion},
-		{"missing build info", "", sourceVersion},
+		{"released module wins outright", "v9.8.7", "abc1234def", true, "v9.8.7"},
+		{"clean local build names its commit", "(devel)", "abc1234def5678", false, sourceVersion + "+abc1234"},
+		{"dirty local build says so", "(devel)", "abc1234def5678", true, sourceVersion + "+abc1234.dirty"},
+		// Go does not stamp vcs.* from a linked git worktree, so this is the case
+		// that produced a bare release number from a tree of unreleased work.
+		{"no vcs stamp admits devel", "(devel)", "", false, sourceVersion + "+devel"},
+		// Current toolchains stamp a pseudo-version instead of "(devel)", which is
+		// why the old check silently stopped catching local builds. It also hides
+		// which release the tree is based on, so it is reduced to release+commit.
+		{"pseudo-version is a local build", "v0.0.0-20260806001334-0d9ca7e982a4", "", false,
+			sourceVersion + "+0d9ca7e"},
+		{"pseudo-version marked dirty by go", "v0.0.0-20260806001334-0d9ca7e982a4+dirty", "", false,
+			sourceVersion + "+0d9ca7e.dirty"},
+		{"vcs stamp wins over the pseudo-version hash", "v0.0.0-20260806001334-0d9ca7e982a4",
+			"feedface1234", true, sourceVersion + "+feedfac.dirty"},
+		{"missing build info admits devel", "", "", false, sourceVersion + "+devel"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := resolveEngramVersion(tt.buildVersion); got != tt.want {
-				t.Errorf("resolveEngramVersion(%q) = %q, want %q",
-					tt.buildVersion, got, tt.want)
+			got := resolveEngramVersion(tt.buildVersion, tt.revision, tt.modified)
+			if got != tt.want {
+				t.Errorf("resolveEngramVersion(%q, %q, %v) = %q, want %q",
+					tt.buildVersion, tt.revision, tt.modified, got, tt.want)
+			}
+			if isLocalBuildVersion(tt.buildVersion) && got == sourceVersion {
+				t.Error("a local build reported the bare release version")
 			}
 		})
+	}
+}
+
+func TestReleaseVersionStripsBuildMetadata(t *testing.T) {
+	for input, want := range map[string]string{
+		"v0.13.1":               "v0.13.1",
+		"v0.13.1+devel":         "v0.13.1",
+		"v0.13.1+abc1234.dirty": "v0.13.1",
+	} {
+		if got := releaseVersion(input); got != want {
+			t.Errorf("releaseVersion(%q) = %q, want %q", input, got, want)
+		}
 	}
 }
 
@@ -53,7 +87,7 @@ func TestSourceVersionMatchesLatestChangelogRelease(t *testing.T) {
 			break
 		}
 	}
-	wantPrefix := "## [" + strings.TrimPrefix(sourceVersion, "v") + "]"
+	wantPrefix := "## [" + strings.TrimPrefix(releaseVersion(sourceVersion), "v") + "]"
 	if !strings.HasPrefix(latest, wantPrefix) {
 		t.Errorf("sourceVersion = %q but latest changelog release is %q", sourceVersion, latest)
 	}
