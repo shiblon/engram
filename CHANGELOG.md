@@ -11,6 +11,8 @@ in-repo companion.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-08-31
+
 ### Changed
 - memory search is compact by default: `mem search` now prints every ranked match
   as a copyable address and summary instead of emitting complete bodies. Both
@@ -570,7 +572,8 @@ _Internal changes only._
 - first take
 - Initial commit
 
-[Unreleased]: https://github.com/shiblon/engram/compare/v0.13.2...HEAD
+[Unreleased]: https://github.com/shiblon/engram/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/shiblon/engram/compare/v0.13.2...v0.14.0
 [0.13.2]: https://github.com/shiblon/engram/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/shiblon/engram/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/shiblon/engram/compare/v0.12.3...v0.13.0
