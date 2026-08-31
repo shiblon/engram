@@ -59,7 +59,9 @@ Common operations:
   engram mem -g -t preference write <key> <content> --tldr "<summary>"
   engram mem write engram:long/<key> <content>   write project long-term memory
   engram mem move engram:short/<key> --to long   promote a project memory
-  engram mem search <query>                 full-text search across all tiers
+  engram mem search <query>                 ranked addresses and summaries
+  engram mem search <query> --limit 10      cap the ranked result set
+  engram mem search <query> --full          include complete matching bodies
   engram inject                            print session-start context as JSON
 
 Run 'engram mem <subcommand> --help' for details on each operation.`,

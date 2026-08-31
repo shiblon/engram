@@ -11,6 +11,13 @@ in-repo companion.
 
 ## [Unreleased]
 
+### Changed
+- memory search is compact by default: `mem search` now prints every ranked match
+  as a copyable address and summary instead of emitting complete bodies. Both
+  `mem search` and `skill search` accept `--limit` as an explicit bound (`0`, the
+  default, means all) and report omissions on stderr. `--full` restores bodies
+  for memory results and includes complete instructions for skill results.
+
 ## [0.13.2] - 2026-08-06
 
 ### Added

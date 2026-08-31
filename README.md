@@ -56,7 +56,9 @@ engram mem list                              # copyable addresses and summaries
 engram mem list --keys                       # bare keys only, one per line
 engram mem read engram:long/deployment       # inspect one project memory
 engram mem edit engram:/preference/editor    # edit one global memory in $EDITOR
-engram mem search "deployment rollback"      # search keys, summaries, and bodies
+engram mem search "deployment rollback"      # all ranked addresses and summaries
+engram mem search "deployment" --limit 10    # cap the ranked result set
+engram mem search "deployment" --full        # include complete bodies
 engram mem tldr engram:long/deployment       # show its session-start summary
 engram mem write engram:long/decision "body" # store a settled project memory
 engram mem move engram:short/plan --to cold  # archive without deleting it

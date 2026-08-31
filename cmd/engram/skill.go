@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"path/filepath"
 	"strings"
 	"time"
@@ -24,6 +25,8 @@ var (
 	skillClassifySkillKey  string
 	skillClassifyCommand   string
 	skillClassifyStdin     bool
+	skillSearchLimit       int
+	skillSearchFull        bool
 )
 
 var skillCmd = &cobra.Command{
@@ -166,10 +169,14 @@ var skillReadCmd = &cobra.Command{
 		if m == nil || m.Trigger == "" {
 			return fmt.Errorf("skill not found: %s", args[0])
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "[%s skill/%s]\nTrigger: %s\nTLDR: %s\n\n%s\n",
-			scopeName(skillGlobal), m.Key, m.Trigger, m.Tldr, m.Content)
+		printSkill(cmd.OutOrStdout(), *m, skillGlobal)
 		return nil
 	},
+}
+
+func printSkill(w io.Writer, m engram.Memory, global bool) {
+	fmt.Fprintf(w, "[%s skill/%s]\nTrigger: %s\nTLDR: %s\n\n%s\n",
+		scopeName(global), m.Key, m.Trigger, m.Tldr, m.Content)
 }
 
 var skillListCmd = &cobra.Command{
@@ -201,8 +208,15 @@ var skillListCmd = &cobra.Command{
 var skillSearchCmd = &cobra.Command{
 	Use:   "search <query>",
 	Short: "Search skill names, triggers, outcomes, and instructions",
-	Args:  cobra.ExactArgs(1),
+	Long: `Search skill names, triggers, outcomes, and instructions.
+
+By default every ranked match is shown as a compact trigger-index row. Use
+--limit to bound the result set, or --full to include complete instructions.`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := validateSearchLimit(skillSearchLimit); err != nil {
+			return err
+		}
 		ctx := context.Background()
 		h, err := openSkillDBReadOnly(ctx)
 		if err != nil {
@@ -213,13 +227,25 @@ var skillSearchCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		skills, omitted, err := limitSearchResults(skills, skillSearchLimit)
+		if err != nil {
+			return err
+		}
 		if len(skills) == 0 {
 			fmt.Fprintln(cmd.OutOrStdout(), "no results (search is a fallback; the injected Skills index already lists every trigger in context -- check there before concluding no skill exists)")
 			return nil
 		}
-		for _, skill := range skills {
+		for i, skill := range skills {
+			if skillSearchFull {
+				if i > 0 {
+					fmt.Fprintln(cmd.OutOrStdout())
+				}
+				printSkill(cmd.OutOrStdout(), skill, skillGlobal)
+				continue
+			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", skill.Key, skill.Trigger, skill.InjectSummary())
 		}
+		reportOmittedSearchResults(cmd.ErrOrStderr(), len(skills), omitted)
 		return nil
 	},
 }
@@ -459,6 +485,8 @@ func init() {
 	skillClassifyCmd.Flags().StringVar(&skillClassifySkillKey, "skill", "", "skill key grouping this skill member")
 	skillClassifyCmd.Flags().StringVar(&skillClassifyCommand, "command", "", "exact invocation for a direct tool (inferred for scripts)")
 	skillClassifyCmd.Flags().BoolVar(&skillClassifyStdin, "stdin", false, "read a JSON array of classifications from stdin")
+	skillSearchCmd.Flags().IntVar(&skillSearchLimit, "limit", defaultSearchLimit, "maximum number of matches to show (0 for all)")
+	skillSearchCmd.Flags().BoolVar(&skillSearchFull, "full", false, "include complete skill instructions")
 	skillCmd.AddCommand(skillWriteCmd, skillAdoptCmd, skillReadCmd, skillListCmd, skillSearchCmd, skillDeleteCmd, skillDiscoverCmd, skillClassifyCmd)
 	rootCmd.AddCommand(skillCmd)
 }
