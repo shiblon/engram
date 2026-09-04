@@ -11,6 +11,8 @@ in-repo companion.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-09-04
+
 ### Added
 - bootstrap guidance now covers consolidation, not just storage and retrieval: a
   new "Memory consolidation" section tells an agent to notice when a memory it is
@@ -581,7 +583,8 @@ _Internal changes only._
 - first take
 - Initial commit
 
-[Unreleased]: https://github.com/shiblon/engram/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/shiblon/engram/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/shiblon/engram/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/shiblon/engram/compare/v0.13.2...v0.14.0
 [0.13.2]: https://github.com/shiblon/engram/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/shiblon/engram/compare/v0.13.0...v0.13.1
