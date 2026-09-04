@@ -8,7 +8,7 @@ import (
 
 // schemaVersion is the current schema version. Bump this and add an entry to
 // schemaMigrations whenever the schema changes.
-const schemaVersion = 9
+const schemaVersion = 10
 
 // schemaMigrations maps from-version to the SQL that advances to from+1.
 // Version 0 means "newly created or pre-versioning DB with the baseline schema
@@ -244,6 +244,18 @@ var schemaMigrations = []string{
 	 UPDATE curation_events SET from_tier = 'long' WHERE from_tier = 'long-term';
 	 UPDATE curation_events SET to_tier = 'short' WHERE to_tier = 'short-term';
 	 UPDATE curation_events SET to_tier = 'long' WHERE to_tier = 'long-term';`,
+	// 9 -> 10: add a compact local histogram of agentinfo body deliveries. Rows
+	// aggregate by topic and engram version, preserving enough evidence to audit
+	// lazy-reference routing without retaining prompts, paths, or one event per
+	// invocation. Fresh databases already have the table from schema.sql.
+	`CREATE TABLE IF NOT EXISTS guidance_reads (
+	     topic          TEXT    NOT NULL,
+	     engram_version TEXT    NOT NULL,
+	     loads          INTEGER NOT NULL DEFAULT 0,
+	     first_loaded   INTEGER NOT NULL,
+	     last_loaded    INTEGER NOT NULL,
+	     PRIMARY KEY (topic, engram_version)
+	 );`,
 }
 
 // applyMigrations reads PRAGMA user_version, runs any pending migration steps

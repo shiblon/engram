@@ -82,6 +82,18 @@ CREATE TABLE IF NOT EXISTS curation_events (
 CREATE INDEX IF NOT EXISTS idx_curation_events_ts      ON curation_events (ts DESC);
 CREATE INDEX IF NOT EXISTS idx_curation_events_session ON curation_events (session_id);
 
+-- guidance_reads is a compact, local histogram of operational-reference
+-- deliveries. A row is aggregated by topic and engram version: enough to reveal
+-- unused routing without retaining prompts, paths, or an unbounded event stream.
+CREATE TABLE IF NOT EXISTS guidance_reads (
+    topic          TEXT    NOT NULL,
+    engram_version TEXT    NOT NULL,
+    loads          INTEGER NOT NULL DEFAULT 0,
+    first_loaded   INTEGER NOT NULL,
+    last_loaded    INTEGER NOT NULL,
+    PRIMARY KEY (topic, engram_version)
+);
+
 -- projects is the dump/restore manifest, populated only in the global DB. It is
 -- the lazy index of every project that has a local engram DB, written once when
 -- a project DB is born (see RegisterProject). identity is the cross-machine key

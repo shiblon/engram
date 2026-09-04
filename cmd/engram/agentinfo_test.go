@@ -1,8 +1,14 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/shiblon/engram/pkg/engram"
+	"github.com/spf13/cobra"
 )
 
 func TestRenderAgentInfoSubstitutesVersion(t *testing.T) {
@@ -72,6 +78,9 @@ func TestPolicyKernelCarriesVersionTriggersAndReferenceRoutes(t *testing.T) {
 		"engram inject --text --agent codex",
 		"`invariant`, `preference`, `long`, `short`, and `cold`",
 		"never feed display-formatted `engram mem read` output",
+		"durable identity, preference, standing rule, or default",
+		"sharing, exporting, migrating, or handing project memory",
+		"automate, script, package, or install a reusable command sequence",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("protocol guidance missing %q", want)
@@ -205,5 +214,146 @@ func TestEveryReferenceSectionIsRegisteredExactlyOnce(t *testing.T) {
 	}
 	if len(sections) != 0 {
 		t.Errorf("reference source has unregistered sections: %v", sections)
+	}
+}
+
+func TestAgentInfoStatsRowsIncludeNeverLoadedTopics(t *testing.T) {
+	rows := agentInfoStatsRows([]engram.GuidanceReadStat{
+		{Topic: "skills", Loads: 3, LastLoaded: 1000},
+	})
+	if len(rows) != len(guidanceTopics())+1 {
+		t.Fatalf("got %d rows, want %d", len(rows), len(guidanceTopics())+1)
+	}
+	seenNever, seenSkills, seenFull := false, false, false
+	for _, row := range rows {
+		switch row.Topic {
+		case "session-context":
+			seenNever = row.Loads == 0 && row.FirstLoaded == nil && row.LastLoaded == nil
+		case "skills":
+			seenSkills = row.Loads == 3 && row.FirstLoaded != nil && row.LastLoaded != nil
+		case guidanceFullManualTopic:
+			seenFull = row.Loads == 0
+		}
+	}
+	if !seenNever || !seenSkills || !seenFull {
+		t.Errorf("unexpected stats rows: %+v", rows)
+	}
+}
+
+func TestAgentInfoTopicRecordsBodyLoadWithoutCreatingMemory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	var out bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&out)
+	agentInfoFull = false
+	agentInfoAgent = ""
+	if err := runAgentInfo(cmd, []string{"skills"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "CAPTURE ON FIRST USE") {
+		t.Fatal("topic body was not printed")
+	}
+	if engram.GlobalDBExists() {
+		t.Fatal("agentinfo created global memory just to record instrumentation")
+	}
+
+	db, err := engram.OpenGlobalDB(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	out.Reset()
+	if err := runAgentInfo(cmd, []string{"skills"}); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err = engram.OpenGlobalDBReadOnly(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	stats, err := engram.ListGuidanceReadStats(context.Background(), db, releaseVersion(engramVersion()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stats) != 1 || stats[0].Topic != "skills" || stats[0].Loads != 1 {
+		t.Errorf("recorded stats = %+v, want one skills load", stats)
+	}
+}
+
+func TestAgentInfoStatsJSONIsCompleteAndComposable(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	db, err := engram.OpenGlobalDB(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := engram.RecordGuidanceRead(context.Background(), db, engram.GuidanceRead{
+		Topic: "memory-tiers", Version: releaseVersion(engramVersion()), TS: 1000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	var out bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&out)
+	agentInfoStatsJSON = true
+	agentInfoStatsRelease = ""
+	defer func() {
+		agentInfoStatsJSON = false
+		agentInfoStatsRelease = ""
+	}()
+	if err := runAgentInfoStats(cmd, nil); err != nil {
+		t.Fatal(err)
+	}
+	var got agentInfoStatsOutput
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("invalid JSON %q: %v", out.String(), err)
+	}
+	if got.Version != releaseVersion(engramVersion()) {
+		t.Errorf("version = %q", got.Version)
+	}
+	if len(got.Topics) != len(guidanceTopics())+1 {
+		t.Fatalf("got %d topics, want %d", len(got.Topics), len(guidanceTopics())+1)
+	}
+	for _, row := range got.Topics {
+		if row.Topic == "memory-tiers" && row.Loads == 1 &&
+			row.FirstLoaded != nil && row.LastLoaded != nil {
+			return
+		}
+	}
+	t.Errorf("memory-tiers load missing from %+v", got.Topics)
+}
+
+func TestAgentInfoStatsCanSelectEarlierRelease(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	db, err := engram.OpenGlobalDB(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := engram.RecordGuidanceRead(context.Background(), db, engram.GuidanceRead{
+		Topic: "sharing", Version: "v0.16.0", TS: 1000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	var out bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&out)
+	agentInfoStatsJSON = false
+	agentInfoStatsRelease = "v0.16.0"
+	defer func() { agentInfoStatsRelease = "" }()
+	if err := runAgentInfoStats(cmd, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Guidance body loads (v0.16.0)", "sharing", "1"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("stats output missing %q:\n%s", want, out.String())
+		}
 	}
 }

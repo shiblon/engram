@@ -322,6 +322,30 @@ func TestSchemaMigrationV8ToV9NormalizesTierAliases(t *testing.T) {
 	}
 }
 
+func TestSchemaMigrationV9ToV10AddsGuidanceReads(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if _, err := db.ExecContext(ctx, `DROP TABLE guidance_reads`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `PRAGMA user_version = 9`); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyMigrations(ctx, db); err != nil {
+		t.Fatalf("applyMigrations v9->: %v", err)
+	}
+	if err := RecordGuidanceRead(ctx, db, GuidanceRead{
+		Topic: "skills", Version: "v0.16.0", TS: 100,
+	}); err != nil {
+		t.Fatalf("record after migration: %v", err)
+	}
+}
+
 func TestEveryMigrationIsIdempotent(t *testing.T) {
 	// design-notes.md states the invariant plainly: a fresh database applies
 	// schema.sql and then replays EVERY migration from version 0, so each must be

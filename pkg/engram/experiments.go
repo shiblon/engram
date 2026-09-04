@@ -41,6 +41,15 @@ var experimentRegistry = []Experiment{
 		Commands:         []string{"engram curation"},
 	},
 	{
+		Key:              "guidance-reads",
+		Status:           ExperimentExperimental,
+		Hypothesis:       "A local per-version histogram of agentinfo body deliveries will reveal dead or under-routed guidance topics and provide evidence for deciding which policy belongs eagerly in the kernel.",
+		UnstableSurfaces: "The guidance_reads schema and `engram agentinfo stats` output may change in patch releases. Counts measure successful body delivery, not model attention or compliance, and nothing adapts guidance from them automatically.",
+		PromoteWhen:      "At least one release has enough real topic loads to audit, the histogram distinguishes useful lazy retrieval from dead routing when compared with related activity, and the retained fields prove sufficient without collecting prompt text.",
+		RemoveWhen:       "Body-load counts do not help identify routing gaps, or reliable interpretation requires invasive prompt or attention telemetry.",
+		Commands:         []string{"engram agentinfo stats"},
+	},
+	{
 		Key:    "dispatch",
 		Status: ExperimentExperimental,
 		Hypothesis: "An agent can usefully hand a decomposed task to several provider CLIs at once -- different providers, " +

@@ -22,6 +22,107 @@ Engram imposes structure, and it does so in a way that feels more seamless than 
 
 Part of that structure is summaries. Every memory keeps a short `tldr`, and session-start injection surfaces those one-liners rather than full entries — identity is the deliberate exception, since personality only works when it's present in full. The agent sees the whole shape of what it knows for very few tokens and reads an entry's full text only when it turns out to be relevant.
 
+## How an Agent Loads Engram
+
+Bootstrap gives an agent two complementary sources of context: a static policy
+kernel in the provider's startup instructions, and dynamic memory injected at
+every context boundary. Providers with verified lifecycle hooks deliver the
+dynamic half automatically; elsewhere, the kernel tells the agent how to load it
+on its first interaction.
+
+```text
+INSTALL TIME
+
+engram bootstrap <provider>
+        |
+        +--> provider startup instructions
+        |      CLAUDE.md / AGENTS.md / GEMINI.md / ...
+        |               |
+        |               +--> static Engram Policy Kernel
+        |                    WHEN / DO / READ / BOUNDARY
+        |
+        +--> verified lifecycle hooks, where supported
+                       |
+                       +--> SessionStart
+                            startup / resume / clear / compact
+
+
+SESSION START
+
+Provider assembles the agent's initial context
+        |
+        +--> loads its ordinary instructions
+        |
+        +--> loads the static Engram Policy Kernel
+        |
+        +--> SessionStart hook, if supported
+                 |
+                 +--> engram inject --agent <provider>
+                            |
+                            +--> global memory
+                            |      identity, preferences, agent layer
+                            |
+                            +--> current-project memory
+                            |      preferences, memory, skills, activity
+                            |
+                            +--> tools, automation, staged restores
+                            |
+                            +--> dynamic session context
+
+
+FIRST AGENT ACTION
+
+Are Orientation / Identity / Preferences already present?
+        |
+        +-- yes --> injection already happened; do not repeat it
+        |
+        +-- no ---> kernel fallback:
+                    engram inject --text --agent <provider>
+
+
+DURING THE TASK
+
+Current request or observed condition
+        |
+        +--> matches a kernel WHEN
+        |        +--> obey DO and BOUNDARY immediately
+        |        +--> load agentinfo topic when detail is needed
+        |
+        +--> matches an injected skill or memory summary
+                 +--> load that full body when relevant
+```
+
+The resulting design keeps routing and safety eager while leaving detailed
+reference material on demand:
+
+```mermaid
+flowchart LR
+    K["Policy kernel<br/>recognition + safety"] --> E["Eager session context"]
+    I["Memory and skill<br/>summaries"] --> E
+    E --> T["Current task"]
+    T --> A["agentinfo<br/>topic body"]
+    T --> S["skill body"]
+    T --> M["memory body"]
+```
+
+Identity is the deliberate exception: it loads in full because it shapes the
+agent's voice. Everything else loads eagerly only to the level needed to notice
+what matters, remain safe, and retrieve the right detail.
+
+You can inspect the routing surface directly. Topic-body loads are counted only
+when a global Engram database already exists; the histogram is local, contains
+no prompt text or paths, and reports successful delivery rather than model
+attention:
+
+```sh
+engram agentinfo                       # list available topics
+engram agentinfo memory-workflow       # load one operational body
+engram agentinfo stats                 # show this release's body-load histogram
+engram agentinfo stats --release v0.16.0
+                                       # inspect an earlier release after upgrading
+engram agentinfo stats --json          # structured form for further analysis
+```
+
 ## Personality as a Context Canary
 
 The credit goes to [Kevin Harris](https://www.linkedin.com/in/pwnx0r/) for the ideas behind this one (I actually never found out *how* he did any of it, I just got the concept). If you decided to give your agent a personality, you are deciding to give it a characteristic that humans have evolved highly tuned sensitivity to. You *notice* when personality shifts in the middle of a conversation. You evolved to understand when something is "off". Making the context window something less like "85% full" and something more like "suddenly this quirky agent got more serious" makes it easier to know when something is about to get weird.

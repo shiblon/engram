@@ -1,8 +1,14 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"log"
+	"sort"
 	"strings"
+	"text/tabwriter"
+	"time"
 
 	"github.com/shiblon/engram/pkg/engram"
 	"github.com/spf13/cobra"
@@ -459,7 +465,7 @@ func guidanceTopics() []guidanceTopic {
 			Name:        "memory-workflow",
 			Title:       "Memory workflow",
 			Summary:     "Scope, classify, write, and revisit memories safely.",
-			When:        "When the user asks to remember something, a digression must be checkpointed, or a task finishes.",
+			When:        "When the user asks to remember something; states a durable identity, preference, standing rule, or default; a digression must be checkpointed; or a task finishes.",
 			Do:          "Keep writes in the current project by default; ask before global writes. Prefer enforceable configuration over memory, give every memory a tldr, save live work before digressing, and revisit short-term memory when work finishes.",
 			Read:        "Before choosing scope, tier, layer, or a memory command, read `engram agentinfo memory-workflow` and `engram agentinfo memory-tiers`.",
 			Boundary:    "General cross-agent identity and preferences belong in the primary global layer; agent-specific compensation belongs in that agent's layer.",
@@ -506,7 +512,7 @@ func guidanceTopics() []guidanceTopic {
 			Name:        "sharing",
 			Title:       "Project memory and sharing",
 			Summary:     "Export durable project knowledge without reviving legacy context files.",
-			When:        "When sharing project memory with teammates or encountering legacy context files.",
+			When:        "When sharing, exporting, migrating, or handing project memory to teammates, or when encountering legacy context files.",
 			Do:          "Read the sharing topic before exporting, migrating, or removing those files.",
 			Read:        "Read `engram agentinfo sharing`.",
 			Boundary:    "Do not dump memory or recreate a legacy `context/` directory automatically.",
@@ -516,7 +522,7 @@ func guidanceTopics() []guidanceTopic {
 			Name:        "agent-tools",
 			Title:       "Agent tools",
 			Summary:     "Use and place reusable scripts deliberately.",
-			When:        "When inject lists an agent tool or a nontrivial command sequence is likely to recur.",
+			When:        "When inject lists an agent tool; the user asks to automate, script, package, or install a reusable command sequence; or a nontrivial sequence is likely to recur.",
 			Do:          "Read the agent-tools topic before invoking, creating, or placing a reusable tool.",
 			Read:        "Read `engram agentinfo agent-tools`.",
 			Boundary:    "A tool's presence does not trigger its use; an instruction or skill must point the agent to it.",
@@ -695,6 +701,8 @@ func renderAgentInfoForAgent(agent string) string {
 var agentInfoFull bool
 var agentInfoAgent string
 
+const guidanceFullManualTopic = "full-manual"
+
 var agentInfoCmd = &cobra.Command{
 	Use:   "agentinfo [topic]",
 	Short: "List or read operational guidance for AI agents",
@@ -714,8 +722,11 @@ func runAgentInfo(cmd *cobra.Command, args []string) error {
 	}
 	if len(args) == 0 {
 		if agentInfoFull {
-			_, err := fmt.Fprint(cmd.OutOrStdout(), renderAgentInfoForAgent(agent))
-			return err
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), renderAgentInfoForAgent(agent)); err != nil {
+				return err
+			}
+			recordGuidanceBodyLoad(guidanceFullManualTopic)
+			return nil
 		}
 		_, err := fmt.Fprint(cmd.OutOrStdout(), renderAgentInfoIndex())
 		return err
@@ -724,12 +735,147 @@ func runAgentInfo(cmd *cobra.Command, args []string) error {
 	if !ok {
 		return fmt.Errorf("unknown agentinfo topic %q; run 'engram agentinfo' to list topics", args[0])
 	}
-	_, err = fmt.Fprint(cmd.OutOrStdout(), renderAgentInfoTopic(topic, agentInfoFull, agent))
-	return err
+	if _, err = fmt.Fprint(cmd.OutOrStdout(), renderAgentInfoTopic(topic, agentInfoFull, agent)); err != nil {
+		return err
+	}
+	recordGuidanceBodyLoad(topic.Name)
+	return nil
+}
+
+// recordGuidanceBodyLoad is deliberately best-effort. Operational guidance must
+// still print when the global database is absent, old, locked, or read-only.
+func recordGuidanceBodyLoad(topic string) {
+	if !engram.GlobalDBExists() {
+		return
+	}
+	ctx := context.Background()
+	db, err := engram.OpenGlobalDB(ctx)
+	if err != nil {
+		log.Printf("engram: record guidance body load: %v", err)
+		return
+	}
+	defer db.Close()
+	if err := engram.RecordGuidanceRead(ctx, db, engram.GuidanceRead{
+		Topic:   topic,
+		Version: releaseVersion(engramVersion()),
+	}); err != nil {
+		log.Printf("engram: record guidance body load: %v", err)
+	}
+}
+
+type agentInfoStatRow struct {
+	Topic       string  `json:"topic"`
+	Loads       int64   `json:"loads"`
+	FirstLoaded *string `json:"first_loaded"`
+	LastLoaded  *string `json:"last_loaded"`
+}
+
+type agentInfoStatsOutput struct {
+	Version string             `json:"version"`
+	Topics  []agentInfoStatRow `json:"topics"`
+}
+
+func agentInfoStatsRows(observed []engram.GuidanceReadStat) []agentInfoStatRow {
+	byTopic := make(map[string]engram.GuidanceReadStat, len(observed))
+	for _, stat := range observed {
+		byTopic[stat.Topic] = stat
+	}
+
+	rows := make([]agentInfoStatRow, 0, len(guidanceTopics())+1+len(observed))
+	appendTopic := func(topic string) {
+		row := agentInfoStatRow{Topic: topic}
+		if stat, ok := byTopic[topic]; ok {
+			row.Loads = stat.Loads
+			first := time.UnixMilli(stat.FirstLoaded).UTC().Format(time.RFC3339)
+			last := time.UnixMilli(stat.LastLoaded).UTC().Format(time.RFC3339)
+			row.FirstLoaded = &first
+			row.LastLoaded = &last
+			delete(byTopic, topic)
+		}
+		rows = append(rows, row)
+	}
+	for _, topic := range guidanceTopics() {
+		appendTopic(topic.Name)
+	}
+	appendTopic(guidanceFullManualTopic)
+
+	// Preserve observations for a topic removed or renamed within the same release
+	// instead of making historical evidence disappear from the audit surface.
+	unknown := make([]string, 0, len(byTopic))
+	for topic := range byTopic {
+		unknown = append(unknown, topic)
+	}
+	sort.Strings(unknown)
+	for _, topic := range unknown {
+		appendTopic(topic)
+	}
+	return rows
+}
+
+func runAgentInfoStats(cmd *cobra.Command, _ []string) error {
+	ctx := context.Background()
+	version := releaseVersion(engramVersion())
+	if selected := strings.TrimSpace(agentInfoStatsRelease); selected != "" {
+		version = selected
+	}
+	var observed []engram.GuidanceReadStat
+	if engram.GlobalDBExists() {
+		db, err := engram.OpenGlobalDBReadOnly(ctx)
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		observed, err = engram.ListGuidanceReadStats(ctx, db, version)
+		if err != nil {
+			return err
+		}
+	}
+	rows := agentInfoStatsRows(observed)
+
+	if agentInfoStatsJSON {
+		out, err := json.Marshal(agentInfoStatsOutput{Version: version, Topics: rows})
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), string(out))
+		return nil
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "Guidance body loads (%s)\n\n", version)
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+	fmt.Fprintln(w, "TOPIC\tLOADS\tLAST LOADED")
+	for _, row := range rows {
+		last := "never"
+		if row.LastLoaded != nil {
+			last = *row.LastLoaded
+		}
+		fmt.Fprintf(w, "%s\t%d\t%s\n", row.Topic, row.Loads, last)
+	}
+	return w.Flush()
+}
+
+var (
+	agentInfoStatsJSON    bool
+	agentInfoStatsRelease string
+)
+
+var agentInfoStatsCmd = &cobra.Command{
+	Use:   "stats",
+	Short: "Show the local histogram of guidance body loads",
+	Long: `Show how often each agentinfo topic body has been delivered for the
+current Engram release. Every registered topic is listed, including topics that
+have never been loaded. This records local command delivery only: it does not
+capture prompts and cannot prove that a model attended to the returned text.`,
+	Args: cobra.NoArgs,
+	RunE: runAgentInfoStats,
 }
 
 func init() {
 	agentInfoCmd.Flags().BoolVar(&agentInfoFull, "full", false, "include policy-kernel guidance")
 	agentInfoCmd.Flags().StringVar(&agentInfoAgent, "agent", "", "render agent-specific inject commands in policy guidance")
+	agentInfoStatsCmd.Flags().BoolVar(&agentInfoStatsJSON, "json", false, "output one JSON object")
+	agentInfoStatsCmd.Flags().StringVar(&agentInfoStatsRelease, "release", "", "show a specific engram release (default: current)")
+	markExperimental(agentInfoStatsCmd, "guidance-reads")
+	agentInfoCmd.AddCommand(agentInfoStatsCmd)
 	rootCmd.AddCommand(agentInfoCmd)
 }

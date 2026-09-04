@@ -17,12 +17,19 @@ in-repo companion.
   File changes use standard unified patch format, unchanged targets remain
   visible with empty patch headers, and reviewed files are revalidated before
   application.
+- experimental `engram agentinfo stats` records a compact, local, per-version
+  histogram of successfully delivered topic bodies. It includes never-loaded
+  topics, supports historical release selection and JSON output, stores no prompt
+  text or paths, and never lets instrumentation failure block the requested
+  guidance.
 
 ### Changed
 - agent guidance now comes from one topic registry. Bootstrapped init files carry
   a roughly 5.5 KB policy kernel with explicit `WHEN`, `DO`, `READ`, and optional
   `BOUNDARY` fields; `engram agentinfo` lists operational topics, accepts a topic
-  name, and offers per-topic or assembled `--full` views.
+  name, and offers per-topic or assembled `--full` views. Recognition explicitly
+  covers durable identity/default statements, project-memory handoff, and requests
+  to automate reusable command sequences without relying on magic keywords.
 - markdown bootstrap providers share one installation adapter and explicit
   generated-section markers. `bootstrap initfile` accepts `--agent`; Claude now
   imports only the common generated kernel while identity and preferences arrive
