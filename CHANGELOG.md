@@ -11,6 +11,15 @@ in-repo companion.
 
 ## [Unreleased]
 
+### Added
+- bootstrap guidance now covers consolidation, not just storage and retrieval: a
+  new "Memory consolidation" section tells an agent to notice when a memory it is
+  about to write contradicts or duplicates one already in its context, surface
+  that rather than appending, and harmonize with the user into a replacement that
+  retires what it replaced. Feedback on the process itself goes to
+  `engram:/long/__memory_consolidation__` rather than into the generated file, so
+  a user's refinements survive the next bootstrap.
+
 ## [0.14.0] - 2026-08-31
 
 ### Changed
