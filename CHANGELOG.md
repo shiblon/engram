@@ -11,6 +11,8 @@ in-repo companion.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-09-04
+
 ### Added
 - every bootstrap provider supports `--dry-run` for an annotated, no-write
   preview and `--diff` for the same preview followed by one accept/reject prompt.
@@ -38,6 +40,11 @@ in-repo companion.
 - Claude and Codex bootstrap globally by default so a forgotten flag cannot
   dirty the current repository. `--project` explicitly selects project-local
   hooks/config; `-g` and `--global` remain accepted compatibility spellings.
+- the v0.16.0 experiment review keeps `curation-log` experimental because it
+  still has no consumer or settled retention evidence, keeps `dispatch`
+  experimental because its upstream-change, model-selection, and measured
+  fan-out evidence is incomplete, and begins the `guidance-reads` trial without
+  promoting it before real-release usage exists.
 
 ## [0.15.1] - 2026-09-04
 
@@ -620,7 +627,8 @@ _Internal changes only._
 - first take
 - Initial commit
 
-[Unreleased]: https://github.com/shiblon/engram/compare/v0.15.1...HEAD
+[Unreleased]: https://github.com/shiblon/engram/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/shiblon/engram/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/shiblon/engram/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/shiblon/engram/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/shiblon/engram/compare/v0.13.2...v0.14.0
