@@ -145,14 +145,15 @@ var injectCmd = &cobra.Command{
 
 // injectVersionLine is the version-drift check inject leads with. It carries the
 // instruction itself, not just the number, because the check must fire even when
-// the loaded engram.md is old and version-less (it predates this feature) -- in
-// that case the guidance file cannot carry the instruction, but inject always
+// the loaded policy kernel is old and version-less (it predates this feature) --
+// in that case the guidance file cannot carry the instruction, but inject always
 // can. It covers both a version mismatch and a missing version line.
 func injectVersionLine(version string) string {
 	return fmt.Sprintf("engram version: %s. Check the engram guidance loaded in your "+
 		"context: if its \"Guidance version\" line differs from this, or there is no "+
-		"version line at all, that guidance predates this engram; tell the user and offer "+
-		"to run `engram bootstrap` to refresh it.", version)
+		"version line at all, the policy kernel is stale or absent. Run `engram agentinfo` "+
+		"for the current reference, tell the user, and offer to run `engram bootstrap` "+
+		"to refresh the installed kernel.", version)
 }
 
 func runInject(cmd *cobra.Command, _ []string) error {

@@ -128,19 +128,31 @@ func uninstallSettings(global bool) error {
 var engramBlock = regexp.MustCompile(`(?s)<!-- engram:start -->.*?<!-- engram:end -->\n?`)
 var engramMdLine = regexp.MustCompile(`(?m)^@engram\.md\n?`)
 
-// engramSectionRE matches the session-protocol block that bootstrap appends to
-// markdown init files (Gemini/Copilot/Cursor/initfile). It must match what
-// bootstrap's engramProtocolSection writes -- a test asserts they stay in sync.
-var engramSectionRE = regexp.MustCompile(`(?m)\n## Engram Session Protocol\n[\s\S]*?Do not skip this step\.\n?`)
+// engramSectionRE matches both the explicitly delimited policy kernel and the
+// pre-v0.16 session-protocol block. Keeping the legacy branch makes re-bootstrap
+// and uninstall migrate existing installations without broad file rewrites.
+var engramSectionRE = regexp.MustCompile(`(?m)(?:\n?<!-- engram:guidance:start -->[\s\S]*?<!-- engram:guidance:end -->\n?|\n## Engram Session Protocol\n[\s\S]*?Do not skip this step\.\n?)`)
 
 // removeEngramHook removes hook entries whose command contains cmdSubstr from the
 // named hook array (e.g. "PostToolUse"), dropping entries left with no hooks. It
 // reports whether it changed anything.
 func removeEngramHook(hooks map[string]any, key, cmdSubstr, label, path string) bool {
+	if !removeEngramHookQuiet(hooks, key, cmdSubstr) {
+		return false
+	}
+	fmt.Printf("removed: %s from %s\n", label, path)
+	return true
+}
+
+// removeEngramHookQuiet is the mutation-only form shared by uninstall and
+// bootstrap planning. It reports handler removal even when its containing hook
+// group remains because it also contains unrelated handlers.
+func removeEngramHookQuiet(hooks map[string]any, key, cmdSubstr string) bool {
 	arr, ok := hooks[key].([]any)
 	if !ok {
 		return false
 	}
+	changed := false
 	filtered := make([]any, 0, len(arr))
 	for _, entry := range arr {
 		m, ok := entry.(map[string]any)
@@ -159,6 +171,8 @@ func removeEngramHook(hooks map[string]any, key, cmdSubstr, label, path string) 
 			cmd, _ := hm["command"].(string)
 			if !strings.Contains(cmd, cmdSubstr) {
 				nonEngram = append(nonEngram, h)
+			} else {
+				changed = true
 			}
 		}
 		if len(nonEngram) > 0 {
@@ -166,12 +180,10 @@ func removeEngramHook(hooks map[string]any, key, cmdSubstr, label, path string) 
 			filtered = append(filtered, m)
 		}
 	}
-	if len(filtered) != len(arr) {
+	if changed {
 		hooks[key] = filtered
-		fmt.Printf("removed: %s from %s\n", label, path)
-		return true
 	}
-	return false
+	return changed
 }
 
 // removeSectionFromFile strips every match of re from the file at path and

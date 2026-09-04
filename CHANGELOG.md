@@ -11,6 +11,27 @@ in-repo companion.
 
 ## [Unreleased]
 
+### Added
+- every bootstrap provider supports `--dry-run` for an annotated, no-write
+  preview and `--diff` for the same preview followed by one accept/reject prompt.
+  File changes use standard unified patch format, unchanged targets remain
+  visible with empty patch headers, and reviewed files are revalidated before
+  application.
+
+### Changed
+- agent guidance now comes from one topic registry. Bootstrapped init files carry
+  a roughly 5.5 KB policy kernel with explicit `WHEN`, `DO`, `READ`, and optional
+  `BOUNDARY` fields; `engram agentinfo` lists operational topics, accepts a topic
+  name, and offers per-topic or assembled `--full` views.
+- markdown bootstrap providers share one installation adapter and explicit
+  generated-section markers. `bootstrap initfile` accepts `--agent`; Claude now
+  imports only the common generated kernel while identity and preferences arrive
+  through session injection. Gemini uses the common first-interaction fallback
+  and re-bootstrap removes its formerly installed, unverified lifecycle hooks.
+- Claude and Codex bootstrap globally by default so a forgotten flag cannot
+  dirty the current repository. `--project` explicitly selects project-local
+  hooks/config; `-g` and `--global` remain accepted compatibility spellings.
+
 ## [0.15.1] - 2026-09-04
 
 ### Fixed

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/shiblon/engram/pkg/engram"
 	"github.com/spf13/cobra"
 )
 
@@ -206,20 +207,7 @@ const memoryTierGuidance = `Engram's CLI tier tokens are fixed: ` + "`invariant`
 often says "long-term" and "short-term"; the corresponding canonical flags are
 ` + "`--tier long`" + ` and ` + "`--tier short`" + `.`
 
-const agentInfoText = `<!-- GENERATED FILE -- do not edit directly. This file is written by
-"engram bootstrap"; edits here are overwritten on the next run. To change it, edit
-the source in the engram binary (cmd/engram/agentinfo.go, const agentInfoText) and
-re-run engram bootstrap. -->
-
-# Engram - Memory and Personality for AI Agents
-
-> Guidance version: ENGRAM_GUIDANCE_VERSION. Session-start inject reports the running
-> engram version and flags this file as stale (it predates the installed engram) when
-> they differ or this line is absent; refresh with ` + "`engram bootstrap <platform>`" + `.
-
-Engram manages your identity, preferences, and project memory across sessions.
-
-## Session startup
+const agentReferenceText = `## Session startup
 
 Check whether inject context appears in your system prompt (sections like
 "## Identity", "## Preferences", "## Long-term memory"). If it does, inject already
@@ -435,26 +423,313 @@ Never apply or discard a staged restore without the user's explicit consent.
 Engram never auto-applies; that judgment is yours.
 `
 
-// renderAgentInfo returns agentInfoText with the guidance-version token replaced
-// by the running engram version, so the file written to disk records which
-// engram produced it. inject reports the live version; a mismatch means the
-// on-disk guidance is stale and the user should re-bootstrap.
-func renderAgentInfo() string {
-	return strings.ReplaceAll(agentInfoText, "ENGRAM_GUIDANCE_VERSION", engramVersion())
+// guidanceTopic is the single policy-and-reference unit from which engram renders
+// the installed policy kernel, the agentinfo index, topic reads, and the full
+// manual. The kernel fields answer only what an agent must recognize and do
+// without first deciding to consult documentation; BodyHeading points at the
+// corresponding operational reference in agentReferenceText.
+type guidanceTopic struct {
+	Name        string
+	Title       string
+	Summary     string
+	When        string
+	Do          string
+	Read        string
+	Boundary    string
+	BodyHeading string
 }
+
+const (
+	guidanceStartMarker = "<!-- engram:guidance:start -->"
+	guidanceEndMarker   = "<!-- engram:guidance:end -->"
+)
+
+func guidanceTopics() []guidanceTopic {
+	return []guidanceTopic{
+		{
+			Name:        "session-context",
+			Title:       "Session context",
+			Summary:     "Load identity and memory at every context boundary.",
+			When:        "At the first interaction in a new, resumed, cleared, or compacted context.",
+			Do:          "Treat sections such as `## Orientation`, `## Identity`, `## Preferences`, or `## Long-term memory` as injected Engram context and use them without injecting again. If they are absent, run the provider-specific inject command below before other work and treat its output as session context. On the first reply, briefly name the codename, say whether context arrived or was loaded by hand, and summarize what memory loaded before answering.",
+			Boundary:    "A lifecycle hook is delivery machinery for this same rule, not a separate semantic mode.",
+			BodyHeading: "Session startup",
+		},
+		{
+			Name:        "memory-workflow",
+			Title:       "Memory workflow",
+			Summary:     "Scope, classify, write, and revisit memories safely.",
+			When:        "When the user asks to remember something, a digression must be checkpointed, or a task finishes.",
+			Do:          "Keep writes in the current project by default; ask before global writes. Prefer enforceable configuration over memory, give every memory a tldr, save live work before digressing, and revisit short-term memory when work finishes.",
+			Read:        "Before choosing scope, tier, layer, or a memory command, read `engram agentinfo memory-workflow` and `engram agentinfo memory-tiers`.",
+			Boundary:    "General cross-agent identity and preferences belong in the primary global layer; agent-specific compensation belongs in that agent's layer.",
+			BodyHeading: "Memory workflow",
+		},
+		{
+			Name:        "memory-consolidation",
+			Title:       "Memory consolidation",
+			Summary:     "Resolve overlapping or contradictory memories instead of appending drift.",
+			When:        "Before a memory write, when an existing entry answers the same question differently, expresses the same intent, or would need an outranking rule.",
+			Do:          "Name the two memories and their specific disagreement, then ask the user to choose a harmonized replacement. Do not append another rule while the conflict is unresolved.",
+			Read:        "Read `engram agentinfo memory-consolidation` before resolving the conflict or storing feedback about consolidation itself.",
+			Boundary:    "Adjacent topics are not conflicts; silence is the default unless a concrete case produces different verdicts.",
+			BodyHeading: "Memory consolidation",
+		},
+		{
+			Name:        "memory-tiers",
+			Title:       "Memory tiers and summaries",
+			Summary:     "Choose canonical tiers, databases, agent layers, and summaries.",
+			When:        "When reading, writing, moving, or retiring memory.",
+			Do:          "Use only the canonical tier tokens `invariant`, `preference`, `long`, `short`, and `cold`. At each session, read every short-term retirement condition and delete entries whose condition is met.",
+			Read:        "Read `engram agentinfo memory-tiers`; for summary edits also read `engram agentinfo memory-summaries`.",
+			BodyHeading: "Memory tiers",
+		},
+		{
+			Name:        "memory-summaries",
+			Title:       "Memory summaries",
+			Summary:     "Write concise summaries that make injected memory retrievable.",
+			When:        "When writing a memory or reviewing an injected summary.",
+			Do:          "Write a one-line tldr with every memory and read the full entry when its injected summary is relevant.",
+			Read:        "Read `engram agentinfo memory-summaries` for summary behavior and limits, and `engram agentinfo safe-memory-updates` before changing only a tldr.",
+			BodyHeading: "Memory summaries (tldr)",
+		},
+		{
+			Name:        "safe-memory-updates",
+			Title:       "Safe memory updates",
+			Summary:     "Change summaries without corrupting memory bodies.",
+			When:        "When changing only an existing memory's tldr.",
+			Do:          "Use `engram mem ... tldr`; never feed display-formatted `engram mem read` output back into `engram mem write`.",
+			Read:        "Read `engram agentinfo safe-memory-updates` before retrying a failed memory edit.",
+			BodyHeading: "Safe memory updates",
+		},
+		{
+			Name:        "sharing",
+			Title:       "Project memory and sharing",
+			Summary:     "Export durable project knowledge without reviving legacy context files.",
+			When:        "When sharing project memory with teammates or encountering legacy context files.",
+			Do:          "Read the sharing topic before exporting, migrating, or removing those files.",
+			Read:        "Read `engram agentinfo sharing`.",
+			Boundary:    "Do not dump memory or recreate a legacy `context/` directory automatically.",
+			BodyHeading: "Project memory and sharing",
+		},
+		{
+			Name:        "agent-tools",
+			Title:       "Agent tools",
+			Summary:     "Use and place reusable scripts deliberately.",
+			When:        "When inject lists an agent tool or a nontrivial command sequence is likely to recur.",
+			Do:          "Read the agent-tools topic before invoking, creating, or placing a reusable tool.",
+			Read:        "Read `engram agentinfo agent-tools`.",
+			Boundary:    "A tool's presence does not trigger its use; an instruction or skill must point the agent to it.",
+			BodyHeading: "Agent tools",
+		},
+		{
+			Name:        "skills",
+			Title:       "Skills",
+			Summary:     "Retrieve matching procedures and capture verified first-use workflows.",
+			When:        "At task start, and again after completing and verifying a user-named category of work.",
+			Do:          "Scan the injected Skills index and read any matching skill before acting. After verified first use, apply the capture criteria in the skills topic.",
+			Read:        "Read `engram agentinfo skills` before searching for a missing skill, capturing one, or classifying automation.",
+			Boundary:    "A no-results search does not override a visible injected index, and unfinished or instance-specific work is not a skill.",
+			BodyHeading: "Skills: retrieval and first-use capture",
+		},
+		{
+			Name:        "experiments",
+			Title:       "Experimental features",
+			Summary:     "Use unstable features with their current contracts and safeguards.",
+			When:        "When a command or help entry is labeled experimental, including `engram dispatch`.",
+			Do:          "Read the experiments topic and current command help before proceeding.",
+			Read:        "Read `engram agentinfo experiments`, then run `engram experiments` and the relevant command's `--help`.",
+			Boundary:    "Do not assume a PATCH release preserves an experimental invocation.",
+			BodyHeading: "Experimental features",
+		},
+		{
+			Name:        "staged-restores",
+			Title:       "Staged restores",
+			Summary:     "Inspect and place restored snapshots without guessing or overwriting.",
+			When:        "When inject reports a `## Staged restores` section.",
+			Do:          "Read the staged-restores topic, summarize relevant candidates, and get explicit user consent before applying or discarding any snapshot.",
+			Read:        "Read `engram agentinfo staged-restores`.",
+			Boundary:    "Unrelated entries are left alone; Engram never auto-applies a restore.",
+			BodyHeading: "Staged restores",
+		},
+	}
+}
+
+func guidanceTopicByName(name string) (guidanceTopic, bool) {
+	for _, topic := range guidanceTopics() {
+		if topic.Name == name {
+			return topic, true
+		}
+	}
+	return guidanceTopic{}, false
+}
+
+func guidanceTopicNames() []string {
+	names := make([]string, 0, len(guidanceTopics()))
+	for _, topic := range guidanceTopics() {
+		names = append(names, topic.Name)
+	}
+	return names
+}
+
+func normalizeGuidanceAgent(agent string) string {
+	agent, _ = engram.NormalizeAgent(agent)
+	return agent
+}
+
+func guidanceInjectCommand(agent string) string {
+	cmd := "engram inject --text"
+	if agent = normalizeGuidanceAgent(agent); agent != "" {
+		cmd += " --agent " + agent
+	}
+	return cmd
+}
+
+func renderKernelTopic(topic guidanceTopic, agent string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "### %s\n\n- WHEN: %s\n- DO: %s\n", topic.Title, topic.When, topic.Do)
+	if topic.Name == "session-context" {
+		fmt.Fprintf(&b, "  Provider-specific inject command: `%s`.\n", guidanceInjectCommand(agent))
+	}
+	if topic.Read != "" {
+		fmt.Fprintf(&b, "- READ: %s\n", topic.Read)
+	}
+	if topic.Boundary != "" {
+		fmt.Fprintf(&b, "- BOUNDARY: %s\n", topic.Boundary)
+	}
+	return b.String()
+}
+
+// renderGuidanceKernel renders the durable policy installed in every provider's
+// init surface. It contains recognition triggers and immediate obligations, not
+// the operational manual. All provider differences reduce to the inject command.
+func renderGuidanceKernel(agent string) string {
+	agent = normalizeGuidanceAgent(agent)
+	var b strings.Builder
+	b.WriteString("\n" + guidanceStartMarker + "\n")
+	b.WriteString("## Engram Policy Kernel\n\n")
+	fmt.Fprintf(&b, "> Guidance version: %s. If session-start inject reports a different version, this guidance predates the installed engram; if the line is absent, it is also stale. Tell the user and offer to run `engram bootstrap` to refresh it.\n\n", engramVersion())
+	b.WriteString("This kernel carries obligations that must survive context boundaries. Operational reference is available through `engram agentinfo`; run it with no arguments for the topic index.\n\n")
+	for i, topic := range guidanceTopics() {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(renderKernelTopic(topic, agent))
+	}
+	b.WriteString(guidanceEndMarker)
+	return b.String()
+}
+
+// referenceSections parses the legacy prose source into independently
+// addressable topic bodies. The registry owns their public names and order;
+// headings in the source are merely stable anchors while the prose is migrated
+// section-by-section out of the former monolith.
+func referenceSections() map[string]string {
+	text := strings.ReplaceAll(agentReferenceText, "ENGRAM_GUIDANCE_VERSION", engramVersion())
+	sections := make(map[string]string)
+	var heading string
+	var body strings.Builder
+	flush := func() {
+		if heading != "" {
+			sections[heading] = strings.TrimSpace(body.String())
+		}
+		body.Reset()
+	}
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(line, "## ") {
+			flush()
+			heading = strings.TrimSpace(strings.TrimPrefix(line, "## "))
+			continue
+		}
+		if heading != "" {
+			body.WriteString(line)
+			body.WriteByte('\n')
+		}
+	}
+	flush()
+	return sections
+}
+
+func renderAgentInfoIndex() string {
+	var b strings.Builder
+	b.WriteString("# Engram agent reference\n\n")
+	b.WriteString("Use `engram agentinfo <topic>` to read a topic, `<topic> --full` to include its policy-kernel entry, or `engram agentinfo --full` for the assembled manual.\n\n")
+	for _, topic := range guidanceTopics() {
+		fmt.Fprintf(&b, "%-22s %s\n", topic.Name, topic.Summary)
+	}
+	return b.String()
+}
+
+func renderAgentInfoTopic(topic guidanceTopic, full bool, agent string) string {
+	var b strings.Builder
+	if full {
+		b.WriteString(renderKernelTopic(topic, normalizeGuidanceAgent(agent)))
+		b.WriteByte('\n')
+	}
+	fmt.Fprintf(&b, "## %s\n\n", topic.Title)
+	body := referenceSections()[topic.BodyHeading]
+	b.WriteString(body)
+	b.WriteByte('\n')
+	return b.String()
+}
+
+// renderAgentInfo returns the assembled manual for compatibility with internal
+// callers and tests. The CLI's no-argument form deliberately renders only the
+// compact index; --full selects this view.
+func renderAgentInfo() string {
+	return renderAgentInfoForAgent("")
+}
+
+func renderAgentInfoForAgent(agent string) string {
+	var b strings.Builder
+	b.WriteString("# Engram - Memory and Personality for AI Agents\n\n")
+	b.WriteString(renderGuidanceKernel(agent))
+	b.WriteString("\n\n# Operational reference\n\n")
+	for _, topic := range guidanceTopics() {
+		b.WriteString(renderAgentInfoTopic(topic, false, ""))
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+var agentInfoFull bool
+var agentInfoAgent string
 
 var agentInfoCmd = &cobra.Command{
-	Use:   "agentinfo",
-	Short: "Print instructions for AI agents on how to use engram",
-	Long:  `Prints the standard instructions meant to be embedded in system prompt files such as CLAUDE.md, .cursorrules, or AGENTS.md. Run 'engram agentinfo >> CLAUDE.md' or pipe to any equivalent file for your platform.`,
-	RunE:  runAgentInfo,
+	Use:   "agentinfo [topic]",
+	Short: "List or read operational guidance for AI agents",
+	Long: `With no arguments, list the available guidance topics. With a topic,
+print that topic's operational reference. Add --full to include policy: for one
+topic it prepends the matching kernel entry; without a topic it prints the
+assembled policy kernel and reference manual.`,
+	Args:      cobra.MaximumNArgs(1),
+	ValidArgs: guidanceTopicNames(),
+	RunE:      runAgentInfo,
 }
 
-func runAgentInfo(_ *cobra.Command, _ []string) error {
-	fmt.Print(renderAgentInfo())
-	return nil
+func runAgentInfo(cmd *cobra.Command, args []string) error {
+	agent, err := engram.NormalizeAgent(agentInfoAgent)
+	if err != nil {
+		return err
+	}
+	if len(args) == 0 {
+		if agentInfoFull {
+			_, err := fmt.Fprint(cmd.OutOrStdout(), renderAgentInfoForAgent(agent))
+			return err
+		}
+		_, err := fmt.Fprint(cmd.OutOrStdout(), renderAgentInfoIndex())
+		return err
+	}
+	topic, ok := guidanceTopicByName(args[0])
+	if !ok {
+		return fmt.Errorf("unknown agentinfo topic %q; run 'engram agentinfo' to list topics", args[0])
+	}
+	_, err = fmt.Fprint(cmd.OutOrStdout(), renderAgentInfoTopic(topic, agentInfoFull, agent))
+	return err
 }
 
 func init() {
+	agentInfoCmd.Flags().BoolVar(&agentInfoFull, "full", false, "include policy-kernel guidance")
+	agentInfoCmd.Flags().StringVar(&agentInfoAgent, "agent", "", "render agent-specific inject commands in policy guidance")
 	rootCmd.AddCommand(agentInfoCmd)
 }

@@ -1,12 +1,33 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/shiblon/engram/pkg/engram"
 )
+
+func applyBootstrapTestPlan(t *testing.T, build func(*bootstrapPlan) error) {
+	t.Helper()
+	plan := newBootstrapPlan()
+	if err := build(plan); err != nil {
+		t.Fatalf("build bootstrap plan: %v", err)
+	}
+	if err := plan.apply(context.Background()); err != nil {
+		t.Fatalf("apply bootstrap plan: %v", err)
+	}
+}
+
+func applyBootstrapCodexHooks(t *testing.T, path, exe string, includeSessionHook bool) {
+	t.Helper()
+	applyBootstrapTestPlan(t, func(plan *bootstrapPlan) error {
+		return bootstrapCodexHooks(plan, path, exe, includeSessionHook)
+	})
+}
 
 // The session-protocol block lives in one renderer (engramProtocolSection,
 // written by every markdown-init-file bootstrap) and is removed by one regex
@@ -46,12 +67,16 @@ Do not skip this step.`
 		t.Fatalf("write init file: %v", err)
 	}
 
-	updated, err := bootstrapAppendToFile(path, engramProtocolSection("codex"))
+	plan := newBootstrapPlan()
+	updated, err := bootstrapAppendToFile(plan, path, engramProtocolSection("codex"))
 	if err != nil {
 		t.Fatalf("bootstrapAppendToFile: %v", err)
 	}
 	if !updated {
 		t.Fatalf("bootstrapAppendToFile reported no update")
+	}
+	if err := plan.apply(context.Background()); err != nil {
+		t.Fatalf("apply bootstrap plan: %v", err)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -61,8 +86,8 @@ Do not skip this step.`
 	if strings.Contains(got, "At the start of every new conversation, before taking any other action, run:") {
 		t.Errorf("old unconditional startup instruction survived:\n%s", got)
 	}
-	if !strings.Contains(got, "If that context is already present, do not run another inject command.") {
-		t.Errorf("new duplicate guard missing:\n%s", got)
+	if !strings.Contains(got, "use them without injecting again") {
+		t.Errorf("common context-presence rule missing:\n%s", got)
 	}
 	if !strings.Contains(got, "engram inject --text --agent codex") {
 		t.Errorf("agent-specific inject command missing:\n%s", got)
@@ -79,12 +104,16 @@ func TestBootstrapAppendToFileUpdatesUnlayeredProtocolSection(t *testing.T) {
 		t.Fatalf("write init file: %v", err)
 	}
 
-	updated, err := bootstrapAppendToFile(path, engramProtocolSection("codex"))
+	plan := newBootstrapPlan()
+	updated, err := bootstrapAppendToFile(plan, path, engramProtocolSection("codex"))
 	if err != nil {
 		t.Fatalf("bootstrapAppendToFile: %v", err)
 	}
 	if !updated {
 		t.Fatalf("bootstrapAppendToFile reported no update")
+	}
+	if err := plan.apply(context.Background()); err != nil {
+		t.Fatalf("apply bootstrap plan: %v", err)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -99,6 +128,93 @@ func TestBootstrapAppendToFileUpdatesUnlayeredProtocolSection(t *testing.T) {
 	}
 	if !strings.Contains(got, "\n\nkeep me\n") {
 		t.Errorf("existing file content was not preserved:\n%s", got)
+	}
+}
+
+func TestRetireClaudeStandingMdPreservesUserContent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "CLAUDE.md")
+	content := "# My instructions\n@engram-invariants.md\nkeep me\n@engram-preferences.md"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, base := range engram.StandingFileBases() {
+		if err := os.WriteFile(filepath.Join(dir, base), []byte("generated"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	applyBootstrapTestPlan(t, retireClaudeStandingMd)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(data); got != "# My instructions\nkeep me" {
+		t.Errorf("CLAUDE.md after retirement = %q", got)
+	}
+	for _, base := range engram.StandingFileBases() {
+		if _, err := os.Stat(filepath.Join(dir, base)); !os.IsNotExist(err) {
+			t.Errorf("legacy file %s survived retirement", base)
+		}
+	}
+}
+
+func TestBootstrapEngramMdWritesKernelOnly(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	applyBootstrapTestPlan(t, bootstrapEngramMd)
+	data, err := os.ReadFile(filepath.Join(home, ".claude", "engram.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	if !strings.Contains(got, "engram inject --text --agent claude") {
+		t.Errorf("generated kernel missing Claude inject command")
+	}
+	if strings.Contains(got, "Slicing destroys the seams") {
+		t.Errorf("generated kernel contains operational dispatch manual")
+	}
+}
+
+func TestGeminiBootstrapRetiresLegacyHooks(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	settingsPath := filepath.Join(home, ".gemini", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeSettings(t, settingsPath, map[string]any{
+		"theme": "dark",
+		"hooks": map[string]any{
+			"SessionStart": []any{map[string]any{
+				"hooks": []any{map[string]any{"type": "command", "command": "/usr/bin/engram inject --agent gemini"}},
+			}},
+			"AfterTool": []any{map[string]any{
+				"hooks": []any{map[string]any{"type": "command", "command": "/usr/bin/engram record"}},
+			}},
+		},
+	})
+	if err := runBootstrapGemini(nil, nil); err != nil {
+		t.Fatalf("runBootstrapGemini: %v", err)
+	}
+	settings := readSettings(t, settingsPath)
+	if settings["theme"] != "dark" {
+		t.Errorf("unrelated Gemini setting was not preserved")
+	}
+	hooks, _ := settings["hooks"].(map[string]any)
+	if hookCommand(t, hooks, "SessionStart") != "" || hookCommand(t, hooks, "AfterTool") != "" {
+		t.Errorf("legacy Gemini hooks survived re-bootstrap: %+v", hooks)
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".gemini", "GEMINI.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "engram inject --text --agent gemini") {
+		t.Errorf("Gemini policy kernel missing agent-specific fallback")
 	}
 }
 
@@ -132,6 +248,23 @@ func hookMatcher(t *testing.T, hooks map[string]any, event string) string {
 	return m
 }
 
+func TestRemoveEngramHookQuietPreservesMixedHookGroup(t *testing.T) {
+	hooks := map[string]any{
+		"SessionStart": []any{map[string]any{
+			"hooks": []any{
+				map[string]any{"type": "command", "command": "/usr/bin/engram inject --agent gemini"},
+				map[string]any{"type": "command", "command": "/usr/bin/keep-me"},
+			},
+		}},
+	}
+	if !removeEngramHookQuiet(hooks, "SessionStart", "engram inject") {
+		t.Fatal("removeEngramHookQuiet reported no change")
+	}
+	if got := hookCommand(t, hooks, "SessionStart"); got != "/usr/bin/keep-me" {
+		t.Fatalf("remaining hook command = %q, want /usr/bin/keep-me", got)
+	}
+}
+
 func readHooks(t *testing.T, path string) map[string]any {
 	t.Helper()
 	settings := readSettings(t, path)
@@ -163,59 +296,34 @@ func writeSettings(t *testing.T, path string, settings map[string]any) {
 	}
 }
 
-// Both Codex and Gemini install record + inject hooks through the shared
-// installEngramHooks helper, differing only in event names and matchers. Each
-// must register both hooks, re-run as a no-op, and fully uninstall.
-func TestAgentHooksRoundTrip(t *testing.T) {
+// Codex's tested provider adapter installs both hooks, re-runs as a no-op, and
+// fully uninstalls. Providers without proven lifecycle behavior do not call this
+// helper merely because their JSON happens to resemble another provider's.
+func TestCodexHooksRoundTrip(t *testing.T) {
 	const exe = "/usr/local/bin/engram"
-	cases := []struct {
-		name         string
-		bootstrap    func(path, exe string) error
-		recordEvent  string
-		recordMatch  string
-		sessionEvent string
-	}{
-		{"codex", func(path, exe string) error {
-			return bootstrapCodexHooks(path, exe, true)
-		}, "PostToolUse", "^apply_patch$", "SessionStart"},
-		{"gemini", bootstrapGeminiHooks, "AfterTool", "read_file|write_file|replace", "SessionStart"},
+	path := filepath.Join(t.TempDir(), "codex", "hooks.json")
+	applyBootstrapCodexHooks(t, path, exe, true)
+	hooks := readHooks(t, path)
+	if got := hookCommand(t, hooks, "PostToolUse"); !strings.Contains(got, "engram record") {
+		t.Errorf("PostToolUse command = %q, want 'engram record'", got)
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), c.name, "hooks.json")
-
-			if err := c.bootstrap(path, exe); err != nil {
-				t.Fatalf("bootstrap: %v", err)
-			}
-			hooks := readHooks(t, path)
-			if got := hookCommand(t, hooks, c.recordEvent); !strings.Contains(got, "engram record") {
-				t.Errorf("%s command = %q, want 'engram record'", c.recordEvent, got)
-			}
-			if got := hookCommand(t, hooks, c.sessionEvent); !strings.Contains(got, "engram inject --agent "+c.name) {
-				t.Errorf("%s command = %q, want agent-specific inject", c.sessionEvent, got)
-			}
-			if got := hookMatcher(t, hooks, c.recordEvent); got != c.recordMatch {
-				t.Errorf("%s matcher = %q, want %q", c.recordEvent, got, c.recordMatch)
-			}
-
-			// Idempotent: a second bootstrap adds no duplicate entries.
-			if err := c.bootstrap(path, exe); err != nil {
-				t.Fatalf("second bootstrap: %v", err)
-			}
-			hooks = readHooks(t, path)
-			if n := len(hooks[c.recordEvent].([]any)); n != 1 {
-				t.Errorf("%s entries after re-bootstrap = %d, want 1", c.recordEvent, n)
-			}
-
-			// Uninstall removes both engram hooks.
-			if err := stripEngramHooks(path, c.recordEvent, c.sessionEvent); err != nil {
-				t.Fatalf("stripEngramHooks: %v", err)
-			}
-			hooks = readHooks(t, path)
-			if hookCommand(t, hooks, c.recordEvent) != "" || hookCommand(t, hooks, c.sessionEvent) != "" {
-				t.Errorf("engram hooks survived uninstall: %+v", hooks)
-			}
-		})
+	if got := hookCommand(t, hooks, "SessionStart"); !strings.Contains(got, "engram inject --agent codex") {
+		t.Errorf("SessionStart command = %q, want agent-specific inject", got)
+	}
+	if got := hookMatcher(t, hooks, "PostToolUse"); got != "^apply_patch$" {
+		t.Errorf("PostToolUse matcher = %q, want %q", got, "^apply_patch$")
+	}
+	applyBootstrapCodexHooks(t, path, exe, true)
+	hooks = readHooks(t, path)
+	if n := len(hooks["PostToolUse"].([]any)); n != 1 {
+		t.Errorf("PostToolUse entries after re-bootstrap = %d, want 1", n)
+	}
+	if err := stripEngramHooks(path, "PostToolUse", "SessionStart"); err != nil {
+		t.Fatalf("stripEngramHooks: %v", err)
+	}
+	hooks = readHooks(t, path)
+	if hookCommand(t, hooks, "PostToolUse") != "" || hookCommand(t, hooks, "SessionStart") != "" {
+		t.Errorf("engram hooks survived uninstall: %+v", hooks)
 	}
 }
 
@@ -238,9 +346,7 @@ func TestAgentHooksUpgradePlainInjectCommand(t *testing.T) {
 	}
 	writeSettings(t, path, settings)
 
-	if err := bootstrapCodexHooks(path, exe, true); err != nil {
-		t.Fatalf("bootstrapCodexHooks: %v", err)
-	}
+	applyBootstrapCodexHooks(t, path, exe, true)
 	hooks := readHooks(t, path)
 	if got := hookCommand(t, hooks, "SessionStart"); got != "/opt/homebrew/bin/engram inject --agent codex" {
 		t.Errorf("SessionStart command = %q, want upgraded stable path", got)
@@ -251,17 +357,13 @@ func TestCodexNoSessionHookKeepsRecordAndRemovesInject(t *testing.T) {
 	const exe = "/usr/local/bin/engram"
 	path := filepath.Join(t.TempDir(), "codex", "hooks.json")
 
-	if err := bootstrapCodexHooks(path, exe, true); err != nil {
-		t.Fatalf("bootstrapCodexHooks: %v", err)
-	}
+	applyBootstrapCodexHooks(t, path, exe, true)
 	hooks := readHooks(t, path)
 	if got := hookCommand(t, hooks, "SessionStart"); !strings.Contains(got, "engram inject --agent codex") {
 		t.Fatalf("initial SessionStart command = %q, want agent-specific engram inject", got)
 	}
 
-	if err := bootstrapCodexHooks(path, exe, false); err != nil {
-		t.Fatalf("bootstrapCodexHooks no session: %v", err)
-	}
+	applyBootstrapCodexHooks(t, path, exe, false)
 	hooks = readHooks(t, path)
 	if got := hookCommand(t, hooks, "SessionStart"); got != "" {
 		t.Errorf("SessionStart command after no-session bootstrap = %q, want none", got)
@@ -271,9 +373,7 @@ func TestCodexNoSessionHookKeepsRecordAndRemovesInject(t *testing.T) {
 	}
 
 	// Idempotent: a second no-session bootstrap still keeps only the record hook.
-	if err := bootstrapCodexHooks(path, exe, false); err != nil {
-		t.Fatalf("second bootstrapCodexHooks no session: %v", err)
-	}
+	applyBootstrapCodexHooks(t, path, exe, false)
 	hooks = readHooks(t, path)
 	if got := hookCommand(t, hooks, "SessionStart"); got != "" {
 		t.Errorf("SessionStart command after second no-session bootstrap = %q, want none", got)
@@ -286,12 +386,8 @@ func TestCodexNoSessionHookKeepsRecordAndRemovesInject(t *testing.T) {
 func TestCodexBootstrapDoesNotDuplicateRecordHookWhenExePathChanges(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "codex", "hooks.json")
 
-	if err := bootstrapCodexHooks(path, "/opt/homebrew/bin/engram", false); err != nil {
-		t.Fatalf("initial bootstrapCodexHooks: %v", err)
-	}
-	if err := bootstrapCodexHooks(path, "/var/folders/tmp/go-build/b001/exe/engram", false); err != nil {
-		t.Fatalf("second bootstrapCodexHooks: %v", err)
-	}
+	applyBootstrapCodexHooks(t, path, "/opt/homebrew/bin/engram", false)
+	applyBootstrapCodexHooks(t, path, "/var/folders/tmp/go-build/b001/exe/engram", false)
 
 	hooks := readHooks(t, path)
 	if n := len(hooks["PostToolUse"].([]any)); n != 1 {
@@ -305,9 +401,7 @@ func TestCodexBootstrapDoesNotDuplicateRecordHookWhenExePathChanges(t *testing.T
 func TestCodexBootstrapDedupesExistingRecordHooks(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "codex", "hooks.json")
 
-	if err := bootstrapCodexHooks(path, "/opt/homebrew/bin/engram", false); err != nil {
-		t.Fatalf("initial bootstrapCodexHooks: %v", err)
-	}
+	applyBootstrapCodexHooks(t, path, "/opt/homebrew/bin/engram", false)
 	settings := readSettings(t, path)
 	hooks := settings["hooks"].(map[string]any)
 	hooks["PostToolUse"] = append(hooks["PostToolUse"].([]any), map[string]any{
@@ -319,9 +413,7 @@ func TestCodexBootstrapDedupesExistingRecordHooks(t *testing.T) {
 	})
 	writeSettings(t, path, settings)
 
-	if err := bootstrapCodexHooks(path, "/usr/local/bin/engram", false); err != nil {
-		t.Fatalf("repair bootstrapCodexHooks: %v", err)
-	}
+	applyBootstrapCodexHooks(t, path, "/usr/local/bin/engram", false)
 	hooks = readHooks(t, path)
 	if n := len(hooks["PostToolUse"].([]any)); n != 1 {
 		t.Fatalf("PostToolUse entries after repair = %d, want 1", n)

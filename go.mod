@@ -3,6 +3,7 @@ module github.com/shiblon/engram
 go 1.25.5
 
 require (
+	github.com/hexops/gotextdiff v1.0.3
 	github.com/spf13/cobra v1.10.2
 	modernc.org/sqlite v1.49.1
 )

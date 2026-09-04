@@ -269,9 +269,6 @@ is retained and its path is reported so your work is not lost.`,
 		if err != nil {
 			return fmt.Errorf("memory was not changed: %w", err)
 		}
-		if result != "unchanged" {
-			syncStandingIfTouched(ctx, h, target.Global, original.Tier)
-		}
 		removeFile = true
 		fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", result, engram.MemoryLabel(*original))
 		return nil

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -13,24 +12,6 @@ import (
 	"github.com/shiblon/engram/pkg/engram"
 	"github.com/spf13/cobra"
 )
-
-// syncStandingIfTouched re-renders the per-platform standing-memory files when a
-// global invariant or preference was just mutated -- the render-on-write half of
-// the channel strategy that keeps both tiers on the authoritative always-loaded
-// channel. Best-effort: a sync failure must never fail the mem operation itself.
-func syncStandingIfTouched(ctx context.Context, h *engram.DBHandle, global bool, tiers ...engram.Tier) {
-	if !global {
-		return
-	}
-	for _, t := range tiers {
-		if t == engram.TierInvariant || t == engram.TierPreference {
-			if _, err := engram.SyncStandingMemory(ctx, h.DB); err != nil {
-				fmt.Fprintf(os.Stderr, "engram: sync standing memory: %v\n", err)
-			}
-			return
-		}
-	}
-}
 
 func memAgentName() (string, error) {
 	return engram.NormalizeAgent(memAgent)
@@ -213,7 +194,6 @@ untouched.`,
 			engram.WithCurationScope(scopeName(target.Global))); err != nil {
 			return fmt.Errorf("memory was not changed: %w", err)
 		}
-		syncStandingIfTouched(ctx, h, target.Global, tier)
 		if target.Agent != "" {
 			fmt.Printf("stored in global %s %s layer: %s\n", target.Agent, tier, target.Key)
 			return nil
@@ -447,7 +427,6 @@ var memDeleteCmd = &cobra.Command{
 			engram.WithCurationScope(scopeName(target.Global))); err != nil {
 			return err
 		}
-		syncStandingIfTouched(ctx, h, target.Global, tier)
 		return nil
 	},
 }
@@ -655,7 +634,6 @@ Tiers: invariant, preference, long, short, cold`,
 				engram.WithCurationScope(scopeName(srcGlobal))); err != nil {
 				return err
 			}
-			syncStandingIfTouched(ctx, src, target.Global, from, toTier)
 			fmt.Printf("moved %q from %s to %s\n", target.Key, from, toTier)
 			return nil
 		}
@@ -679,17 +657,6 @@ Tiers: invariant, preference, long, short, cold`,
 			engram.WithCurationScope(scopeName(srcGlobal)),
 			engram.WithCurationToScope(scopeName(destGlobal))); err != nil {
 			return err
-		}
-		// Re-render the global standing files if a standing tier crossed the global
-		// channel in either direction (a preference left global, or arrived there).
-		if engram.IsStandingTier(from) || engram.IsStandingTier(toTier) {
-			globalDB := src.DB
-			if destGlobal {
-				globalDB = dst.DB
-			}
-			if _, err := engram.SyncStandingMemory(ctx, globalDB); err != nil {
-				fmt.Fprintf(os.Stderr, "engram: sync standing memory: %v\n", err)
-			}
 		}
 		fmt.Printf("moved %q from %s %s to %s %s\n", target.Key, scopeName(srcGlobal), from, scopeName(destGlobal), toTier)
 		return nil

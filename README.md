@@ -4,7 +4,7 @@
 
 Just want to install and get moving? [Jump to installation.](#installation)
 
-*NOTE 2: Claude Code, Gemini CLI, and Codex CLI have hook support for session start and file tracking. AntiGravity, GitHub Copilot, Cursor, and any agent with a markdown init file use startup instructions via `bootstrap antigravity`, `bootstrap copilot`, `bootstrap cursor`, or `bootstrap initfile`.*
+*NOTE 2: Claude Code and Codex CLI have tested hook support for session start and file tracking. Gemini CLI, AntiGravity, GitHub Copilot, Cursor, and any agent with a markdown init file use the same policy kernel and its first-interaction fallback via `bootstrap gemini`, `bootstrap antigravity`, `bootstrap copilot`, `bootstrap cursor`, or `bootstrap initfile`.*
 
 Memory affects everything about people. It affects personality, the ability to hold a conversation, and the ability to get things done. This is also true for AI agents, but the story there is fragmented and memory does not always behave as we expect.
 
@@ -131,17 +131,25 @@ Install engram:
    Verify: engram --help (or <full-path>/engram --help if not yet in PATH)
 
 2. Run one of:
-   <full-path>/engram bootstrap claude -g        # Claude Code (personal machine)
-   <full-path>/engram bootstrap claude           # Claude Code (project only)
+   <full-path>/engram bootstrap claude           # Claude Code (global, default)
+   <full-path>/engram bootstrap claude --project # project-local hooks
    <full-path>/engram bootstrap gemini           # Gemini CLI
    <full-path>/engram bootstrap antigravity      # AntiGravity
    <full-path>/engram bootstrap copilot          # GitHub Copilot (run in project dir)
    <full-path>/engram bootstrap cursor           # Cursor (run in project dir)
-   <full-path>/engram bootstrap codex            # Codex CLI (run in project dir)
-   <full-path>/engram bootstrap codex -g         # Codex CLI (global, ~/.codex/AGENTS.md)
-   <full-path>/engram bootstrap codex -g --no-session-hook
+   <full-path>/engram bootstrap codex            # Codex CLI (global, default)
+   <full-path>/engram bootstrap codex --project  # project AGENTS.md and hooks
+   <full-path>/engram bootstrap codex --no-session-hook
                                                  # Codex fallback-only startup, keeps file tracking
-   <full-path>/engram bootstrap initfile <path>  # any agent with a markdown init file
+   <full-path>/engram bootstrap initfile <path> --agent <name>
+                                                 # any agent with a markdown init file
+
+Add --dry-run to any bootstrap command to print every planned memory action
+and annotated unified file patch without writing anything. Use --diff to see
+the same preview and then accept or reject the complete installation:
+
+   <full-path>/engram bootstrap codex --dry-run
+   <full-path>/engram bootstrap codex --diff
 
 Open a new session when done -- the short-term stack will guide you from there.
 ```
@@ -157,7 +165,7 @@ go install github.com/shiblon/engram/cmd/engram@latest
 
 # Or download a pre-built binary from https://github.com/shiblon/engram/releases/latest
 
-engram bootstrap claude -g   # or without -g for project-only hooks
+engram bootstrap claude   # add --project for project-local hooks
 ```
 
 > **Upgrading from a pre-0.11.1 Homebrew install?** engram is now published as a
@@ -166,10 +174,11 @@ engram bootstrap claude -g   # or without -g for project-only hooks
 > `brew uninstall engram && brew install engram`. New installs need nothing
 > special.
 
-Bootstrap writes workflow instructions into global memory, sets up
-session-start injection, and queues a personality setup todo for your first
-session. On hook-capable platforms it also adds file tracking hooks. Open a new
-session when done and your agent will know what to do.
+Bootstrap installs a compact policy kernel, writes setup work into global memory,
+and queues a personality setup todo for your first session. On tested hook-capable
+platforms it also sets up session-start injection and file tracking. Other
+providers follow the kernel's first-interaction fallback. Open a new session when
+done and your agent will know what to do.
 
 ### Sharing memory with your team
 

@@ -4,30 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 )
 
-// Injected memory has weak staying power: it competes with the harness system
-// prompt (re-sent verbatim every turn) and is flattened at compaction. The
-// durable lever for soft, non-checkable content is CHANNEL -- ride each
-// platform's authoritative always-loaded instruction file, the same channel the
-// platform's own instructions use.
-//
-// Two global tiers ride that channel, at two rungs of the priority ladder (see
-// the "priority-ladder" project memory):
-//   - P1 invariants  -- unconditional identity; binding, persists through tasks.
-//   - P2 preferences -- standing defaults; ride the channel for staying power but
-//     yield to the user's in-the-moment instruction.
-//
-// P0 (config/hooks) is enforced structurally and lives outside memory; project
-// tiers (long/short/cold) are cwd-tied and never go on the global channel. The
-// global DB stays the source of truth; each tier is RENDERED to its own
-// engram-owned file the platform's main prompt @-imports (Claude Code:
-// ~/.claude/engram-invariants.md and engram-preferences.md, both imported from
-// CLAUDE.md alongside @engram.md). Render happens on write (mem) plus bootstrap
-// and restore -- never in inject, which stays read-only.
+// These renderers are retained for callers that explicitly want a markdown view
+// of standing memory. Engram no longer installs or synchronizes their output:
+// identity and preferences have one delivery path through session injection,
+// while the durable init file contains only the policy kernel.
 
 // standingFileHeader is the generated-do-not-edit banner for a rendered tier.
 func standingFileHeader(tier Tier) string {
@@ -76,8 +59,7 @@ func RenderLayeredInvariantsText(invariants, layer []Memory, agent string) strin
 }
 
 // RenderPreferencesText renders the global preference tier (P2): standing
-// defaults that ride the authoritative channel for staying power but yield to
-// the user's current instruction -- one rung below invariants, deliberately not
+// defaults that yield to the user's current instruction and are deliberately not
 // framed as unconditional. Rules that must never yield belong in config/hooks.
 func RenderPreferencesText(prefs []Memory) string {
 	return RenderLayeredPreferencesText(PrimaryMemories(prefs), nil, "")
@@ -112,98 +94,19 @@ func RenderLayeredPreferencesText(prefs, layer []Memory, agent string) string {
 	return b.String()
 }
 
-// standingRender binds a global tier to the file it renders to and the function
-// that frames it. The set is the global standing memory that rides the
-// authoritative channel, ordered by priority (invariants before preferences).
-type standingRender struct {
-	tier     Tier
-	fileBase string
-	render   func([]Memory, []Memory, string) string
-}
+var legacyStandingFileBases = []string{"engram-invariants.md", "engram-preferences.md"}
 
-var standingRenders = []standingRender{
-	{tier: TierInvariant, fileBase: "engram-invariants.md", render: RenderLayeredInvariantsText},
-	{tier: TierPreference, fileBase: "engram-preferences.md", render: RenderLayeredPreferencesText},
-}
-
-// StandingFileBases returns the base names of the per-platform files engram
-// renders standing global memory to, in priority order, so bootstrap can
-// @-import them and uninstall can remove them.
+// StandingFileBases returns the legacy generated filenames so bootstrap and
+// uninstall can remove artifacts created by pre-kernel releases.
 func StandingFileBases() []string {
-	names := make([]string, len(standingRenders))
-	for i, s := range standingRenders {
-		names[i] = s.fileBase
-	}
-	return names
+	return append([]string(nil), legacyStandingFileBases...)
 }
 
-// standingTarget is one platform's directory for the rendered files, plus a
-// check for whether that platform's engram footprint is present (so the sync is
-// a no-op until the platform is bootstrapped).
-type standingTarget struct {
-	dir          string
-	agent        string
-	bootstrapped func() bool
-}
-
-// standingTargets lists the per-platform directories engram renders to. Only
-// Claude Code is wired today (separate files @-imported from CLAUDE.md). Other
-// platforms mostly lack a separate-include mechanism and need the embed-with-
-// section-markers path plus a safer bootstrap; they are deferred.
-func standingTargets(home string) []standingTarget {
-	claudeDir := filepath.Join(home, ".claude")
-	return []standingTarget{
-		{
-			dir:   claudeDir,
-			agent: "claude",
-			bootstrapped: func() bool {
-				_, err := os.Stat(filepath.Join(claudeDir, "engram.md"))
-				return err == nil
-			},
-		},
-	}
-}
-
-// SyncStandingMemory re-renders every standing global tier (invariants,
-// preferences) to each bootstrapped platform's authoritative files. It is the
-// render-on-write half of the channel strategy and is also safe to call from
-// bootstrap and restore: writing small derived files is idempotent, benign
-// bookkeeping, and it skips a write when content is already current (so it does
-// not churn mtimes). It must NOT be called from inject -- inject stays read-only,
-// and a hook-time render cannot reach the current session anyway.
+// SyncStandingMemory is retained as a compatibility no-op. Standing global
+// memory is now injected at session boundaries rather than rendered into
+// provider-specific files.
 //
-// Targets whose platform footprint is absent are skipped, so this is a no-op
-// until a platform is bootstrapped.
-//
-// It returns the paths it actually wrote, omitting files left untouched because
-// their content was already current. Bootstrap uses this to report wrote-vs-skip
-// truthfully instead of claiming a write for every standing file unconditionally.
-func SyncStandingMemory(ctx context.Context, globalDB *sql.DB) ([]string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, nil // can't locate home; nothing to render to
-	}
-
-	var written []string
-	for _, t := range standingTargets(home) {
-		if !t.bootstrapped() {
-			continue
-		}
-		for _, s := range standingRenders {
-			mems, err := ListMemories(ctx, globalDB, s.tier)
-			if err != nil {
-				return written, fmt.Errorf("sync standing: read %s: %w", s.tier, err)
-			}
-			text := s.render(PrimaryMemories(mems), AgentLayerMemories(mems, t.agent), t.agent)
-			path := filepath.Join(t.dir, s.fileBase)
-			if cur, err := os.ReadFile(path); err == nil && string(cur) == text {
-				continue // already current
-			}
-			if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
-				return written, fmt.Errorf("sync standing (%s): %w", path, err)
-			}
-			written = append(written, path)
-		}
-	}
-	return written, nil
+// Deprecated: no replacement is needed; callers should rely on inject.
+func SyncStandingMemory(context.Context, *sql.DB) ([]string, error) {
+	return nil, nil
 }

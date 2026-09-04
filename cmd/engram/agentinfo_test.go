@@ -60,22 +60,41 @@ func TestRenderAgentInfoExplainsLinkedWorktreeReadAccess(t *testing.T) {
 	}
 }
 
-func TestProtocolGuidanceCarriesVersionAndSkillMetaTrigger(t *testing.T) {
+func TestPolicyKernelCarriesVersionTriggersAndReferenceRoutes(t *testing.T) {
 	got := engramProtocolSection("codex")
 	for _, want := range []string{
 		"Guidance version: " + engramVersion(),
-		"CLI tier tokens are fixed",
-		"`--tier short`",
-		"engram mem ... tldr <key>",
-		"Do not feed `engram mem read` output back into `engram mem write`",
-		"CAPTURE ON FIRST USE",
-		"The injected Skills index is the retrieval mechanism",
-		"trust the index over the search",
-		"after removing",
-		"Ask before writing it globally",
+		guidanceStartMarker,
+		guidanceEndMarker,
+		"WHEN: At task start",
+		"DO: Scan the injected Skills index",
+		"READ: Read `engram agentinfo skills`",
+		"engram inject --text --agent codex",
+		"`invariant`, `preference`, `long`, `short`, and `cold`",
+		"never feed display-formatted `engram mem read` output",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("protocol guidance missing %q", want)
+		}
+	}
+}
+
+func TestPolicyKernelUsesTightFieldLists(t *testing.T) {
+	got := engramProtocolSection("codex")
+	for _, want := range []string{
+		"- WHEN: At task start",
+		"\n- DO: Scan the injected Skills index",
+		"\n- READ: Read `engram agentinfo skills`",
+		"\n- BOUNDARY: A no-results search",
+		"Provider-specific inject command: `engram inject --text --agent codex`.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("compact policy kernel missing %q", want)
+		}
+	}
+	for _, tooLoose := range []string{"\n\n- DO:", "\n\n- READ:", "\n\n- BOUNDARY:"} {
+		if strings.Contains(got, tooLoose) {
+			t.Errorf("policy kernel contains loose field spacing %q", tooLoose)
 		}
 	}
 }
@@ -103,29 +122,29 @@ func TestGuidanceDropsContextLongMd(t *testing.T) {
 }
 
 func TestGuidanceCarriesDispatchJudgmentInBothSurfaces(t *testing.T) {
-	// The two failure modes and the cost basis are judgment, so they must reach the
-	// agent through guidance rather than sitting only in --help. Both the standalone
-	// agentinfo file and the markdown protocol block carry them, from one source.
-	for name, got := range map[string]string{
-		"agentinfo":       renderAgentInfo(),
-		"protocolSection": engramProtocolSection("codex"),
+	// The kernel recognizes the trigger and points to the topic; detailed judgment
+	// lives once in topic-addressable reference rather than every init file.
+	kernel := engramProtocolSection("codex")
+	for _, want := range []string{"including `engram dispatch`", "engram agentinfo experiments"} {
+		if !strings.Contains(kernel, want) {
+			t.Errorf("kernel guidance missing %q", want)
+		}
+	}
+	topic, _ := guidanceTopicByName("experiments")
+	reference := renderAgentInfoTopic(topic, false, "")
+	for _, want := range []string{
+		"experimental: dispatch",
+		"Slicing destroys the seams",
+		"Fan-out amplifies false positives",
+		"license silence",
+		"higher altitude",
+		"does not self-orient",
+		"GET CONSENT FOR THE COST",
+		"dispatch-spec-<provider>",
+		"a misread model flag is silent",
 	} {
-		for _, want := range []string{
-			"## Experimental features",
-			"engram experiments",
-			"experimental: dispatch",
-			"Slicing destroys the seams",
-			"Fan-out amplifies false positives",
-			"license silence",
-			"higher altitude",
-			"does not self-orient",
-			"GET CONSENT FOR THE COST",
-			"dispatch-spec-<provider>",
-			"a misread model flag is silent",
-		} {
-			if !strings.Contains(got, want) {
-				t.Errorf("%s guidance missing %q", name, want)
-			}
+		if !strings.Contains(reference, want) {
+			t.Errorf("experiments reference missing %q", want)
 		}
 	}
 }
@@ -134,22 +153,57 @@ func TestGuidanceWarnsAgainstWriteCapableDispatch(t *testing.T) {
 	// The hang-or-bypass trap is the non-obvious part: a guardrail doing its job
 	// looks like a broken child, so the pressure runs toward disabling it. That has
 	// to reach the agent in words, not just as a default in the code.
-	for name, got := range map[string]string{
-		"agentinfo":       renderAgentInfo(),
-		"protocolSection": engramProtocolSection("codex"),
+	topic, _ := guidanceTopicByName("experiments")
+	got := renderAgentInfoTopic(topic, false, "")
+	for _, want := range []string{
+		"READ-ONLY BY DEFAULT",
+		"looks exactly like a hang",
+		"BECAUSE the safety worked",
+		"Nobody can interrupt",
+		"lost update",
+		"observe the side effects last",
+		"produce a PATCH",
 	} {
-		for _, want := range []string{
-			"READ-ONLY BY DEFAULT",
-			"looks exactly like a hang",
-			"BECAUSE the safety worked",
-			"Nobody can interrupt",
-			"lost update",
-			"observe the side effects last",
-			"produce a PATCH",
-		} {
-			if !strings.Contains(got, want) {
-				t.Errorf("%s guidance missing %q", name, want)
-			}
+		if !strings.Contains(got, want) {
+			t.Errorf("experiments reference missing %q", want)
 		}
+	}
+}
+
+func TestAgentInfoIndexAndTopicViews(t *testing.T) {
+	index := renderAgentInfoIndex()
+	for _, want := range []string{"memory-workflow", "safe-memory-updates", "staged-restores"} {
+		if !strings.Contains(index, want) {
+			t.Errorf("agentinfo index missing %q", want)
+		}
+	}
+	topic, ok := guidanceTopicByName("skills")
+	if !ok {
+		t.Fatal("skills topic not registered")
+	}
+	body := renderAgentInfoTopic(topic, false, "")
+	if strings.Contains(body, "WHEN: At task start") {
+		t.Errorf("plain topic unexpectedly includes kernel policy")
+	}
+	if !strings.Contains(body, "CAPTURE ON FIRST USE") {
+		t.Errorf("plain topic missing operational reference")
+	}
+	full := renderAgentInfoTopic(topic, true, "codex")
+	if !strings.Contains(full, "WHEN: At task start") || !strings.Contains(full, "CAPTURE ON FIRST USE") {
+		t.Errorf("full topic does not combine kernel and reference")
+	}
+}
+
+func TestEveryReferenceSectionIsRegisteredExactlyOnce(t *testing.T) {
+	sections := referenceSections()
+	for _, topic := range guidanceTopics() {
+		body, ok := sections[topic.BodyHeading]
+		if !ok || strings.TrimSpace(body) == "" {
+			t.Errorf("topic %q has no reference body at heading %q", topic.Name, topic.BodyHeading)
+		}
+		delete(sections, topic.BodyHeading)
+	}
+	if len(sections) != 0 {
+		t.Errorf("reference source has unregistered sections: %v", sections)
 	}
 }

@@ -2,8 +2,6 @@ package engram
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -57,87 +55,17 @@ func TestRenderPreferencesText(t *testing.T) {
 
 func TestSyncStandingMemory(t *testing.T) {
 	ctx := context.Background()
-
-	t.Run("writes both tier files when bootstrapped", func(t *testing.T) {
-		home := t.TempDir()
-		t.Setenv("HOME", home)
-
-		gdb, err := OpenGlobalDB(ctx)
-		if err != nil {
-			t.Fatal(err)
+	written, err := SyncStandingMemory(ctx, nil)
+	if err != nil {
+		t.Fatalf("SyncStandingMemory: %v", err)
+	}
+	if len(written) != 0 {
+		t.Errorf("compatibility sync reported %d writes, want no-op", len(written))
+	}
+	want := []string{"engram-invariants.md", "engram-preferences.md"}
+	for i, got := range StandingFileBases() {
+		if got != want[i] {
+			t.Errorf("StandingFileBases()[%d] = %q, want %q", i, got, want[i])
 		}
-		defer gdb.Close()
-		if err := WriteMemory(ctx, gdb, Memory{Tier: TierInvariant, Key: "codename", Content: "Cadence."}); err != nil {
-			t.Fatal(err)
-		}
-		if err := WriteMemory(ctx, gdb, Memory{Tier: TierPreference, Key: "concise", Content: "Default to concise answers."}); err != nil {
-			t.Fatal(err)
-		}
-
-		// Simulate a bootstrapped Claude Code install.
-		claudeDir := filepath.Join(home, ".claude")
-		if err := os.MkdirAll(claudeDir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(claudeDir, "engram.md"), []byte("instructions"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-
-		written, err := SyncStandingMemory(ctx, gdb)
-		if err != nil {
-			t.Fatalf("SyncStandingMemory: %v", err)
-		}
-		if len(written) != 2 {
-			t.Errorf("first sync reported %d writes, want 2 (invariants + preferences)", len(written))
-		}
-
-		inv, err := os.ReadFile(filepath.Join(claudeDir, "engram-invariants.md"))
-		if err != nil {
-			t.Fatalf("invariants file not written: %v", err)
-		}
-		if !strings.Contains(string(inv), "operating as **Cadence**") {
-			t.Errorf("invariants file missing codename:\n%s", inv)
-		}
-		pref, err := os.ReadFile(filepath.Join(claudeDir, "engram-preferences.md"))
-		if err != nil {
-			t.Fatalf("preferences file not written: %v", err)
-		}
-		if !strings.Contains(string(pref), "Default to concise answers.") {
-			t.Errorf("preferences file missing entry:\n%s", pref)
-		}
-
-		// A second sync with unchanged content must report zero writes, so
-		// bootstrap can honestly say "skip (unchanged)" rather than claiming a
-		// write it never made.
-		again, err := SyncStandingMemory(ctx, gdb)
-		if err != nil {
-			t.Fatalf("second SyncStandingMemory: %v", err)
-		}
-		if len(again) != 0 {
-			t.Errorf("second sync reported %d writes, want 0 (content unchanged)", len(again))
-		}
-	})
-
-	t.Run("no-op when not bootstrapped", func(t *testing.T) {
-		home := t.TempDir()
-		t.Setenv("HOME", home)
-
-		gdb, err := OpenGlobalDB(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer gdb.Close()
-		if err := WriteMemory(ctx, gdb, Memory{Tier: TierInvariant, Key: "codename", Content: "Cadence."}); err != nil {
-			t.Fatal(err)
-		}
-
-		if _, err := SyncStandingMemory(ctx, gdb); err != nil {
-			t.Fatalf("SyncStandingMemory: %v", err)
-		}
-		for _, base := range StandingFileBases() {
-			if _, err := os.Stat(filepath.Join(home, ".claude", base)); !os.IsNotExist(err) {
-				t.Errorf("%s should not be written when not bootstrapped", base)
-			}
-		}
-	})
+	}
 }
