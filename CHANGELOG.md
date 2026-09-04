@@ -11,6 +11,15 @@ in-repo companion.
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-09-04
+
+### Fixed
+- the memory-consolidation guidance now reaches every agent, not just Claude. In
+  v0.15.0 the section lived only in the full guidance document written to
+  `~/.claude/engram.md`; Codex, Gemini, Copilot, Cursor, and custom init files
+  receive a condensed session-protocol block that never carried it. The section is
+  now a shared constant referenced by both documents.
+
 ## [0.15.0] - 2026-09-04
 
 ### Added
@@ -583,7 +592,8 @@ _Internal changes only._
 - first take
 - Initial commit
 
-[Unreleased]: https://github.com/shiblon/engram/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/shiblon/engram/compare/v0.15.1...HEAD
+[0.15.1]: https://github.com/shiblon/engram/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/shiblon/engram/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/shiblon/engram/compare/v0.13.2...v0.14.0
 [0.13.2]: https://github.com/shiblon/engram/compare/v0.13.1...v0.13.2
