@@ -11,6 +11,21 @@ in-repo companion.
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-09-21
+
+### Added
+- `engram topic` begins the `topics` experiment: bounded, project-local pub/sub
+  streams share short-lived findings across concurrent agent sessions without
+  subscriber identity or durable cursors. Inject carries only a topic index;
+  subtopics use SQLite timestamps, lossy staged compaction with race guards, and
+  an optional edge monitor. Its CLI, schema, thresholds, and output may change in
+  patch releases; `engram experiments` records its exit conditions.
+
+### Changed
+- bootstrap previews its complete annotated diff and asks before applying by
+  default; `--yes` applies the previewed plan without prompting, while
+  `--dry-run` remains preview-only.
+
 ## [0.16.0] - 2026-09-04
 
 ### Added
@@ -627,7 +642,8 @@ _Internal changes only._
 - first take
 - Initial commit
 
-[Unreleased]: https://github.com/shiblon/engram/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/shiblon/engram/compare/v0.16.1...HEAD
+[0.16.1]: https://github.com/shiblon/engram/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/shiblon/engram/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/shiblon/engram/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/shiblon/engram/compare/v0.14.0...v0.15.0
