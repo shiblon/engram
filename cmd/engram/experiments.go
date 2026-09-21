@@ -20,7 +20,11 @@ func markExperimental(cmd *cobra.Command, key string) {
 		cmd.Annotations = make(map[string]string)
 	}
 	cmd.Annotations[experimentAnnotation] = key
-	cmd.Short += " [experimental: " + key + "]"
+	marker := "[experimental: " + key + "]"
+	cmd.Short += " " + marker
+	if cmd.Long != "" {
+		cmd.Long = marker + "\n\n" + cmd.Long
+	}
 }
 
 var experimentsCmd = &cobra.Command{

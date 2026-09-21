@@ -67,6 +67,15 @@ var experimentRegistry = []Experiment{
 			"on a common headless interface that makes a learned spec unnecessary.",
 		Commands: []string{"engram dispatch"},
 	},
+	{
+		Key:              "topics",
+		Status:           ExperimentExperimental,
+		Hypothesis:       "A short injected topic index, purpose-driven retrieval, and aggressively compacted subtopics can reduce duplicated investigation across concurrent agent sessions while keeping context bounded.",
+		UnstableSurfaces: "The `engram topic` command layout, topic tables, compaction thresholds and checkpoint protocol, injected topic index, and monitor event format may change in patch releases.",
+		PromoteWhen:      "Concurrent sessions demonstrably reuse one another's findings, lossy compaction preserves enough signal to remain useful, and topic indexes stay bounded in real projects.",
+		RemoveWhen:       "Agents rarely consult or contribute to topics, shared streams create more distraction than saved work, or useful catch-up requires durable per-agent state.",
+		Commands:         []string{"engram topic"},
+	},
 }
 
 // Experiments returns a copy of the registry in deterministic key order.

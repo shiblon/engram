@@ -130,3 +130,55 @@ CREATE TABLE IF NOT EXISTS automation_catalog_entries (
     invocation     TEXT NOT NULL DEFAULT '',
     reviewed_at INTEGER NOT NULL
 );
+
+-- topics are short-lived, project-local collaboration streams. They are kept
+-- outside memories deliberately: retirement is part of the topic contract, and
+-- durable findings are promoted to memory explicitly rather than making the
+-- whole conversation memory-shaped.
+CREATE TABLE IF NOT EXISTS topics (
+    name        TEXT    PRIMARY KEY,
+    purpose     TEXT    NOT NULL,
+    retire_when TEXT    NOT NULL,
+    created_at  INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS topic_subtopics (
+    id                    INTEGER PRIMARY KEY,
+    topic_name            TEXT    NOT NULL,
+    name                  TEXT    NOT NULL,
+    created_at            INTEGER NOT NULL,
+    updated_at            INTEGER NOT NULL,
+    checkpoint            TEXT    NOT NULL DEFAULT '',
+    checkpoint_through    INTEGER NOT NULL DEFAULT 0,
+    checkpoint_generation INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (topic_name, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_topic_subtopics_topic
+    ON topic_subtopics (topic_name, name);
+
+CREATE TABLE IF NOT EXISTS topic_messages (
+    id          INTEGER PRIMARY KEY,
+    subtopic_id INTEGER NOT NULL,
+    ts          INTEGER NOT NULL,
+    body        TEXT    NOT NULL,
+    UNIQUE (subtopic_id, ts)
+);
+
+CREATE INDEX IF NOT EXISTS idx_topic_messages_subtopic_ts
+    ON topic_messages (subtopic_id, ts);
+
+-- A compaction stage is a short lease over one immutable prefix. The unique
+-- subtopic key admits one winner when asynchronous agents race; base_generation
+-- is the compare-and-swap guard when the proposed checkpoint returns.
+CREATE TABLE IF NOT EXISTS topic_compaction_stages (
+    token           TEXT    PRIMARY KEY,
+    subtopic_id     INTEGER NOT NULL UNIQUE,
+    base_generation INTEGER NOT NULL,
+    cutoff_ts       INTEGER NOT NULL,
+    started_at      INTEGER NOT NULL,
+    expires_at      INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_topic_compaction_stages_expiry
+    ON topic_compaction_stages (expires_at);

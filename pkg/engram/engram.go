@@ -603,6 +603,9 @@ type InjectResult struct {
 	LongTerm         []Memory
 	ShortTerm        []Memory
 	Cold             []Memory // keys+content injected as index only; content not expanded
+	// Topics are project-local collaboration streams. Inject renders only their
+	// short index; subtopics and messages stay pull-only behind `engram topic`.
+	Topics []Topic
 	// From the filesystem (the global agenttools dir), not the DB. Populated by
 	// the caller after Inject, since scanning is I/O outside the memory
 	// database. Only ever set on the global InjectResult; repository-scoped tools
@@ -677,6 +680,10 @@ func InjectWithAgent(ctx context.Context, db *sql.DB, nSessions int, agent strin
 	if err != nil {
 		return InjectResult{}, fmt.Errorf("inject cold: %w", err)
 	}
+	topics, err := ListTopics(ctx, db)
+	if err != nil {
+		return InjectResult{}, fmt.Errorf("inject topics: %w", err)
+	}
 
 	return InjectResult{
 		Files:            files,
@@ -688,6 +695,7 @@ func InjectWithAgent(ctx context.Context, db *sql.DB, nSessions int, agent strin
 		LongTerm:         longTerm,
 		ShortTerm:        shortTerm,
 		Cold:             cold,
+		Topics:           topics,
 	}, nil
 }
 
@@ -1546,6 +1554,15 @@ func InjectContextText(global, project InjectResult, nSessions int) string {
 		shownShort = shown
 		remedy := fmt.Sprintf("%d over budget, prune with `engram mem list`", totalShort-shown)
 		parts = append(parts, "## Short-term stack"+budgetNote(shown, totalShort, remedy)+"\n"+strings.Join(kept, "\n"))
+	}
+
+	if len(project.Topics) > 0 {
+		lines := make([]string, len(project.Topics))
+		for i, topic := range project.Topics {
+			lines[i] = fmt.Sprintf("- **%s**: %s — retire when: %s",
+				topic.Name, topic.Purpose, topic.RetireWhen)
+		}
+		parts = append(parts, "## Pubsub topics (details: `engram topic --help`)\n"+strings.Join(lines, "\n"))
 	}
 
 	if len(project.Files) > 0 {

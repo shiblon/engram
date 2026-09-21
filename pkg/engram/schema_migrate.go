@@ -8,7 +8,7 @@ import (
 
 // schemaVersion is the current schema version. Bump this and add an entry to
 // schemaMigrations whenever the schema changes.
-const schemaVersion = 10
+const schemaVersion = 11
 
 // schemaMigrations maps from-version to the SQL that advances to from+1.
 // Version 0 means "newly created or pre-versioning DB with the baseline schema
@@ -256,6 +256,47 @@ var schemaMigrations = []string{
 	     last_loaded    INTEGER NOT NULL,
 	     PRIMARY KEY (topic, engram_version)
 	 );`,
+	// 10 -> 11: add the experimental project-local topic streams. These tables
+	// are operational collaboration state, not a memory tier. Fresh databases
+	// already have them from schema.sql; IF NOT EXISTS keeps replay idempotent.
+	`CREATE TABLE IF NOT EXISTS topics (
+	     name        TEXT    PRIMARY KEY,
+	     purpose     TEXT    NOT NULL,
+	     retire_when TEXT    NOT NULL,
+	     created_at  INTEGER NOT NULL
+	 );
+	 CREATE TABLE IF NOT EXISTS topic_subtopics (
+	     id                    INTEGER PRIMARY KEY,
+	     topic_name            TEXT    NOT NULL,
+	     name                  TEXT    NOT NULL,
+	     created_at            INTEGER NOT NULL,
+	     updated_at            INTEGER NOT NULL,
+	     checkpoint            TEXT    NOT NULL DEFAULT '',
+	     checkpoint_through    INTEGER NOT NULL DEFAULT 0,
+	     checkpoint_generation INTEGER NOT NULL DEFAULT 0,
+	     UNIQUE (topic_name, name)
+	 );
+	 CREATE INDEX IF NOT EXISTS idx_topic_subtopics_topic
+	     ON topic_subtopics (topic_name, name);
+	 CREATE TABLE IF NOT EXISTS topic_messages (
+	     id          INTEGER PRIMARY KEY,
+	     subtopic_id INTEGER NOT NULL,
+	     ts          INTEGER NOT NULL,
+	     body        TEXT    NOT NULL,
+	     UNIQUE (subtopic_id, ts)
+	 );
+	 CREATE INDEX IF NOT EXISTS idx_topic_messages_subtopic_ts
+	     ON topic_messages (subtopic_id, ts);
+	 CREATE TABLE IF NOT EXISTS topic_compaction_stages (
+	     token           TEXT    PRIMARY KEY,
+	     subtopic_id     INTEGER NOT NULL UNIQUE,
+	     base_generation INTEGER NOT NULL,
+	     cutoff_ts       INTEGER NOT NULL,
+	     started_at      INTEGER NOT NULL,
+	     expires_at      INTEGER NOT NULL
+	 );
+	 CREATE INDEX IF NOT EXISTS idx_topic_compaction_stages_expiry
+	     ON topic_compaction_stages (expires_at);`,
 }
 
 // applyMigrations reads PRAGMA user_version, runs any pending migration steps

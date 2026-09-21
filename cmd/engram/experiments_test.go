@@ -22,8 +22,12 @@ func TestExperimentalCommandsMatchRegistry(t *testing.T) {
 			if _, ok := engram.ExperimentByKey(key); !ok {
 				t.Errorf("command %q names unregistered experiment %q", path, key)
 			}
-			if marker := "[experimental: " + key + "]"; !strings.Contains(cmd.Short, marker) {
-				t.Errorf("command %q missing visible marker %q", path, marker)
+			marker := "[experimental: " + key + "]"
+			if !strings.Contains(cmd.Short, marker) {
+				t.Errorf("command %q missing visible short marker %q", path, marker)
+			}
+			if cmd.Long != "" && !strings.Contains(cmd.Long, marker) {
+				t.Errorf("command %q missing visible long-help marker %q", path, marker)
 			}
 		}
 		for _, child := range cmd.Commands() {

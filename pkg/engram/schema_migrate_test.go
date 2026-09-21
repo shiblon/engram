@@ -346,6 +346,34 @@ func TestSchemaMigrationV9ToV10AddsGuidanceReads(t *testing.T) {
 	}
 }
 
+func TestSchemaMigrationV10ToV11AddsTopics(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	for _, table := range []string{
+		"topic_compaction_stages", "topic_messages", "topic_subtopics", "topics",
+	} {
+		if _, err := db.ExecContext(ctx, `DROP TABLE `+table); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.ExecContext(ctx, `PRAGMA user_version = 10`); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyMigrations(ctx, db); err != nil {
+		t.Fatalf("applyMigrations v10->: %v", err)
+	}
+	if err := CreateTopic(ctx, db, Topic{
+		Name: "graph-memory", Purpose: "share OOM findings", RetireWhen: "the investigation closes",
+	}); err != nil {
+		t.Fatalf("create topic after migration: %v", err)
+	}
+}
+
 func TestEveryMigrationIsIdempotent(t *testing.T) {
 	// design-notes.md states the invariant plainly: a fresh database applies
 	// schema.sql and then replays EVERY migration from version 0, so each must be
