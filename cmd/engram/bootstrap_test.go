@@ -183,6 +183,7 @@ func TestBootstrapEngramMdWritesKernelOnly(t *testing.T) {
 func TestGeminiBootstrapRetiresLegacyHooks(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	setBootstrapFlags(t, false, true)
 	settingsPath := filepath.Join(home, ".gemini", "settings.json")
 	if err := os.MkdirAll(filepath.Dir(settingsPath), 0755); err != nil {
 		t.Fatal(err)
@@ -198,7 +199,8 @@ func TestGeminiBootstrapRetiresLegacyHooks(t *testing.T) {
 			}},
 		},
 	})
-	if err := runBootstrapGemini(nil, nil); err != nil {
+	cmd, _ := bootstrapPlanTestCommand("")
+	if err := runBootstrapGemini(cmd, nil); err != nil {
 		t.Fatalf("runBootstrapGemini: %v", err)
 	}
 	settings := readSettings(t, settingsPath)

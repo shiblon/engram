@@ -53,7 +53,7 @@ func TestBootstrapDryRunPrintsDiffWithoutWriting(t *testing.T) {
 	t.Setenv("HOME", home)
 	path := filepath.Join(home, "AGENTS.md")
 	cmd, out := bootstrapPlanTestCommand("")
-	setBootstrapPreviewMode(t, true, false)
+	setBootstrapFlags(t, true, false)
 
 	err := runBootstrapPlan(cmd, func(plan *bootstrapPlan) error {
 		return plan.writeFile(path, []byte("new policy\n"), 0o644, "install policy")
@@ -75,7 +75,7 @@ func TestBootstrapDryRunPrintsDiffWithoutWriting(t *testing.T) {
 	}
 }
 
-func TestBootstrapDiffRejectsAndAcceptsCompletePlan(t *testing.T) {
+func TestBootstrapDefaultRejectsAndAcceptsCompletePlan(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		answer    string
@@ -90,7 +90,7 @@ func TestBootstrapDiffRejectsAndAcceptsCompletePlan(t *testing.T) {
 			t.Setenv("HOME", home)
 			path := filepath.Join(home, "policy.md")
 			cmd, out := bootstrapPlanTestCommand(tc.answer)
-			setBootstrapPreviewMode(t, false, true)
+			setBootstrapFlags(t, false, false)
 
 			err := runBootstrapPlan(cmd, func(plan *bootstrapPlan) error {
 				return plan.writeFile(path, []byte("accepted\n"), 0o644, "install policy")
@@ -105,10 +105,48 @@ func TestBootstrapDiffRejectsAndAcceptsCompletePlan(t *testing.T) {
 			if !tc.wantWrite && !os.IsNotExist(err) {
 				t.Fatalf("rejected plan wrote target: %v", err)
 			}
-			if !strings.Contains(out.String(), tc.message) {
-				t.Errorf("output missing %q:\n%s", tc.message, out.String())
+			got := out.String()
+			if !strings.Contains(got, "+accepted") {
+				t.Errorf("default output did not include preview:\n%s", got)
+			}
+			if !strings.Contains(got, tc.message) {
+				t.Errorf("output missing %q:\n%s", tc.message, got)
 			}
 		})
+	}
+}
+
+func TestBootstrapYesAppliesWithoutPrompt(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := filepath.Join(home, "policy.md")
+	cmd, out := bootstrapPlanTestCommand("")
+	setBootstrapFlags(t, false, true)
+
+	err := runBootstrapPlan(cmd, func(plan *bootstrapPlan) error {
+		return plan.writeFile(path, []byte("accepted\n"), 0o644, "install policy")
+	})
+	if err != nil {
+		t.Fatalf("runBootstrapPlan: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("--yes plan did not write target: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "+accepted") {
+		t.Errorf("--yes output did not include preview:\n%s", got)
+	}
+	if strings.Contains(got, "Apply this complete bootstrap plan?") {
+		t.Errorf("--yes unexpectedly prompted:\n%s", got)
+	}
+}
+
+func TestBootstrapDryRunAndYesConflict(t *testing.T) {
+	cmd, _ := bootstrapPlanTestCommand("")
+	setBootstrapFlags(t, true, true)
+	err := runBootstrapPlan(cmd, func(*bootstrapPlan) error { return nil })
+	if err == nil || !strings.Contains(err.Error(), "--dry-run and --yes") {
+		t.Fatalf("runBootstrapPlan error = %v, want conflicting flags", err)
 	}
 }
 
@@ -164,7 +202,7 @@ func TestCodexBootstrapScopeTargets(t *testing.T) {
 	oldCWD := rootCWD
 	oldGlobal, oldProject := bootstrapCodexGlobal, bootstrapCodexProject
 	rootCWD = project
-	setBootstrapPreviewMode(t, true, false)
+	setBootstrapFlags(t, true, false)
 	t.Cleanup(func() {
 		rootCWD = oldCWD
 		bootstrapCodexGlobal, bootstrapCodexProject = oldGlobal, oldProject
@@ -216,11 +254,11 @@ func bootstrapPlanTestCommand(input string) (*cobra.Command, *bytes.Buffer) {
 	return cmd, &out
 }
 
-func setBootstrapPreviewMode(t *testing.T, dryRun, diff bool) {
+func setBootstrapFlags(t *testing.T, dryRun, yes bool) {
 	t.Helper()
-	oldDryRun, oldDiff := bootstrapDryRun, bootstrapDiff
-	bootstrapDryRun, bootstrapDiff = dryRun, diff
+	oldDryRun, oldYes := bootstrapDryRun, bootstrapYes
+	bootstrapDryRun, bootstrapYes = dryRun, yes
 	t.Cleanup(func() {
-		bootstrapDryRun, bootstrapDiff = oldDryRun, oldDiff
+		bootstrapDryRun, bootstrapYes = oldDryRun, oldYes
 	})
 }

@@ -26,9 +26,10 @@ Subcommands:
   cursor       -- write .cursorrules in the current project
   initfile     -- append the engram protocol to any init file (generic escape hatch)
 
-Preview every target with annotated unified patches by adding --dry-run. Add
---diff instead to preview the same complete plan and accept or reject it as one
-coherent installation. Unchanged files appear with empty patch headers.`,
+Bootstrap previews the complete installation as annotated unified patches and
+asks whether to apply it as one coherent change. Add --yes to apply the previewed
+plan without prompting, or --dry-run to preview without applying it. Unchanged
+files appear with empty patch headers.`,
 }
 
 // bootstrap claude
@@ -902,7 +903,7 @@ func asSlice(v any) []any {
 
 func init() {
 	bootstrapCmd.PersistentFlags().BoolVar(&bootstrapDryRun, "dry-run", false, "print annotated unified diffs without changing files or memories")
-	bootstrapCmd.PersistentFlags().BoolVar(&bootstrapDiff, "diff", false, "print annotated unified diffs and ask whether to apply the complete plan")
+	bootstrapCmd.PersistentFlags().BoolVar(&bootstrapYes, "yes", false, "apply the complete previewed plan without prompting")
 	bootstrapClaudeCmd.Flags().BoolVarP(&bootstrapClaudeGlobal, "global", "g", false, "install hooks globally (default; retained for compatibility)")
 	bootstrapClaudeCmd.Flags().BoolVarP(&bootstrapClaudeProject, "project", "p", false, "install hooks in the current project; kernel and status line remain global")
 	bootstrapCodexCmd.Flags().BoolVarP(&bootstrapCodexGlobal, "global", "g", false, "install in ~/.codex (default; retained for compatibility)")

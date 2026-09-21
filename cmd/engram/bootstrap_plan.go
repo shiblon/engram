@@ -18,7 +18,7 @@ import (
 )
 
 var bootstrapDryRun bool
-var bootstrapDiff bool
+var bootstrapYes bool
 
 const bootstrapSetupPersonality = "Set up personality and preferences. FIRST run: engram mem --global --tier invariant list -- if personality and codename are already configured from another project, skip to preferences or just delete this entry. Otherwise: work with the user to choose a codename and define a personality, store both as global invariants, add code preferences as global preferences. Delete this entry when done."
 
@@ -290,8 +290,13 @@ func unifiedFileDiff(f *plannedBootstrapFile) string {
 }
 
 func confirmBootstrap(cmd *cobra.Command) (bool, error) {
-	fmt.Fprint(cmd.OutOrStdout(), "\nApply this complete bootstrap plan? [y/N] ")
-	line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
+	out := commandOut(cmd)
+	in := io.Reader(os.Stdin)
+	if cmd != nil {
+		in = cmd.InOrStdin()
+	}
+	fmt.Fprint(out, "\nApply this complete bootstrap plan? [y/N] ")
+	line, err := bufio.NewReader(in).ReadString('\n')
 	if err != nil && err != io.EOF {
 		return false, err
 	}
@@ -311,8 +316,8 @@ func commandOut(cmd *cobra.Command) io.Writer {
 }
 
 func runBootstrapPlan(cmd *cobra.Command, build func(*bootstrapPlan) error) error {
-	if bootstrapDryRun && bootstrapDiff {
-		return fmt.Errorf("--dry-run and --diff are alternative preview modes; choose one")
+	if bootstrapDryRun && bootstrapYes {
+		return fmt.Errorf("--dry-run and --yes request different outcomes; choose one")
 	}
 	ctx := context.Background()
 	plan := newBootstrapPlan()
@@ -323,17 +328,17 @@ func runBootstrapPlan(cmd *cobra.Command, build func(*bootstrapPlan) error) erro
 		return err
 	}
 	out := commandOut(cmd)
-	if bootstrapDryRun || bootstrapDiff {
-		plan.render(out, true)
-		changed, _ := plan.counts()
-		if bootstrapDryRun {
-			fmt.Fprintln(out, "Dry run: no changes applied.")
-			return nil
-		}
-		if changed == 0 {
-			fmt.Fprintln(out, "Nothing to apply.")
-			return nil
-		}
+	plan.render(out, true)
+	if bootstrapDryRun {
+		fmt.Fprintln(out, "Dry run: no changes applied.")
+		return nil
+	}
+	changed, _ := plan.counts()
+	if changed == 0 {
+		fmt.Fprintln(out, "Nothing to apply.")
+		return nil
+	}
+	if !bootstrapYes {
 		accepted, err := confirmBootstrap(cmd)
 		if err != nil {
 			return err

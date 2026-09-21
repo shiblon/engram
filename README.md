@@ -245,12 +245,13 @@ Install engram:
    <full-path>/engram bootstrap initfile <path> --agent <name>
                                                  # any agent with a markdown init file
 
-Add --dry-run to any bootstrap command to print every planned memory action
-and annotated unified file patch without writing anything. Use --diff to see
-the same preview and then accept or reject the complete installation:
+Every bootstrap command prints each planned memory action and annotated unified
+file patch, then asks whether to apply the complete installation. Add --yes to
+apply the previewed plan without prompting, or --dry-run to preview without
+writing anything:
 
    <full-path>/engram bootstrap codex --dry-run
-   <full-path>/engram bootstrap codex --diff
+   <full-path>/engram bootstrap codex --yes
 
 Open a new session when done -- the short-term stack will guide you from there.
 ```
