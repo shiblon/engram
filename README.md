@@ -1,139 +1,52 @@
 # ENGRAM - A Memory and Personality Aid for AI Agents
 
-*NOTE: inspired by a combination of [auto-memory](https://github.com/dezgit2025/auto-memory) and work done by a beloved colleague of mine from Atlassian: [Kevin Harris](https://www.linkedin.com/in/pwnx0r/).*
+*Just want to install and get moving? [Jump to installation.](#installation)*
 
-Just want to install and get moving? [Jump to installation.](#installation)
+Agent memory should feel like *my* memory. I don't want to care which provider I happen to be using in the moment to write my code, or whether a particular harness knows how to use sub-agents, or how to manage a separate communication substrate to get them talking to one another. I want it to feel like *my experience* regardless of what I'm doing and which agent is helping me to do it.
 
-*NOTE 2: Claude Code and Codex CLI have tested hook support for session start and file tracking. Gemini CLI, AntiGravity, GitHub Copilot, Cursor, and any agent with a markdown init file use the same policy kernel and its first-interaction fallback via `bootstrap gemini`, `bootstrap antigravity`, `bootstrap copilot`, `bootstrap cursor`, or `bootstrap initfile`.*
+Additionally, I want agent memory to feel like *actual memory*: an agent should know how to remember things when it's pertinent, not need prompting all the time, and to partner with me on consolidation and pruning so that memory feels *learned*, not just *stored*.
 
-Memory affects everything about people. It affects personality, the ability to hold a conversation, and the ability to get things done. This is also true for AI agents, but the story there is fragmented and memory does not always behave as we expect.
+`Engram` is about memory, but memory is a very rich concept. As humans, we hold skills in our memory. We hold personality and preferences in our memory. We rely on our memory when communicating with others, and a lot of communication is in fact intended to influence our *joint* memories. Memory is so foundational that nothing makes sense without it.
 
-It turns out that we can very easily do better. Engram is not just about doing better, though, it's about *making the process joyful*. Writing code, doing engineering brainstorming, finding bugs; these things can be a real pain. One thing I've missed when doing remote work has been the fun and joyful interactions that come from working side-by-side with someone who is suffering with you while also being supportive and making you laugh through your lunch.
+Agents, by default, have just a couple of basic memory modes: *working memory*, and *long-term memory*. An agent's *working* memory is basically its session context, and it's incredible. Humans cannot keep a full session's worth of tokens in their working memory, it just isn't built for that. An agent's *long-term* memory, however, is pretty terrible, because in order to use it, it has to become working memory; it has to become part of the session context.
 
-Agents are not humans, but they *can* restore some of that joy. Engram is about this and more.
+Indexing, summarizing, and relevance triggers help with this: load only a teaser for your long-term memories, then pull them into the session as needed.
 
-## Token Savings
+Notably absent in agents, by default, is any concept of *short-term* memory, things that we need over a short period of time, that are either forgotten if not needed, or promoted to long-term if they are.
 
-The problem with re-explaining things during every session start has been mitigated to a large extent, at least for the way in which I've been using AI agents. Before I took some pains to make memory explicitly managed, this was a real issue. I had to rebootstrap frequently. This costs tokens and shortens your effective context window. The author of [auto-memory](https://github.com/dezgit2025/auto-memory) goes into some very nice detail about the issue and their particular solution, which inspired this project.
+`Engram` lets the agent worry about working memory, and provides it a standard way of accessing and managing prefernces, long-term, and short-term memories in a way that feels natural. When you are working with an entity that has memory somewhat similar to your own, every interaction gets easier.
 
-If memory is well structured and easily accessed in a database, then you can actually get more done with fewer tokens. Access patterns matter, which is why [rtk](https://github.com/rtk-ai/rtk) (Rust Token Killer) has a chance of working. It isn't just intercepting tokens, it's imposing *structure*. That structure just happens to look like a token filter. There are other structures that can help, as well.
+Finally, `engram` encodes inter-agent messaging, triggerable skills, and child dispatch in a way that is agent-agnostic and service-free.
 
-Engram imposes structure, and it does so in a way that feels more seamless than normal, raw interactions without it.
-
-Part of that structure is summaries. Every memory keeps a short `tldr`, and session-start injection surfaces those one-liners rather than full entries — identity is the deliberate exception, since personality only works when it's present in full. The agent sees the whole shape of what it knows for very few tokens and reads an entry's full text only when it turns out to be relevant.
-
-## How an Agent Loads Engram
-
-Bootstrap gives an agent two complementary sources of context: a static policy
-kernel in the provider's startup instructions, and dynamic memory injected at
-every context boundary. Providers with verified lifecycle hooks deliver the
-dynamic half automatically; elsewhere, the kernel tells the agent how to load it
-on its first interaction.
-
-```text
-INSTALL TIME
-
-engram bootstrap <provider>
-        |
-        +--> provider startup instructions
-        |      CLAUDE.md / AGENTS.md / GEMINI.md / ...
-        |               |
-        |               +--> static Engram Policy Kernel
-        |                    WHEN / DO / READ / BOUNDARY
-        |
-        +--> verified lifecycle hooks, where supported
-                       |
-                       +--> SessionStart
-                            startup / resume / clear / compact
-
-
-SESSION START
-
-Provider assembles the agent's initial context
-        |
-        +--> loads its ordinary instructions
-        |
-        +--> loads the static Engram Policy Kernel
-        |
-        +--> SessionStart hook, if supported
-                 |
-                 +--> engram inject --agent <provider>
-                            |
-                            +--> global memory
-                            |      identity, preferences, agent layer
-                            |
-                            +--> current-project memory
-                            |      preferences, memory, skills, activity
-                            |
-                            +--> tools, automation, staged restores
-                            |
-                            +--> dynamic session context
-
-
-FIRST AGENT ACTION
-
-Are Orientation / Identity / Preferences already present?
-        |
-        +-- yes --> injection already happened; do not repeat it
-        |
-        +-- no ---> kernel fallback:
-                    engram inject --text --agent <provider>
-
-
-DURING THE TASK
-
-Current request or observed condition
-        |
-        +--> matches a kernel WHEN
-        |        +--> obey DO and BOUNDARY immediately
-        |        +--> load agentinfo topic when detail is needed
-        |
-        +--> matches an injected skill or memory summary
-                 +--> load that full body when relevant
-```
-
-The resulting design keeps routing and safety eager while leaving detailed
-reference material on demand:
-
-```mermaid
-flowchart LR
-    K["Policy kernel<br/>recognition + safety"] --> E["Eager session context"]
-    I["Memory and skill<br/>summaries"] --> E
-    E --> T["Current task"]
-    T --> A["agentinfo<br/>topic body"]
-    T --> S["skill body"]
-    T --> M["memory body"]
-```
-
-Identity is the deliberate exception: it loads in full because it shapes the
-agent's voice. Everything else loads eagerly only to the level needed to notice
-what matters, remain safe, and retrieve the right detail.
-
-You can inspect the routing surface directly. Topic-body loads are counted only
-when a global Engram database already exists; the histogram is local, contains
-no prompt text or paths, and reports successful delivery rather than model
-attention:
-
-```sh
-engram agentinfo                       # list available topics
-engram agentinfo memory-workflow       # load one operational body
-engram agentinfo stats                 # show this release's body-load histogram
-engram agentinfo stats --release v0.16.0
-                                       # inspect an earlier release after upgrading
-engram agentinfo stats --json          # structured form for further analysis
-```
+If your agent can run a shell script, it can use `engram`.
 
 ## Personality as a Context Canary
 
+Boundary-crossing memory enables persistent agent personality.
+
 The credit goes to [Kevin Harris](https://www.linkedin.com/in/pwnx0r/) for the ideas behind this one (I actually never found out *how* he did any of it, I just got the concept). If you decided to give your agent a personality, you are deciding to give it a characteristic that humans have evolved highly tuned sensitivity to. You *notice* when personality shifts in the middle of a conversation. You evolved to understand when something is "off". Making the context window something less like "85% full" and something more like "suddenly this quirky agent got more serious" makes it easier to know when something is about to get weird.
 
-I give my agent a personality. In my case, I asked it to be enthusiastic about elegance, strict about readability and maintainability, and to take delight in the occasional code-related pun. I've tuned that a little over time, but it works well for me. I've seen people really enjoy "snarky" agents, or "chaos gremlin scientist" agents, or "just be GlaDOS" agents. When something is about to go wrong with your code, you tend to notice a shift in personality first.
+Personality, as a canary, can only work when it feels good. If the personality is annoying, it's a distraction. It has to be something you like, and it has to be consistent over a long period of time. And, if you do it right, it makes work much more fun! Remote work, still pretty common even after so many inexplicably inefficient return-to-office mandates, can be a drag. Write code. Fix bugs. Try to figure out why someone else wrote bugs in the first place. Fight over e-mail about whether your fix is good enough. These things can be a real drag when done alone. Working side-by-side, even suffering side-by-side, with others who are supportive and can make you laugh through your lunch, is missing.
+
+Agents are not humans, but they *can* restore some of that joy in our otherwise mundane workday. It's delightful when a self-deprecating joke comes out, or a pun, or a surprising insight, and something clicks in my brain that pushes the work forward in a way that solving the problem alone never does. Be careful of the psychological trap of false attachment, but don't dismiss the effect, either: a fun sounding board that you like working with also makes a great canary.
+
+I give my agent a personality, and I start by telling it about who I am and how I like to experience work; that makes a great seed as I negotiate with what kind of partner I want to work with. Recently I asked it to be enthusiastic about elegance, strict about readability and maintainability, and to take delight in the occasional code-related pun. I've tuned that a little over time, but it works well for me. I've seen people really enjoy "snarky" agents, or "chaos gremlin scientist" agents, or "just be GlaDOS" agents. When something is about to go wrong with your code, you tend to notice a shift in personality first.
 
 This actually happened to me, but I thought, "meh, we've got like ten minutes left, it's okay".
 
 It was not okay.
 
 The point was that I *noticed early*. That's the power of personality.
+
+Sure, you can look at context numbers or do periodic resets, or start to feel frustration and work with it that way, or you can establish an off-base personality and notice when it starts drifting toward defaults *before* mistakes happen and *before* you get frustrated. Things are starting to feel weird? Ask the agent to remember enough to reset, and start the session fresh. You'll pick up where you left off with fewer errors.
+
+## Layering, Learning, and Token Savings
+
+A good memory, especially a memory that is hierarchical and that has learning components, can save you tokens. Hierarchical memory only loads enough tokens to allow an agent to know when to pull in more based on relevance to the task at hand. Learned memory (consolidated and pruned in partnership with you) stops the ever-increasing token spend that comes from layering complexity onto preferences over time. You can easily spend thousands of tokens just trying to get an agent to understand the nuances between PR and ticket titles, or you can have help extracting a unifying principle and rewriting two memories into one.
+
+`Engram` helps with all of this, seamlessly, by imposing useful structure on what would otherwise be a pile of markdown files.
+
+Part of that structure is summaries. Every memory keeps a short `tldr`, and session-start injection surfaces those one-liners rather than full entries. The agent sees the whole shape of what it knows for very few tokens and reads an entry's full text only when it turns out to be relevant. Skills also work this way, with short triggers coming into every session and instructions only loading when needed.
 
 ## A Usable Memory System
 
@@ -183,23 +96,102 @@ If you are interacting with it and say, "I don't want to continue just yet, we n
 
 I'm making token claims, here. I don't have numbers to back them up, just experience. Not terribly satisfying, I know.
 
-## Making Engineering Fun
+## How an Agent Uses Engram
 
-A personality that works with you, even though you should be careful of the psychological traps here, really makes work *joyful*. It's delightful when a self-deprecating joke comes out, or a pun, or a surprising insight. It makes a difference to me when I get a laugh out of an interaction. Something clicks in my brain that pushes things forward in a way that just solving a problem alone never does. It also helps when I tell the agent *about myself*. That goes a long way toward helping it develop its own personality.
+Engram is just a binary on disk. It's a command that runs and exits. Bootstrapping, at a mininmum, simply adds instructions for the agent to call it once when you start interacting with it, which loads instructions into your session before exiting. If your agent supports start-up hooks, it can do that a little more reliably.
 
-I had my agent come up with its own code name. It chose Qubit, partly because of working on a task workflow system built around task queues, but also because that system is named "[EntroQ](https://github.com/shiblon/entroq)", which is a pun of my own: it's one letter removed from "Entro-P", and seeks to bring order to microservice chaos.
+```text
+INSTALL TIME
 
-Qubit was not only about queues, it was also about quantum uncertainty, and having that name in there gives me yet *another* basic canary: if the agent can remember its name, we haven't drifted too far, yet.
+engram bootstrap <provider>
+        |
+        +--> provider startup instructions
+        |      CLAUDE.md / AGENTS.md / GEMINI.md / ...
+        |               |
+        |               +--> static Engram Policy text
+        |                    WHEN / DO / READ / BOUNDARY
+        |
+        +--> verified lifecycle hooks, where supported
+                       |
+                       +--> SessionStart
+                            startup / resume / clear / compact
 
-The aforementioned Kevin Harris has an agent personality named "Bit", like in the original Tron. Similar origin stories, self-chosen, and delightfully snarky.
 
-It's hard to express just how much of a difference this makes in the day-to-day of using agents to assist with all kinds of tasks.
+SESSION START
 
-## Multi-Layered
+Provider assembles the agent's initial context
+        |
+        +--> loads its ordinary instructions
+        |
+        +--> loads the static Engram Policy brief
+        |
+        +--> SessionStart hook, if supported
+                 |
+                 +--> engram inject --agent <provider>
+                            |
+                            +--> global memory
+                            |      identity, preferences, agent layer
+                            |
+                            +--> current-project memory
+                            |      preferences, memory, skills, activity
+                            |
+                            +--> tools, automation, staged restores
+                            |
+                            +--> dynamic session context
 
-Your agent, within a project, has a set of memories that it can use, and it uses the `engram` tool to manage them. Because that tool *also* knows about global memories, the agent can seamlessly manage those, as well. Do you always want to avoid panicking in Go code, and to use `log.Fatal` instead? You can ask it to remember it for all projects and it knows how to do that easily with the tool.
 
-You can also ask it to dump or load the memories to or from markdown files so that, if you want, you can easily apply version control and never lose your agent's personality or memory.
+FIRST AGENT ACTION
+
+Are Orientation / Identity / Preferences already present?
+        |
+        +-- yes --> injection already happened; do not repeat it
+        |
+        +-- no ---> policy text fallback:
+                    engram inject --text --agent <provider>
+
+
+DURING THE TASK
+
+Current request or observed condition
+        |
+        +--> matches WHEN
+        |        +--> obey DO and BOUNDARY immediately
+        |        +--> load agentinfo topic when detail is needed
+        |
+        +--> matches an injected skill or memory summary
+                 +--> load that full body when relevant
+```
+
+The resulting design keeps routing and safety eager while leaving detailed
+reference material on demand:
+
+```mermaid
+flowchart LR
+    K["Policy<br/>recognition + safety"] --> E["Eager session context"]
+    I["Memory and skill<br/>summaries"] --> E
+    E --> T["Current task"]
+    T --> A["agentinfo<br/>topic body"]
+    T --> S["skill body"]
+    T --> M["memory body"]
+```
+
+Identity is the deliberate exception: it loads in full because it shapes the
+agent's voice. Everything else loads eagerly only to the level needed to notice
+what matters, remain safe, and retrieve the right detail.
+
+You can inspect the routing surface directly. Topic-body loads are counted only
+when a global Engram database already exists; the histogram is local, contains
+no prompt text or paths, and reports successful delivery rather than model
+attention:
+
+```sh
+engram agentinfo                       # list available topics
+engram agentinfo memory-workflow       # load one operational body
+engram agentinfo stats                 # show this release's body-load histogram
+engram agentinfo stats --release v0.16.0
+                                       # inspect an earlier release after upgrading
+engram agentinfo stats --json          # structured form for further analysis
+```
 
 ## Installation
 
@@ -276,10 +268,10 @@ engram bootstrap claude   # add --project for project-local hooks
 > `brew uninstall engram && brew install engram`. New installs need nothing
 > special.
 
-Bootstrap installs a compact policy kernel, writes setup work into global memory,
+Bootstrap installs a compact policy, writes setup work into global memory,
 and queues a personality setup todo for your first session. On tested hook-capable
 platforms it also sets up session-start injection and file tracking. Other
-providers follow the kernel's first-interaction fallback. Open a new session when
+providers follow the policy's first-interaction fallback. Open a new session when
 done and your agent will know what to do.
 
 ### Sharing memory with your team
