@@ -14,7 +14,7 @@ Indexing, summarizing, and relevance triggers help with this: load only a teaser
 
 Notably absent in agents, by default, is any concept of *short-term* memory, things that we need over a short period of time, that are either forgotten if not needed, or promoted to long-term if they are.
 
-`Engram` lets the agent worry about working memory, and provides it a standard way of accessing and managing prefernces, long-term, and short-term memories in a way that feels natural. When you are working with an entity that has memory somewhat similar to your own, every interaction gets easier.
+`Engram` lets the agent worry about working memory, and provides it a standard way of accessing and managing preferences, long-term, and short-term memories in a way that feels natural. When you are working with an entity that has memory somewhat similar to your own, every interaction gets easier.
 
 Finally, `engram` encodes inter-agent messaging, triggerable skills, and child dispatch in a way that is agent-agnostic and service-free.
 
@@ -95,6 +95,59 @@ worktree.
 If you are interacting with it and say, "I don't want to continue just yet, we need to brainstorm on design first," it can know that you mean to store the current context in short-term memory, and to pop the stack when the design question is settled. That's not built-in for your basic code agent. Engram does this, and at a token cost that is tiny compared to working with defaults.
 
 I'm making token claims, here. I don't have numbers to back them up, just experience. Not terribly satisfying, I know.
+
+## Skills
+
+Humans keep skills in memory, so engram keeps them there too. A skill is a set
+of instructions (how) in long-term memory with a short title (what) and a
+behavior trigger (when).
+
+This allows agents to know *about* a skill and *when to invoke it* without
+keeping the details in their session context until those details are needed.
+
+`Engram` includes intructions to an agent for not only how to use these skills,
+but when to notice that a skill is needed, and how to work with the user to
+create a new one. Finish something fiddly that might have a natural name, like
+"cut a release", and the agent will often prompt you to create a skill for it.
+
+It's like `engram` has a meta-skill for creating and updating skills:
+
+
+```
+You:   ok, the release went out and the tap updated correctly
+Agent: that took six steps, and two of them weren't obvious. want me to capture
+       it as a skill? trigger would be "when user asks to cut a release"
+You:   yes
+Agent: stored project skill: release-engram
+```
+
+The next time you ask to cut a release, the trigger matches and the
+instructions come back without you having to remember that they exist, and
+without having to preinstall them or otherwise rely on someone else's idea of
+what "useful" might mean to you.
+
+Skills belong to the current project by default, since "how we cut a release
+here" can vary between projects. Use `--global` for the ones that should follow
+you everywhere, like how you want a deep explanation structured when you ask to
+be taught something.
+
+As with all other `engram` commands, you can work with them without agent assistance:
+
+```sh
+engram skill list                       # triggers and outcomes, one line each
+engram skill read release-engram        # the full instructions
+engram skill search "release"           # ranked matches
+engram skill write cut-release "<instructions>" \
+  --trigger "when Chris asks to cut a release" \
+  --tldr "Cut a tested release and verify every artifact"
+engram skill discover                   # inventory this repo's automation
+```
+
+The `discover` command is for the case where the knowledge is already in the
+repo and nobody ever told the agent about it. It finds the scripts and entry
+points a project already has, without running any of them, and asks the agent
+to classify each one: a directly callable tool, part of a larger workflow that
+needs judgment, an internal detail, or something that needs your eyes.
 
 ## How an Agent Uses Engram
 
@@ -179,7 +232,9 @@ Identity is the deliberate exception: it loads in full because it shapes the
 agent's voice. Everything else loads eagerly only to the level needed to notice
 what matters, remain safe, and retrieve the right detail.
 
-You can inspect the routing surface directly. Topic-body loads are counted only
+You can inspect the routing surface directly. This one is experimental
+(`guidance-reads`), so its flags and output may move in a patch release.
+Topic-body loads are counted only
 when a global Engram database already exists; the histogram is local, contains
 no prompt text or paths, and reports successful delivery rather than model
 attention:
@@ -194,6 +249,11 @@ engram agentinfo stats --json          # structured form for further analysis
 ```
 
 ## Installation
+
+There is no service to install. `engram` is a single binary and a SQLite
+file. Nothing listens on a port, nothing starts at boot, and nothing is
+running between the moments your agent calls it. Just a script, not a
+service.
 
 The core of engram is the memory system — personality, preferences, and memory
 tiers that work entirely through conversation. The hooks that track file activity
@@ -315,7 +375,28 @@ database is created.
 
 ## Day-to-day Usage
 
-Once engram is running, you mostly just talk to your agent. Here are some patterns worth trying.
+Once engram is running, you mostly just talk to your agent, and most of this
+section is about that. Underneath it is an ordinary command-line tool, though,
+and it helps to see the whole surface at once:
+
+| Command | What it does |
+| --- | --- |
+| `engram bootstrap <agent>` | Set engram up for Claude Code, Codex, Gemini, AntiGravity, Copilot, Cursor, or any markdown init file |
+| `engram mem` | Read, write, search, move, and edit memories |
+| `engram skill` | Author, retrieve, and discover task-triggered workflows |
+| `engram agentinfo` | The operational manual your agent reads on demand |
+| `engram status` | One-line session status, handy in a status bar |
+| `engram save` / `engram restore` | Carry every project's memory to another machine |
+| `engram register` | Track projects so `save` knows about them |
+| `engram prune` | Drop file-activity events from old sessions |
+| `engram migrate` | Move a legacy `.claude/engram.db` to its canonical location |
+| `engram uninstall <agent>` | Remove the configuration, keep the memories |
+| `engram experiments` | What is on trial, and what would promote or remove it |
+
+`engram --help` has the full list, including the experimental commands covered
+at the end of this file.
+
+Here are some patterns worth trying.
 
 **Remembering things**
 
@@ -372,3 +453,56 @@ You:   what can you do with memory?
 ```
 
 Your agent will describe the tier system, what each tier is for, and how to use it — because that's stored as context it receives at every session start.
+
+## Experimental Features
+
+Some of `engram` is still on trial, or needs further tuning. Some of the
+experimental features in this section don't trigger at the right times, or may
+cause overuse of tokens, or may have other issues because they haven't been my
+daily drivers for long enough to know.
+
+They generally work, though, and are worth trying out and filing issues for.
+
+Experimental commands are called out as such, and their CLI, storage, and
+output may change in a patch release. `engram experiments` prints the current
+hypothesis for each one, along with what would promote it and what would remove
+it.
+
+They get promoted when they work well. For example, skill discovery started
+here and graduated once per-candidate classifications proved they could be
+stored, injected, and round-tripped safely without ever executing the scripts
+they describe.
+
+### Messaging between sessions
+
+`engram topic` gives a project a set of small pub/sub streams so that agents
+working on related problems can share what they found. No subscriber identity,
+no durable cursors, and no service: just a topic index that arrives at session
+start and bodies you pull when a topic looks relevant. Subtopic history is
+compacted aggressively and lossily on purpose, because the alternative is a log
+that grows forever and nobody can afford to read.
+
+Two Claude sessions and a Codex session in the same repo all post to the same
+stream, which is the part I find most interesting about it.
+
+It graduates when concurrent sessions demonstrably reuse each other's findings
+and topic indexes stay bounded in real projects. The reasoning is in
+`docs/topic-notes.md`.
+
+### Fanning work out to other agents
+
+`engram dispatch` hands a decomposed task to one or more provider CLIs running as
+child processes, possibly on different providers and models per slice, and
+collects the results. This is the piece that does not care whether your harness
+has good subagent support, because it is not using your harness.
+
+Two things make it more than a shell loop. Each provider's invocation recipe is
+stored as an ordinary long-term memory holding a JSON block, so when an upstream
+CLI moves a flag you edit a memory instead of waiting for an engram release. And
+authority is read-only unless a task asks for more by name, which makes the batch
+config an auditable record of what each child was allowed to do.
+
+It graduates when a stored spec survives a real upstream flag change without a
+release, when a probe catches a silent model substitution, and when a fan-out
+beats a single call on work that genuinely divides, measured rather than assumed.
+The reasoning is in `docs/dispatch-notes.md`.
