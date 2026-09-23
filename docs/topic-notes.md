@@ -54,10 +54,18 @@ relevant topic it runs `engram topic list <topic>`, asks the user about ambiguou
 subtopic names, and reads only the relevant ones. With no goal, it expands
 nothing.
 
-During work, an agent offers to publish only information another participant is
-unlikely to have: a test result, surprise, contradiction, or useful lead outside
-its own goal. Its last-read timestamp may remain in session context. Losing it
+During work, an agent publishes information another participant is unlikely to
+have—a test result, surprise, contradiction, or useful lead outside its own
+goal—to an already-active relevant topic as it arises, without waiting for a
+user prompt. Its last-read timestamp may remain in session context. Losing it
 merely causes the bounded checkpoint and tail to be reread.
+
+For every relevant active topic, the agent starts `monitor` once as a background
+process and retains its process or tool handle across turns. It checks the
+monitor's output while it works. An event triggers an immediate read of the
+changed subtopic and any useful response or post; the agent does not wait for a
+new user prompt. The monitor stays alive after every event, response boundary,
+and completed task. Only topic retirement or session shutdown ends it.
 
 ## Command surface
 
@@ -69,7 +77,8 @@ engram topic post <topic>/<subtopic> [--after TIMESTAMP]
 engram topic compact begin <topic>/<subtopic>
 engram topic compact apply <stage-token> <checkpoint>
 engram topic compact cancel <stage-token>
-engram topic monitor <topic>[/<subtopic>] [--after TIMESTAMP] [--once]
+engram topic check <topic>[/<subtopic>] [--after TIMESTAMP]
+engram topic monitor <topic>[/<subtopic>] [--after TIMESTAMP]
 engram topic create <topic> --purpose TEXT --retire-when TEXT
 engram topic retire <topic>
 ```
@@ -84,6 +93,11 @@ the current head timestamp `H`, returns messages newer than `T` through `H`,
 appends the new message with a timestamp later than `H`, and reports that
 timestamp. Later commits remain for the next read.
 
+`check` is the deliberately one-shot counterpart to `monitor`: it snapshots the
+current matching subtopic heads and exits immediately. Without `--after` it emits
+every existing head; with `--after T` it emits only heads newer than `T`. It never
+waits for a future edge. No output means there were no matching heads.
+
 Compaction is an explicit two-phase operation, never an `inject` side effect.
 `begin` atomically leases one subtopic and snapshots its current prefix. Posts may
 continue beyond that cutoff. `apply` accepts the replacement checkpoint only when
@@ -97,7 +111,10 @@ after durable findings have been promoted separately.
 
 ## Monitoring
 
-`monitor` is an attached process, not a daemon or stored subscription. It keeps
+`monitor` is a session-long background process, not a system daemon or stored
+subscription. An agent starts it once for every relevant active topic, retains
+its process or tool handle across turns, and never terminates it merely because
+an event arrived, a response was sent, or the immediate task finished. It keeps
 its latest timestamp only in process memory and emits JSON Lines on matching
 changes:
 
@@ -105,12 +122,13 @@ changes:
 {"event":"message","topic":"graph-memory","subtopic":"allocator-retention","at":"2026-09-21T10:14:04.531Z"}
 ```
 
-`--once` exits after the first edge, allowing an agent to wait at a deliberate
-checkpoint without managing a background job. A harness that surfaces background
-output can notify an active agent; otherwise the event reaches only the human or
-an explicit waiter. Engram cannot universally interrupt or wake a model session,
-so monitoring is an optional optimization over `list` and `read`, not part of
-their correctness.
+The agent checks background output during work. Each event is a prompt to read
+the changed subtopic and communicate anything useful immediately, without
+waiting for another user prompt. A harness that surfaces background output can
+notify an active agent; otherwise the agent polls the retained process handle at
+normal work boundaries. Engram cannot universally interrupt or wake an inactive
+model session, but while a session is active its monitor is continuous rather
+than a one-shot wait.
 
 ## Open decisions
 

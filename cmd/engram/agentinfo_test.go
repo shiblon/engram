@@ -134,15 +134,15 @@ func TestGuidanceCarriesDispatchJudgmentInBothSurfaces(t *testing.T) {
 	// The kernel recognizes the trigger and points to the topic; detailed judgment
 	// lives once in topic-addressable reference rather than every init file.
 	kernel := engramProtocolSection("codex")
-	for _, want := range []string{"including `engram dispatch`", "engram agentinfo experiments"} {
+	for _, want := range []string{"Before using `engram dispatch`", "engram agentinfo dispatch"} {
 		if !strings.Contains(kernel, want) {
 			t.Errorf("kernel guidance missing %q", want)
 		}
 	}
-	topic, _ := guidanceTopicByName("experiments")
+	topic, _ := guidanceTopicByName("dispatch")
 	reference := renderAgentInfoTopic(topic, false, "")
 	for _, want := range []string{
-		"experimental: dispatch",
+		"`engram dispatch` is experimental",
 		"Slicing destroys the seams",
 		"Fan-out amplifies false positives",
 		"license silence",
@@ -153,7 +153,30 @@ func TestGuidanceCarriesDispatchJudgmentInBothSurfaces(t *testing.T) {
 		"a misread model flag is silent",
 	} {
 		if !strings.Contains(reference, want) {
-			t.Errorf("experiments reference missing %q", want)
+			t.Errorf("dispatch reference missing %q", want)
+		}
+	}
+}
+
+func TestExperimentalGuidanceEncouragesUseWithoutCeremony(t *testing.T) {
+	topic, _ := guidanceTopicByName("experiments")
+	got := renderAgentInfoTopic(topic, true, "codex")
+	for _, want := range []string{
+		"Use experimental features often when they fit",
+		"stability expectation, not a danger signal",
+		"may have rough edges",
+		"or disappear",
+		"Do not add confirmation steps, research, or repeated version and help checks",
+		"After an Engram upgrade",
+		"genuine uncertainty about syntax",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("experiments guidance missing %q", want)
+		}
+	}
+	for _, unwanted := range []string{"Slicing destroys the seams", "READ-ONLY BY DEFAULT"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("generic experiments guidance contains dispatch-specific judgment %q", unwanted)
 		}
 	}
 }
@@ -162,7 +185,7 @@ func TestGuidanceWarnsAgainstWriteCapableDispatch(t *testing.T) {
 	// The hang-or-bypass trap is the non-obvious part: a guardrail doing its job
 	// looks like a broken child, so the pressure runs toward disabling it. That has
 	// to reach the agent in words, not just as a default in the code.
-	topic, _ := guidanceTopicByName("experiments")
+	topic, _ := guidanceTopicByName("dispatch")
 	got := renderAgentInfoTopic(topic, false, "")
 	for _, want := range []string{
 		"READ-ONLY BY DEFAULT",
@@ -174,7 +197,7 @@ func TestGuidanceWarnsAgainstWriteCapableDispatch(t *testing.T) {
 		"produce a PATCH",
 	} {
 		if !strings.Contains(got, want) {
-			t.Errorf("experiments reference missing %q", want)
+			t.Errorf("dispatch reference missing %q", want)
 		}
 	}
 }

@@ -12,19 +12,22 @@ import (
 	"time"
 )
 
-func TestTopicInjectIsOnlyTheShortIndex(t *testing.T) {
+func TestTopicInjectIncludesMonitorContractAndShortIndex(t *testing.T) {
 	text := InjectContextText(InjectResult{}, InjectResult{Topics: []Topic{{
 		Name: "graph-memory", Purpose: "share OOM findings", RetireWhen: "the investigation closes",
 	}}}, 5)
 	for _, want := range []string{
-		"## Pubsub topics", "engram topic --help", "graph-memory", "share OOM findings", "retire when",
+		"## Pubsub topics", "engram topic --help", "engram topic monitor <topic>",
+		"background process", "retain its handle across turns", "Keep it running for the whole session",
+		"Post useful findings as they arise", "without waiting for another user prompt",
+		"graph-memory", "share OOM findings", "retire when",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("topic inject missing %q in %q", want, text)
 		}
 	}
-	if strings.Contains(text, "subtopic") || strings.Contains(text, "message body") {
-		t.Errorf("topic inject contains operational detail: %q", text)
+	if strings.Contains(text, "message body") {
+		t.Errorf("topic inject contains message bodies: %q", text)
 	}
 }
 
@@ -257,40 +260,103 @@ func TestConcurrentTopicCompactorsHaveOneWinner(t *testing.T) {
 	}
 }
 
-func TestMonitorTopicOnceEmitsNextMessage(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
+func TestCheckTopicReturnsCurrentHeadsWithoutWaiting(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+	mustCreateTopic(t, ctx, db, "graph-memory")
+
+	first, err := PostTopicMessage(ctx, db, "graph-memory", "allocator", "first finding", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := PostTopicMessage(ctx, db, "graph-memory", "allocator", "second finding", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := PostTopicMessage(ctx, db, "graph-memory", "retention", "other finding", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := CheckTopic(ctx, db, "graph-memory", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("current head events = %+v, want two subtopics", events)
+	}
+	heads := make(map[string]int64, len(events))
+	for _, event := range events {
+		heads[event.Subtopic] = event.TS
+	}
+	if heads["allocator"] != second.Message.TS || heads["retention"] != other.Message.TS {
+		t.Fatalf("current head events = %+v, want latest allocator and retention heads", events)
+	}
+
+	after := first.Message.TS
+	events, err = CheckTopic(ctx, db, "graph-memory", "allocator", &after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Subtopic != "allocator" || events[0].TS != second.Message.TS {
+		t.Fatalf("allocator events after first = %+v, want second head", events)
+	}
+
+	after = max(second.Message.TS, other.Message.TS)
+	events, err = CheckTopic(ctx, db, "graph-memory", "", &after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("events after latest head = %+v, want none", events)
+	}
+}
+
+func TestMonitorTopicStaysAliveAcrossMessages(t *testing.T) {
+	ctx, timeout := context.WithTimeout(context.Background(), 2*time.Second)
+	defer timeout()
+	monitorCtx, stop := context.WithCancel(ctx)
 	path := filepath.Join(t.TempDir(), "monitor.db")
-	reader := mustOpen(t, ctx, path)
+	reader := mustOpen(t, monitorCtx, path)
 	defer reader.Close()
 	writer := mustOpen(t, ctx, path)
 	defer writer.Close()
 	mustCreateTopic(t, ctx, writer, "graph-memory")
 
-	events := make(chan TopicEvent, 1)
+	events := make(chan TopicEvent, 2)
 	errs := make(chan error, 1)
 	go func() {
-		errs <- MonitorTopic(ctx, reader, "graph-memory", "allocator", TopicMonitorOptions{
-			Once: true, PollInterval: 5 * time.Millisecond,
+		errs <- MonitorTopic(monitorCtx, reader, "graph-memory", "allocator", TopicMonitorOptions{
+			PollInterval: 5 * time.Millisecond,
 		}, func(event TopicEvent) error {
 			events <- event
 			return nil
 		})
 	}()
-	time.Sleep(20 * time.Millisecond)
-	post, err := PostTopicMessage(ctx, writer, "graph-memory", "allocator", "new finding", nil)
-	if err != nil {
-		t.Fatal(err)
+	for i, body := range []string{"first finding", "second finding"} {
+		time.Sleep(20 * time.Millisecond)
+		post, err := PostTopicMessage(ctx, writer, "graph-memory", "allocator", body, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case event := <-events:
+			if event.Event != "message" || event.Subtopic != "allocator" || event.TS != post.Message.TS {
+				t.Fatalf("event %d = %+v, want allocator message at %d", i, event, post.Message.TS)
+			}
+		case err := <-errs:
+			t.Fatalf("monitor stopped after %d messages: %v", i, err)
+		case <-ctx.Done():
+			t.Fatal("monitor did not emit before timeout")
+		}
 	}
 	select {
-	case event := <-events:
-		if event.Event != "message" || event.Subtopic != "allocator" || event.TS != post.Message.TS {
-			t.Fatalf("monitor event = %+v, want allocator message at %d", event, post.Message.TS)
-		}
-	case <-ctx.Done():
-		t.Fatal("monitor did not emit before timeout")
+	case err := <-errs:
+		t.Fatalf("monitor returned while its topic and session remained active: %v", err)
+	default:
 	}
-	if err := <-errs; err != nil {
-		t.Fatalf("monitor returned: %v", err)
+	stop()
+	if err := <-errs; !errors.Is(err, context.Canceled) {
+		t.Fatalf("monitor cancellation error = %v, want context.Canceled", err)
 	}
 }

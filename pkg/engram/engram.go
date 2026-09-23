@@ -1562,7 +1562,16 @@ func InjectContextText(global, project InjectResult, nSessions int) string {
 			lines[i] = fmt.Sprintf("- **%s**: %s — retire when: %s",
 				topic.Name, topic.Purpose, topic.RetireWhen)
 		}
-		parts = append(parts, "## Pubsub topics (details: `engram topic --help`)\n"+strings.Join(lines, "\n"))
+		const monitorContract = "## Pubsub topics (details: `engram topic --help`)\n" +
+			"Active topics are live collaboration channels. For every topic relevant to the\n" +
+			"current work, start `engram topic monitor <topic>` as a background process\n" +
+			"and retain its handle across turns. Keep it running for the whole session: do\n" +
+			"not stop it after an event, when sending a response, or when the immediate task\n" +
+			"finishes. Post useful findings as they arise and check the monitor's output while\n" +
+			"working; when an event arrives, read the changed subtopic and respond or post\n" +
+			"without waiting for another user prompt. A monitor ends only when its topic is\n" +
+			"retired or the session shuts down.\n"
+		parts = append(parts, monitorContract+strings.Join(lines, "\n"))
 	}
 
 	if len(project.Files) > 0 {

@@ -512,15 +512,15 @@ Through the existing channels, not a new one. `agentinfo` and `bootstrap` guidan
 gain a section on dispatch and on the decomposition judgment above, in the same
 place and the same voice as the existing skill-capture guidance.
 
-The shipped shape is one **"Experimental features"** section rather than a
-dispatch-specific one, and that turned out to be the better frame. An agent needs to
-know the *class* exists -- that some commands may change their contract in a patch
-release, and that `engram experiments` reports each trial's exit conditions -- before
-it needs to know about any particular trial. Each experiment then gets a short
-subsection carrying only what its `--help` cannot: judgment. For dispatch that is
-when fan-out pays, the two failure modes, that the child does not self-orient, the
-consent-for-cost rule, and how to repair a spec. The section is shared between
-`agentinfo` and the markdown protocol block from one source, so the two cannot drift.
+The shipped guidance now separates **"Experimental features"** from
+**"Engram dispatch."** The generic experimental section sets only product-lifecycle
+expectations: trials should be used often, but may have rough edges, change, or
+disappear. It does not impose extra checks. Dispatch has its own topic because its
+judgment is specific to child-process cost, authority, and coordination: when
+fan-out pays, the two failure modes, that the child does not self-orient, the
+consent-for-cost rule, and how to repair a spec. Both sections are shared between
+`agentinfo` and the markdown protocol block from one source, so the surfaces cannot
+drift.
 
 One refinement matters, from the retrieval principle in `docs/design-notes.md`:
 guidance prose is read at bootstrap and then competes with everything else, whereas

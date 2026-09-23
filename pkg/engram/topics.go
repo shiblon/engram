@@ -118,7 +118,6 @@ type TopicEvent struct {
 
 type TopicMonitorOptions struct {
 	After        *int64
-	Once         bool
 	PollInterval time.Duration
 }
 
@@ -702,6 +701,46 @@ func topicHeads(ctx context.Context, db *sql.DB, topic, subtopic string) (map[st
 	return heads, rows.Err()
 }
 
+func topicEventsAfter(topic string, heads, seen map[string]int64) []TopicEvent {
+	events := make([]TopicEvent, 0, len(heads))
+	for name, head := range heads {
+		if head > seen[name] {
+			events = append(events, TopicEvent{Event: "message", Topic: topic, Subtopic: name, TS: head})
+		}
+	}
+	sort.Slice(events, func(i, j int) bool {
+		if events[i].TS == events[j].TS {
+			return events[i].Subtopic < events[j].Subtopic
+		}
+		return events[i].TS < events[j].TS
+	})
+	return events
+}
+
+// CheckTopic returns the current matching subtopic heads without waiting. With
+// no after timestamp, every existing head is returned.
+func CheckTopic(ctx context.Context, db *sql.DB, topic, subtopic string, after *int64) ([]TopicEvent, error) {
+	if err := validateTopicPart("topic", topic); err != nil {
+		return nil, err
+	}
+	if subtopic != "" {
+		if err := validateTopicPart("subtopic", subtopic); err != nil {
+			return nil, err
+		}
+	}
+	heads, err := topicHeads(ctx, db, topic, subtopic)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]int64, len(heads))
+	if after != nil {
+		for name := range heads {
+			seen[name] = *after
+		}
+	}
+	return topicEventsAfter(topic, heads, seen), nil
+}
+
 func MonitorTopic(ctx context.Context, db *sql.DB, topic, subtopic string, opts TopicMonitorOptions, emit func(TopicEvent) error) error {
 	if err := validateTopicPart("topic", topic); err != nil {
 		return err
@@ -732,38 +771,27 @@ func MonitorTopic(ctx context.Context, db *sql.DB, topic, subtopic string, opts 
 		}
 	}
 
-	check := func() (changed, stop bool, err error) {
+	check := func() (stop bool, err error) {
 		current, err := topicHeads(ctx, db, topic, subtopic)
 		if errors.Is(err, ErrTopicNotFound) {
-			return true, true, emit(TopicEvent{Event: "retired", Topic: topic})
+			return true, emit(TopicEvent{Event: "retired", Topic: topic})
 		}
 		if err != nil {
-			return false, false, err
+			return false, err
 		}
-		var events []TopicEvent
-		for name, head := range current {
-			if head > seen[name] {
-				events = append(events, TopicEvent{Event: "message", Topic: topic, Subtopic: name, TS: head})
-				seen[name] = head
-			}
-		}
-		sort.Slice(events, func(i, j int) bool {
-			if events[i].TS == events[j].TS {
-				return events[i].Subtopic < events[j].Subtopic
-			}
-			return events[i].TS < events[j].TS
-		})
+		events := topicEventsAfter(topic, current, seen)
 		for _, event := range events {
 			if err := emit(event); err != nil {
-				return false, false, err
+				return false, err
 			}
+			seen[event.Subtopic] = event.TS
 		}
-		return len(events) > 0, false, nil
+		return false, nil
 	}
 
 	if opts.After != nil {
-		changed, stop, err := check()
-		if err != nil || stop || (changed && opts.Once) {
+		stop, err := check()
+		if err != nil || stop {
 			return err
 		}
 	}
@@ -774,11 +802,11 @@ func MonitorTopic(ctx context.Context, db *sql.DB, topic, subtopic string, opts 
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			changed, stop, err := check()
+			stop, err := check()
 			if err != nil {
 				return err
 			}
-			if stop || (changed && opts.Once) {
+			if stop {
 				return nil
 			}
 		}

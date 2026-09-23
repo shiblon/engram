@@ -310,23 +310,86 @@ var topicCompactCancelCmd = &cobra.Command{
 	},
 }
 
-var (
-	topicMonitorAfter string
-	topicMonitorOnce  bool
-)
+var topicMonitorAfter string
+
+type topicEventOutput struct {
+	Event    string `json:"event"`
+	Topic    string `json:"topic"`
+	Subtopic string `json:"subtopic,omitempty"`
+	At       string `json:"at,omitempty"`
+}
+
+func encodeTopicEvent(encoder *json.Encoder, event engram.TopicEvent) error {
+	out := topicEventOutput{Event: event.Event, Topic: event.Topic, Subtopic: event.Subtopic}
+	if event.TS > 0 {
+		out.At = engram.FormatTopicTimestamp(event.TS)
+	}
+	return encoder.Encode(out)
+}
+
+func parseTopicOrSubtopic(value string) (topic, subtopic string, err error) {
+	if !strings.Contains(value, "/") {
+		return value, "", nil
+	}
+	return parseTopicTarget(value)
+}
+
+var topicCheckAfter string
+
+var topicCheckCmd = &cobra.Command{
+	Use:   "check <topic>[/<subtopic>]",
+	Short: "Check current topic heads once without waiting",
+	Long: `Check current topic heads once and exit immediately.
+
+Without --after, emit one JSON Line for every existing matching subtopic head.
+With --after, emit only heads newer than that timestamp. No output means there
+were no matching heads. This command never waits for a future change; use
+'topic monitor' for continuous background collaboration.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		topic, subtopic, err := parseTopicOrSubtopic(args[0])
+		if err != nil {
+			return err
+		}
+		after, err := parseAfter(topicCheckAfter)
+		if err != nil {
+			return err
+		}
+		ctx := cmd.Context()
+		h, err := openTopicDB(ctx, true)
+		if err != nil {
+			return err
+		}
+		defer h.DB.Close()
+		events, err := engram.CheckTopic(ctx, h.DB, topic, subtopic, after)
+		if err != nil {
+			return err
+		}
+		encoder := json.NewEncoder(cmd.OutOrStdout())
+		for _, event := range events {
+			if err := encodeTopicEvent(encoder, event); err != nil {
+				return err
+			}
+		}
+		return nil
+	},
+}
 
 var topicMonitorCmd = &cobra.Command{
 	Use:   "monitor <topic>[/<subtopic>]",
-	Short: "Stream edge-triggered topic changes without storing a cursor",
-	Args:  cobra.ExactArgs(1),
+	Short: "Continuously stream topic changes for a session",
+	Long: `Continuously stream edge-triggered topic changes as JSON Lines.
+
+Start this command as a background process and keep it running across turns.
+Do not stop it after an event or at a response boundary. Read the changed
+subtopic and respond or post as needed without waiting for another user prompt.
+The monitor exits only when the topic is retired or its session is shut down;
+its cursor is process-local and is not stored between sessions.`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		topic, subtopic := args[0], ""
-		if strings.Contains(args[0], "/") {
-			var err error
-			topic, subtopic, err = parseTopicTarget(args[0])
-			if err != nil {
-				return err
-			}
+		topic, subtopic, err := parseTopicOrSubtopic(args[0])
+		if err != nil {
+			return err
 		}
 		after, err := parseAfter(topicMonitorAfter)
 		if err != nil {
@@ -340,18 +403,9 @@ var topicMonitorCmd = &cobra.Command{
 		defer h.DB.Close()
 		encoder := json.NewEncoder(cmd.OutOrStdout())
 		return engram.MonitorTopic(ctx, h.DB, topic, subtopic, engram.TopicMonitorOptions{
-			After: after, Once: topicMonitorOnce,
+			After: after,
 		}, func(event engram.TopicEvent) error {
-			out := struct {
-				Event    string `json:"event"`
-				Topic    string `json:"topic"`
-				Subtopic string `json:"subtopic,omitempty"`
-				At       string `json:"at,omitempty"`
-			}{Event: event.Event, Topic: event.Topic, Subtopic: event.Subtopic}
-			if event.TS > 0 {
-				out.At = engram.FormatTopicTimestamp(event.TS)
-			}
-			return encoder.Encode(out)
+			return encodeTopicEvent(encoder, event)
 		})
 	},
 }
@@ -361,11 +415,11 @@ func init() {
 	topicCreateCmd.Flags().StringVar(&topicRetireWhen, "retire-when", "", "event that retires the topic")
 	topicReadCmd.Flags().StringVar(&topicReadAfter, "after", "", "return messages after this RFC3339 timestamp")
 	topicPostCmd.Flags().StringVar(&topicPostAfter, "after", "", "also return intervening messages after this RFC3339 timestamp")
+	topicCheckCmd.Flags().StringVar(&topicCheckAfter, "after", "", "emit heads newer than this RFC3339 timestamp")
 	topicMonitorCmd.Flags().StringVar(&topicMonitorAfter, "after", "", "emit changes after this RFC3339 timestamp")
-	topicMonitorCmd.Flags().BoolVar(&topicMonitorOnce, "once", false, "exit after the first change")
 
 	topicCompactCmd.AddCommand(topicCompactBeginCmd, topicCompactApplyCmd, topicCompactCancelCmd)
-	topicCmd.AddCommand(topicCreateCmd, topicListCmd, topicReadCmd, topicPostCmd,
+	topicCmd.AddCommand(topicCreateCmd, topicListCmd, topicReadCmd, topicPostCmd, topicCheckCmd,
 		topicCompactCmd, topicMonitorCmd, topicRetireCmd)
 	markExperimental(topicCmd, "topics")
 	rootCmd.AddCommand(topicCmd)

@@ -119,22 +119,27 @@ section, and its summary loads every session so you will see it. A standard for
 how memory CONTENT should be worded is a separate preference, not a refinement of
 this section.`
 
-// experimentalGuidance describes features whose user-facing contract is not stable
-// yet. It is deliberately one section rather than one per trial: an agent needs to
-// know that the class exists and how to look it up, and each experiment then gets a
-// short paragraph carrying only the judgment its help text cannot.
+// experimentalGuidance sets product-lifecycle expectations. Experimental is not
+// a risk category: agents should exercise trials freely so there is evidence to
+// promote, refine, or remove them.
 const experimentalGuidance = `## Experimental features
 
-Some engram commands are experimental: their flags, schemas, and output may change
-in PATCH releases, which normal semver would forbid. They are labeled
-"[experimental: <key>]" in help. Run ` + "`engram experiments`" + ` to see every active trial
-with its hypothesis, the surfaces that may move, and the events that promote or
-remove it. Prefer these for real work when they fit, and expect to re-learn a
-detail after an upgrade rather than assuming last week's invocation still parses.
+Experimental is a product-lifecycle label, not a warning that a feature is unsafe
+or should be avoided. Experimental commands may have rough edges, change their
+flags, schemas, or output in a PATCH release, or disappear if the idea does not
+work. Use them often when they fit: real use is how Engram gathers the evidence to
+promote, refine, or remove them.
 
-### engram dispatch (experimental: dispatch)
+Do not add confirmation steps, research, or repeated version and help checks only
+because a command is labeled experimental. Normal safety and authorization rules
+still apply based on what the command actually does. After an Engram upgrade, an
+invocation failure, or genuine uncertainty about syntax, consult the command's
+current ` + "`--help`" + `. Run ` + "`engram experiments`" + ` when you want a trial's hypothesis,
+unstable surfaces, or promotion and removal conditions.`
 
-Hands a decomposed task to one or more provider CLIs (claude, codex, ...) as child
+const dispatchGuidance = `## Engram dispatch
+
+` + "`engram dispatch`" + ` is experimental. It hands a decomposed task to one or more provider CLIs (claude, codex, ...) as child
 processes -- possibly different providers and models per slice -- and collects the
 results. Read ` + "`engram dispatch --help`" + ` before using it. Two things belong here rather
 than in help text, because they are judgment and not usage:
@@ -373,6 +378,8 @@ same in any language:
 
 ` + experimentalGuidance + `
 
+` + dispatchGuidance + `
+
 ## Staged restores
 
 When inject output contains a "## Staged restores" section, one or more project
@@ -541,12 +548,22 @@ func guidanceTopics() []guidanceTopic {
 		{
 			Name:        "experiments",
 			Title:       "Experimental features",
-			Summary:     "Use unstable features with their current contracts and safeguards.",
-			When:        "When a command or help entry is labeled experimental, including `engram dispatch`.",
-			Do:          "Read the experiments topic and current command help before proceeding.",
-			Read:        "Read `engram agentinfo experiments`, then run `engram experiments` and the relevant command's `--help`.",
-			Boundary:    "Do not assume a PATCH release preserves an experimental invocation.",
+			Summary:     "Use trials freely while expecting rough edges, change, or removal.",
+			When:        "When deciding whether to use an experimental feature, or after an upgrade, invocation failure, or genuine syntax uncertainty.",
+			Do:          "Use experimental features often when they fit so real work can decide whether they graduate, change, or disappear. Treat the label as a stability expectation, not a danger signal.",
+			Read:        "Consult current command help after an upgrade, failure, or genuine syntax uncertainty. Run `engram experiments` when you need a trial's hypothesis or exit conditions.",
+			Boundary:    "Do not add confirmation, research, or repeated checks solely because a feature is experimental; normal safety and authorization rules still follow the action itself.",
 			BodyHeading: "Experimental features",
+		},
+		{
+			Name:        "dispatch",
+			Title:       "Engram dispatch",
+			Summary:     "Fan work out only when decomposition beats its cost and coordination risks.",
+			When:        "Before using `engram dispatch`, or when a provider invocation spec needs repair.",
+			Do:          "Read the dispatch topic; fan out only work that genuinely divides, keep children read-only by default, and get consent for the cost.",
+			Read:        "Read `engram agentinfo dispatch` and current `engram dispatch --help`.",
+			Boundary:    "The constraints come from child-process cost, authority, and coordination—not from the feature's experimental label.",
+			BodyHeading: "Engram dispatch",
 		},
 		{
 			Name:        "staged-restores",

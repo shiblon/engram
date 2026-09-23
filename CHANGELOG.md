@@ -11,6 +11,22 @@ in-repo companion.
 
 ## [Unreleased]
 
+### Added
+
+- `engram topic check` provides an explicit non-blocking, one-shot snapshot of
+  current subtopic heads, optionally restricted by `--after`.
+
+### Changed
+
+- Experimental-feature guidance now encourages frequent real-world use and
+  treats the label only as notice that a trial may have rough edges, change, or
+  disappear. It no longer requires repeated help, version, or registry checks;
+  dispatch-specific operating constraints moved to their own guidance topic.
+- Topic injection and monitor help now require agents to keep one continuous
+  background monitor per relevant active topic, retain it across turns, and
+  react to events without waiting for another user prompt. The experimental
+  one-shot `topic monitor --once` mode was removed.
+
 ## [0.16.1] - 2026-09-21
 
 ### Added

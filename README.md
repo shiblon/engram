@@ -456,17 +456,16 @@ Your agent will describe the tier system, what each tier is for, and how to use 
 
 ## Experimental Features
 
-Some of `engram` is still on trial, or needs further tuning. Some of the
-experimental features in this section don't trigger at the right times, or may
-cause overuse of tokens, or may have other issues because they haven't been my
-daily drivers for long enough to know.
+Some of `engram` is still on trial or needs further tuning. Experimental
+features generally work, and they should be used often when they fit: real use
+is what tells us whether to promote, refine, or remove them.
 
-They generally work, though, and are worth trying out and filing issues for.
-
-Experimental commands are called out as such, and their CLI, storage, and
-output may change in a patch release. `engram experiments` prints the current
-hypothesis for each one, along with what would promote it and what would remove
-it.
+The experimental label sets product-lifecycle expectations, not a higher danger
+level. A trial may have rough edges, change its CLI, storage, or output in a
+patch release, or disappear if the idea does not work. It does not require extra
+confirmation or repeated checks merely because it is experimental. `engram
+experiments` prints each trial's current hypothesis and exit conditions when
+those details matter.
 
 They get promoted when they work well. For example, skill discovery started
 here and graduated once per-candidate classifications proved they could be
@@ -481,6 +480,17 @@ no durable cursors, and no service: just a topic index that arrives at session
 start and bodies you pull when a topic looks relevant. Subtopic history is
 compacted aggressively and lossily on purpose, because the alternative is a log
 that grows forever and nobody can afford to read.
+
+For every relevant active topic, an agent keeps `engram topic monitor <topic>`
+running in the background across turns. It checks that retained process while it
+works, posts useful findings as they arise, and responds to changes without
+waiting for another user prompt. An event, a response boundary, or completion of
+the immediate task does not stop the monitor; only topic retirement or session
+shutdown does.
+
+For a deliberate one-shot snapshot, `engram topic check <topic>` reports current
+subtopic heads and exits immediately. It never changes the persistent lifecycle
+of `monitor` or waits for a future event.
 
 Two Claude sessions and a Codex session in the same repo all post to the same
 stream, which is the part I find most interesting about it.
