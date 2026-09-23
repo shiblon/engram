@@ -11,6 +11,8 @@ in-repo companion.
 
 ## [Unreleased]
 
+## [0.16.2] - 2026-09-22
+
 ### Added
 
 - `engram topic check` provides an explicit non-blocking, one-shot snapshot of
@@ -658,7 +660,8 @@ _Internal changes only._
 - first take
 - Initial commit
 
-[Unreleased]: https://github.com/shiblon/engram/compare/v0.16.1...HEAD
+[Unreleased]: https://github.com/shiblon/engram/compare/v0.16.2...HEAD
+[0.16.2]: https://github.com/shiblon/engram/compare/v0.16.1...v0.16.2
 [0.16.1]: https://github.com/shiblon/engram/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/shiblon/engram/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/shiblon/engram/compare/v0.15.0...v0.15.1
