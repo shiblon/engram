@@ -631,7 +631,7 @@ func renderGuidanceKernel(agent string) string {
 	var b strings.Builder
 	b.WriteString("\n" + guidanceStartMarker + "\n")
 	b.WriteString("## Engram Policy Kernel\n\n")
-	fmt.Fprintf(&b, "> Guidance version: %s. If session-start inject reports a different version, this guidance predates the installed engram; if the line is absent, it is also stale. Tell the user and offer to run `engram bootstrap` to refresh it.\n\n", engramVersion())
+	fmt.Fprintf(&b, "> Guidance version: %s. Session-start inject checks the effective installed kernel. Follow its bootstrap status: reload a superseded live-session kernel with the command it provides, and warn the user only when it reports the installation stale or absent.\n\n", engramVersion())
 	b.WriteString("This kernel carries obligations that must survive context boundaries. Operational reference is available through `engram agentinfo`; run it with no arguments for the topic index.\n\n")
 	for i, topic := range guidanceTopics() {
 		if i > 0 {
@@ -716,6 +716,7 @@ func renderAgentInfoForAgent(agent string) string {
 }
 
 var agentInfoFull bool
+var agentInfoKernel bool
 var agentInfoAgent string
 
 const guidanceFullManualTopic = "full-manual"
@@ -726,7 +727,8 @@ var agentInfoCmd = &cobra.Command{
 	Long: `With no arguments, list the available guidance topics. With a topic,
 print that topic's operational reference. Add --full to include policy: for one
 topic it prepends the matching kernel entry; without a topic it prints the
-assembled policy kernel and reference manual.`,
+assembled policy kernel and reference manual. Add --kernel to print only the
+current compact policy kernel, for example when a live session spans an upgrade.`,
 	Args:      cobra.MaximumNArgs(1),
 	ValidArgs: guidanceTopicNames(),
 	RunE:      runAgentInfo,
@@ -735,6 +737,16 @@ assembled policy kernel and reference manual.`,
 func runAgentInfo(cmd *cobra.Command, args []string) error {
 	agent, err := engram.NormalizeAgent(agentInfoAgent)
 	if err != nil {
+		return err
+	}
+	if agentInfoKernel {
+		if len(args) != 0 {
+			return fmt.Errorf("--kernel does not accept a topic")
+		}
+		if agentInfoFull {
+			return fmt.Errorf("--kernel and --full are mutually exclusive")
+		}
+		_, err := fmt.Fprintln(cmd.OutOrStdout(), renderGuidanceKernel(agent))
 		return err
 	}
 	if len(args) == 0 {
@@ -889,6 +901,7 @@ capture prompts and cannot prove that a model attended to the returned text.`,
 
 func init() {
 	agentInfoCmd.Flags().BoolVar(&agentInfoFull, "full", false, "include policy-kernel guidance")
+	agentInfoCmd.Flags().BoolVar(&agentInfoKernel, "kernel", false, "print only the current compact policy kernel")
 	agentInfoCmd.Flags().StringVar(&agentInfoAgent, "agent", "", "render agent-specific inject commands in policy guidance")
 	agentInfoStatsCmd.Flags().BoolVar(&agentInfoStatsJSON, "json", false, "output one JSON object")
 	agentInfoStatsCmd.Flags().StringVar(&agentInfoStatsRelease, "release", "", "show a specific engram release (default: current)")

@@ -11,6 +11,13 @@ in-repo companion.
 
 ## [Unreleased]
 
+### Fixed
+
+- Session injection now verifies the effective installed policy kernel before
+  warning about version drift. A session retained across an upgrade reloads the
+  current compact kernel with `engram agentinfo --kernel` without prompting for
+  an already-completed bootstrap.
+
 ## [0.16.2] - 2026-09-22
 
 ### Added

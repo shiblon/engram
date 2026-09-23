@@ -19,9 +19,41 @@ func TestRenderAgentInfoSubstitutesVersion(t *testing.T) {
 	if !strings.Contains(got, engramVersion()) {
 		t.Errorf("rendered guidance missing the substituted version %q", engramVersion())
 	}
-	// The drift instruction must survive rendering so agents know to act on a mismatch.
-	if !strings.Contains(got, "predates the installed engram") {
-		t.Errorf("rendered guidance missing the version-drift paragraph")
+	// The drift instruction must defer to inject's installation check: a live
+	// session can retain an older kernel even after bootstrap is current.
+	if !strings.Contains(got, "Follow its bootstrap status") {
+		t.Errorf("rendered guidance missing the bootstrap-status paragraph")
+	}
+}
+
+func TestAgentInfoKernelPrintsOnlyCurrentPolicyKernel(t *testing.T) {
+	var out bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&out)
+	oldFull, oldKernel, oldAgent := agentInfoFull, agentInfoKernel, agentInfoAgent
+	defer func() {
+		agentInfoFull, agentInfoKernel, agentInfoAgent = oldFull, oldKernel, oldAgent
+	}()
+	agentInfoFull = false
+	agentInfoKernel = true
+	agentInfoAgent = "codex"
+
+	if err := runAgentInfo(cmd, nil); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	for _, want := range []string{
+		guidanceStartMarker,
+		"Guidance version: " + engramVersion(),
+		"engram inject --text --agent codex",
+		guidanceEndMarker,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("kernel output missing %q", want)
+		}
+	}
+	if strings.Contains(got, "# Operational reference") || strings.Contains(got, "AVAILABLE TOPICS") {
+		t.Errorf("kernel output included the manual or topic index:\n%s", got)
 	}
 }
 

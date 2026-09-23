@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log"
@@ -143,17 +144,94 @@ var injectCmd = &cobra.Command{
 	RunE:  runInject,
 }
 
-// injectVersionLine is the version-drift check inject leads with. It carries the
-// instruction itself, not just the number, because the check must fire even when
-// the loaded policy kernel is old and version-less (it predates this feature) --
-// in that case the guidance file cannot carry the instruction, but inject always
-// can. It covers both a version mismatch and a missing version line.
-func injectVersionLine(version string) string {
-	return fmt.Sprintf("engram version: %s. Check the engram guidance loaded in your "+
-		"context: if its \"Guidance version\" line differs from this, or there is no "+
-		"version line at all, the policy kernel is stale or absent. Run `engram agentinfo` "+
-		"for the current reference, tell the user, and offer to run `engram bootstrap` "+
-		"to refresh the installed kernel.", version)
+// injectVersionLine reports installation drift, not merely live-context drift.
+// A session can retain an older policy kernel after engram and its on-disk
+// kernel have both been upgraded. In that case the installation is healthy:
+// the agent should refresh its live kernel from agentinfo without alarming the
+// user or offering an unnecessary bootstrap.
+func injectVersionLine(version, agent, cwd string) string {
+	current, known := installedGuidanceCurrent(version, agent, cwd)
+	agent, _ = engram.NormalizeAgent(agent)
+	if current {
+		return fmt.Sprintf("Engram bootstrap status: current for %s at Guidance version %s. "+
+			"Do not warn the user or offer to run `engram bootstrap`. If the policy kernel "+
+			"already visible in this session has a different Guidance version, it is a retained "+
+			"snapshot from before the upgrade; run `%s` now and treat its output as replacing "+
+			"the older kernel.", agent, version, guidanceKernelCommand(agent))
+	}
+	if known {
+		return fmt.Sprintf("engram version: %s. Engram bootstrap status: stale or absent for %s; "+
+			"no policy kernel in an effective install location contains Guidance version %s. "+
+			"Run `engram agentinfo --kernel --agent %s` for the current kernel, tell the user, "+
+			"and offer to run `engram bootstrap` to refresh the installation.",
+			version, agent, version, agent)
+	}
+	return fmt.Sprintf("engram version: %s. Engram cannot locate the policy kernel for agent %q. "+
+		"Check the guidance already loaded in this session: if its \"Guidance version\" differs, "+
+		"run `%s` for the current kernel, tell the user, and offer to refresh the custom "+
+		"bootstrap installation.", version, agent, guidanceKernelCommand(agent))
+}
+
+func guidanceKernelCommand(agent string) string {
+	cmd := "engram agentinfo --kernel"
+	if agent != "" {
+		cmd += " --agent " + agent
+	}
+	return cmd
+}
+
+// installedGuidanceCurrent searches only provider locations in which bootstrap
+// installs a policy kernel. The bools report current and known-provider status;
+// custom initfile paths cannot be reconstructed from an agent slug.
+func installedGuidanceCurrent(version, agent, cwd string) (bool, bool) {
+	agent, err := engram.NormalizeAgent(agent)
+	if err != nil {
+		return false, false
+	}
+	paths, known := installedGuidancePaths(agent, cwd)
+	needle := []byte("> Guidance version: " + version + ".")
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err == nil && bytes.Contains(data, needle) {
+			return true, true
+		}
+	}
+	return false, known
+}
+
+func installedGuidancePaths(agent, cwd string) ([]string, bool) {
+	var paths []string
+	home, homeErr := os.UserHomeDir()
+	root, rootErr := engram.FindProjectRoot(cwd)
+	addHome := func(parts ...string) {
+		if homeErr == nil {
+			paths = append(paths, filepath.Join(append([]string{home}, parts...)...))
+		}
+	}
+	addProject := func(parts ...string) {
+		if rootErr == nil {
+			paths = append(paths, filepath.Join(append([]string{root}, parts...)...))
+		}
+	}
+
+	switch agent {
+	case "claude":
+		addHome(".claude", "engram.md")
+	case "codex":
+		addHome(".codex", "AGENTS.md")
+		addProject("AGENTS.md")
+	case "gemini":
+		addHome(".gemini", "GEMINI.md")
+	case "antigravity":
+		addHome(".gemini", "antigravity", "knowledge", "engram_protocol", "artifacts", "instructions.md")
+	case "copilot":
+		addProject(".github", "copilot-instructions.md")
+	case "cursor":
+		addProject(".cursorrules")
+	default:
+		return nil, false
+	}
+	return paths, true
 }
 
 func runInject(cmd *cobra.Command, _ []string) error {
@@ -249,7 +327,7 @@ func runInject(cmd *cobra.Command, _ []string) error {
 
 	contextText := engram.InjectContextText(globalResult, projectResult, injectSessions)
 	if contextText != "" {
-		contextText = injectVersionLine(engramVersion()) + "\n\n" + contextText
+		contextText = injectVersionLine(engramVersion(), injectAgent, cwd) + "\n\n" + contextText
 	}
 
 	if injectText {
