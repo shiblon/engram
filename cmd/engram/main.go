@@ -252,6 +252,9 @@ func runInject(cmd *cobra.Command, _ []string) error {
 			if err != nil {
 				log.Printf("engram: inject global memory: %v", err)
 			}
+			if engram.GlobalUsesLegacyDB() {
+				globalResult.LegacyDBPath, _ = engram.LegacyGlobalDBPath() // non-nil error ruled out by GlobalUsesLegacyDB
+			}
 			// Surface pending restores; mark any that match the current repo.
 			if pending, err := engram.ListPendingRestores(ctx, gdb); err == nil && len(pending) > 0 {
 				currentIdentity := engram.ProjectIdentity(cwd)
@@ -290,6 +293,9 @@ func runInject(cmd *cobra.Command, _ []string) error {
 				projectResult, err = engram.Inject(ctx, db, injectSessions)
 				if err != nil {
 					log.Printf("engram: inject project memory: %v", err)
+				}
+				if engram.ProjectUsesLegacyDB(root) {
+					projectResult.LegacyDBPath = engram.LegacyDBPath(root)
 				}
 				if _, err := engram.Prune(ctx, db, injectKeep); err != nil {
 					fmt.Fprintf(os.Stderr, "engram prune: %v\n", err)

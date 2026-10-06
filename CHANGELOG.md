@@ -21,6 +21,16 @@ in-repo companion.
   under the new `append` action, and warns past 3000 characters so the agent can
   propose consolidating the memory. The safe-memory-updates kernel entry and
   topic now point to it.
+- Session inject reports a `## Legacy database` section when project or global
+  memory still lives at the old `.claude/engram.db` path. Engram opens that file
+  for reads and writes until it is migrated, so an unmigrated project otherwise
+  runs on the legacy path with no signal.
+
+### Fixed
+
+- `engram migrate` writes the `.engram/.gitignore` that keeps database files out
+  of version control. Previously only the first canonical open created it, and
+  that open never happens while the legacy database exists.
 
 ## [0.16.3] - 2026-09-22
 

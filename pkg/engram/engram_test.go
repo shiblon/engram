@@ -1860,3 +1860,64 @@ func TestPruneIsAtomicAcrossBothTables(t *testing.T) {
 		}
 	}
 }
+
+func TestProjectUsesLegacyDB(t *testing.T) {
+	root := t.TempDir()
+	if ProjectUsesLegacyDB(root) {
+		t.Fatal("legacy reported with neither database present")
+	}
+	if err := os.MkdirAll(filepath.Dir(LegacyDBPath(root)), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(LegacyDBPath(root), nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if !ProjectUsesLegacyDB(root) {
+		t.Fatal("legacy not reported with only the legacy database present")
+	}
+	if err := EnsureDBDir(filepath.Dir(DBPath(root))); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(DBPath(root), nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if ProjectUsesLegacyDB(root) {
+		t.Fatal("legacy reported once the canonical database exists")
+	}
+}
+
+func TestEnsureDBDir(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".engram")
+	if err := EnsureDBDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil || string(got) != "*\n" {
+		t.Fatalf(".gitignore = %q, %v; want \"*\\n\"", got, err)
+	}
+
+	// An existing .gitignore is the user's; leave it alone.
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("custom\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureDBDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(dir, ".gitignore")); string(got) != "custom\n" {
+		t.Fatalf(".gitignore overwritten: %q", got)
+	}
+}
+
+func TestInjectContextTextLegacyDB(t *testing.T) {
+	text := InjectContextText(InjectResult{}, InjectResult{LegacyDBPath: "/p/.claude/engram.db"}, 5)
+	if !strings.Contains(text, "## Legacy database") ||
+		!strings.Contains(text, "project memory is at /p/.claude/engram.db; migrate with `engram migrate`") {
+		t.Fatalf("missing project legacy notice:\n%s", text)
+	}
+	if strings.Contains(text, "--global`") {
+		t.Fatalf("global notice rendered without a global legacy path:\n%s", text)
+	}
+	if text := InjectContextText(InjectResult{}, InjectResult{}, 5); strings.Contains(text, "Legacy database") {
+		t.Fatalf("legacy notice rendered for canonical databases:\n%s", text)
+	}
+}

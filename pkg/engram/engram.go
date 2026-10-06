@@ -362,7 +362,8 @@ func DBPath(root string) string {
 	return filepath.Join(root, ".engram", "mem.db")
 }
 
-// LegacyDBPath returns the old project database path, used for read fallback.
+// LegacyDBPath returns the old project database path. While the canonical path
+// does not exist, it is opened in its place for reads and writes alike.
 func LegacyDBPath(root string) string {
 	root = ProjectStorageRoot(root)
 	return filepath.Join(root, ".claude", "engram.db")
@@ -383,7 +384,8 @@ func GlobalDBPath() (string, error) {
 	return filepath.Join(home, ".engram", "mem.db"), nil
 }
 
-// LegacyGlobalDBPath returns the old global database path, used for read fallback.
+// LegacyGlobalDBPath returns the old global database path. While the canonical
+// path does not exist, it is opened in its place for reads and writes alike.
 func LegacyGlobalDBPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -405,27 +407,64 @@ func dbExists(paths ...string) bool {
 	return false
 }
 
-// openWithFallback opens canonical if it exists (or neither exists), falling
-// back to legacy if canonical is absent. Creates canonical's directory when
-// opening canonical.
-func openWithFallback(ctx context.Context, canonical, legacy string) (*sql.DB, error) {
-	_, canonErr := os.Stat(canonical)
-	if os.IsNotExist(canonErr) && legacy != "" {
-		if _, err := os.Stat(legacy); err == nil {
-			return Open(ctx, legacy)
-		}
+// usesLegacy reports whether openWithFallback would open legacy: canonical is
+// absent and legacy exists.
+func usesLegacy(canonical, legacy string) bool {
+	if legacy == "" {
+		return false
 	}
-	dir := filepath.Dir(canonical)
+	if _, err := os.Stat(canonical); !os.IsNotExist(err) {
+		return false
+	}
+	_, err := os.Stat(legacy)
+	return err == nil
+}
+
+// ProjectUsesLegacyDB reports whether the project's memory still lives at the
+// legacy path, so every open reads and writes it there until 'engram migrate'.
+func ProjectUsesLegacyDB(root string) bool {
+	return usesLegacy(DBPath(root), LegacyDBPath(root))
+}
+
+// GlobalUsesLegacyDB is ProjectUsesLegacyDB for the global database.
+func GlobalUsesLegacyDB() bool {
+	canonical, err := GlobalDBPath()
+	if err != nil {
+		return false
+	}
+	legacy, err := LegacyGlobalDBPath()
+	if err != nil {
+		return false
+	}
+	return usesLegacy(canonical, legacy)
+}
+
+// EnsureDBDir creates an engram database directory and, when absent, the
+// .gitignore that keeps its SQLite files out of version control. An existing
+// .gitignore is left alone. Failing to write it is logged, not returned: the
+// directory is still usable, but the database could be committed.
+func EnsureDBDir(dir string) error {
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return nil, fmt.Errorf("create db dir: %w", err)
+		return fmt.Errorf("create db dir: %w", err)
 	}
 	gi := filepath.Join(dir, ".gitignore")
 	if _, err := os.Stat(gi); os.IsNotExist(err) {
 		if err := os.WriteFile(gi, []byte("*\n"), 0644); err != nil {
-			// Best-effort: without this the SQLite DB could be committed. Mirror
-			// apply.go's handling (log) rather than swallowing it entirely.
 			log.Printf("engram: write .gitignore for %s: %v", dir, err)
 		}
+	}
+	return nil
+}
+
+// openWithFallback opens canonical if it exists (or neither exists), falling
+// back to legacy if canonical is absent. Prepares canonical's directory with
+// EnsureDBDir when opening canonical.
+func openWithFallback(ctx context.Context, canonical, legacy string) (*sql.DB, error) {
+	if usesLegacy(canonical, legacy) {
+		return Open(ctx, legacy)
+	}
+	if err := EnsureDBDir(filepath.Dir(canonical)); err != nil {
+		return nil, err
 	}
 	return Open(ctx, canonical)
 }
@@ -624,6 +663,10 @@ type InjectResult struct {
 	// AutomationReview is project-local, filesystem-derived maintenance context.
 	// It contains only new, changed, or explicitly removed catalog entries.
 	AutomationReview *AutomationReview
+	// LegacyDBPath is the legacy database this result was read from, set by the
+	// caller when ProjectUsesLegacyDB or GlobalUsesLegacyDB holds. Empty means
+	// the canonical path.
+	LegacyDBPath string
 }
 
 // Inject returns the recently active files from the last nSessions sessions,
@@ -1542,6 +1585,19 @@ func InjectContextText(global, project InjectResult, nSessions int) string {
 			lines[i] = line
 		}
 		parts = append(parts, "## Skill candidates (classified workflow members; offer to create or update the grouped skill)\n"+strings.Join(lines, "\n"))
+	}
+
+	var legacyLines []string
+	if global.LegacyDBPath != "" {
+		legacyLines = append(legacyLines, fmt.Sprintf(
+			"- global memory is at %s; migrate with `engram migrate --global`", global.LegacyDBPath))
+	}
+	if project.LegacyDBPath != "" {
+		legacyLines = append(legacyLines, fmt.Sprintf(
+			"- project memory is at %s; migrate with `engram migrate`", project.LegacyDBPath))
+	}
+	if len(legacyLines) > 0 {
+		parts = append(parts, "## Legacy database (memory is read and written at the old path -- agent: tell the user and offer to migrate; run migrate once, adding --cleanup to remove the legacy files)\n"+strings.Join(legacyLines, "\n"))
 	}
 
 	if len(global.PendingRestores) > 0 {

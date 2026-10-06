@@ -205,12 +205,8 @@ func ApplyRestore(ctx context.Context, globalDB *sql.DB, identity string, sel Re
 		return res, fmt.Errorf("apply: write mem.db: %w", err)
 	}
 
-	// Write the .gitignore for the .engram dir if absent (mirrors openWithFallback).
-	gi := filepath.Join(engDir, ".gitignore")
-	if _, err := os.Stat(gi); os.IsNotExist(err) {
-		if err := os.WriteFile(gi, []byte("*\n"), 0o644); err != nil {
-			log.Printf("engram: write .gitignore for %s: %v", engDir, err)
-		}
+	if err := EnsureDBDir(engDir); err != nil {
+		return res, fmt.Errorf("apply: %w", err)
 	}
 
 	// Update the manifest: this entry is now live at its real root.

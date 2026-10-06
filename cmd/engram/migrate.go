@@ -23,6 +23,9 @@ Events are copied as-is. Memories are merged: the newer entry wins when the same
 key exists in both databases. Run migrate only once -- events have no duplicate
 protection and will be double-counted if copied twice.
 
+The destination directory gets a .gitignore that excludes the database files,
+unless it already has one.
+
 Use --cleanup to remove the legacy files after a successful migration.`,
 	RunE: runMigrate,
 }
@@ -66,9 +69,9 @@ func runMigrate(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("open source: %w", err)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(dstPath), 0755); err != nil {
+	if err := engram.EnsureDBDir(filepath.Dir(dstPath)); err != nil {
 		src.Close()
-		return fmt.Errorf("create destination dir: %w", err)
+		return fmt.Errorf("prepare destination: %w", err)
 	}
 	dst, err := engram.Open(ctx, dstPath)
 	if err != nil {
