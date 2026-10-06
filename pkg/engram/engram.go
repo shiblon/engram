@@ -905,6 +905,92 @@ func SetMemoryTldr(ctx context.Context, db *sql.DB, tier Tier, key, tldr string,
 	return true, nil
 }
 
+// MemoryAppend describes an AppendMemory call.
+type MemoryAppend struct {
+	Tier Tier
+	Key  string
+	// Text is added to the end of the existing content. Surrounding whitespace is
+	// trimmed, and so is trailing whitespace on the existing content, so Sep alone
+	// decides what joins them.
+	Text string
+	// Sep joins existing content and Text. It is omitted when the existing content
+	// is empty.
+	Sep string
+	// Tldr replaces the existing tldr when non-nil; nil keeps it.
+	Tldr *string
+	// Create writes Text as a new memory when (Tier, Key) does not exist. Without
+	// it a missing key is reported as not found.
+	Create bool
+}
+
+// AppendMemory adds text to the end of a memory's content in a single UPDATE, so
+// the caller never round-trips the existing body and concurrent appends cannot
+// lose each other. Unlike a tldr edit, an append is a content change: it bumps
+// the timestamp. It returns the resulting memory, or nil when the key does not
+// exist and Create is false, and reports whether the append created it.
+//
+// The curation event records only the appended text, not the full body, so the
+// log shows what this append contributed.
+func AppendMemory(ctx context.Context, db *sql.DB, a MemoryAppend, opts ...CurationOption) (*Memory, bool, error) {
+	tier, err := ParseTier(string(a.Tier))
+	if err != nil {
+		return nil, false, fmt.Errorf("append memory: %w", err)
+	}
+	text := strings.TrimSpace(a.Text)
+	if text == "" {
+		return nil, false, fmt.Errorf("append memory: empty text")
+	}
+	var tldr string
+	if a.Tldr != nil {
+		tldr = strings.TrimSpace(*a.Tldr)
+		if err := validateTldr(tldr); err != nil {
+			return nil, false, fmt.Errorf("append memory: %w", err)
+		}
+	}
+	ts := time.Now().UnixMilli()
+
+	m := Memory{Tier: tier, Key: a.Key}
+	err = db.QueryRowContext(ctx, `
+		UPDATE memories SET
+			content = CASE WHEN rtrim(content, char(32, 9, 10, 13)) = '' THEN ?1
+				ELSE rtrim(content, char(32, 9, 10, 13)) || ?2 || ?1 END,
+			ts = ?3,
+			tldr = CASE WHEN ?4 THEN ?5 ELSE tldr END
+		WHERE tier = ?6 AND key = ?7
+		RETURNING id, ts, content, tldr, trigger, COALESCE(session_id, '')`,
+		text, a.Sep, ts, a.Tldr != nil, tldr, tier, a.Key,
+	).Scan(&m.ID, &m.TS, &m.Content, &m.Tldr, &m.Trigger, &m.SessionID)
+	if errors.Is(err, sql.ErrNoRows) {
+		if !a.Create {
+			return nil, false, nil
+		}
+		m = Memory{TS: ts, Tier: tier, Key: a.Key, Content: text, Tldr: tldr}
+		if err := WriteMemory(ctx, db, m, append(opts, WithCurationAction(CurationCreate))...); err != nil {
+			return nil, false, fmt.Errorf("append memory: %w", err)
+		}
+		return &m, true, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("append memory: %w", err)
+	}
+
+	co := resolveCurationOptions(opts)
+	if !co.suppress {
+		captureCuration(ctx, db, CurationEvent{
+			TS:        ts,
+			SessionID: co.session,
+			Action:    CurationAppend,
+			Tier:      tier,
+			Key:       a.Key,
+			DBScope:   co.scope,
+			Source:    co.source,
+			Content:   text,
+			Tldr:      m.Tldr,
+		})
+	}
+	return &m, false, nil
+}
+
 // queryMemories is the shared implementation for ReadMemory, ReadMemoryTop, ListMemories, and FindMemoryByKey.
 // An empty tier matches all tiers.
 func queryMemories(ctx context.Context, db *sql.DB, tier Tier, key string, limit int) ([]Memory, error) {

@@ -149,6 +149,35 @@ func TestCurationTldrSet(t *testing.T) {
 	}
 }
 
+// TestCurationAppend asserts an append records only the appended text, and an
+// append that creates the memory records a create instead.
+func TestCurationAppend(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+
+	if err := WriteMemory(ctx, db, Memory{Tier: TierLong, Key: "k", Content: "first", Tldr: "sum"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := AppendMemory(ctx, db, MemoryAppend{Tier: TierLong, Key: "k", Text: "second", Sep: "\n"}); err != nil {
+		t.Fatal(err)
+	}
+	evs := curationEvents(t, db, CurationFilter{Action: CurationAppend})
+	if len(evs) != 1 {
+		t.Fatalf("got %d append events, want 1: %+v", len(evs), evs)
+	}
+	if evs[0].Content != "second" || evs[0].Tldr != "sum" {
+		t.Errorf("append event = %+v, want content='second' tldr='sum'", evs[0])
+	}
+
+	if _, _, err := AppendMemory(ctx, db, MemoryAppend{Tier: TierLong, Key: "new", Text: "body", Create: true}); err != nil {
+		t.Fatal(err)
+	}
+	creates := curationEvents(t, db, CurationFilter{Action: CurationCreate, Key: "new"})
+	if len(creates) != 1 || creates[0].Content != "body" {
+		t.Errorf("want one create event for the appended-into-existence key: %+v", creates)
+	}
+}
+
 // TestCurationSkillAdoptOverridesAction confirms the skill-adopt override wins
 // over the derived create/update action.
 func TestCurationSkillAdoptOverridesAction(t *testing.T) {
@@ -219,7 +248,7 @@ func TestCurationVocabularyIsChecked(t *testing.T) {
 	// it would cry wolf on correct code and get muted.
 	for _, action := range []CurationAction{
 		CurationCreate, CurationUpdate, CurationDelete, CurationMove,
-		CurationTldrSet, CurationSkillAdopt, CurationSkillClassify,
+		CurationTldrSet, CurationAppend, CurationSkillAdopt, CurationSkillClassify,
 	} {
 		if problem := validCurationAction(action); problem != "" {
 			t.Errorf("declared action %q reported as out-of-vocabulary: %s", action, problem)

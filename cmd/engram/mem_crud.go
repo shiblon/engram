@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
 	"text/tabwriter"
 	"time"
+	"unicode/utf8"
 
 	"github.com/shiblon/engram/pkg/engram"
 	"github.com/spf13/cobra"
@@ -134,7 +136,7 @@ var memWriteCmd = &cobra.Command{
 The output of 'engram mem read' is human-readable display text, not a round-trip
 format; do not substitute it back into this command. To change only an existing
 memory's summary, use 'engram mem tldr <key> <summary>', which leaves its content
-untouched.`,
+untouched. To add to an existing body, use 'engram mem append <key> <text>'.`,
 	Args: cobra.MinimumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		target, err := resolveMemoryTarget(cmd, args[0], "tier")
@@ -199,6 +201,95 @@ untouched.`,
 			return nil
 		}
 		fmt.Printf("stored in %s %s memory: %s\n", scopeName(target.Global), tier, target.Key)
+		return nil
+	},
+}
+
+var (
+	memAppendSep    string
+	memAppendCreate bool
+)
+
+// appendConsolidationThreshold is the content length, in runes, past which
+// append suggests consolidating the memory.
+const appendConsolidationThreshold = 3000
+
+// expandSepEscapes turns the \n and \t escapes a shell passes literally into the
+// characters they name.
+var expandSepEscapes = strings.NewReplacer(`\n`, "\n", `\t`, "\t").Replace
+
+var memAppendCmd = &cobra.Command{
+	Use:   "append <key-or-address> <text>",
+	Short: "Append text to the end of an existing memory",
+	Long: `Append text to the end of an existing memory's content without re-supplying
+the body. The text joins the existing content with --sep (default: a blank line;
+\n and \t escapes are expanded). The memory's tldr is kept unless --tldr is
+given, and its timestamp is bumped.
+
+A missing key is an error unless --create is given, in which case the text
+becomes a new memory (in --tier, default short, when the key names no tier).
+Omit --tier to resolve an existing key automatically when it is unambiguous.
+
+When the result grows past ` + fmt.Sprint(appendConsolidationThreshold) + ` characters, append prints a warning: check
+whether the memory still says one thing, and consolidate or split it if not.`,
+	Args: cobra.MinimumNArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		target, err := resolveMemoryTarget(cmd, args[0], "tier")
+		if err != nil {
+			return err
+		}
+		ctx := context.Background()
+		h, err := target.openDB(ctx)
+		if err != nil {
+			return err
+		}
+		defer h.DB.Close()
+
+		tier, key, err := resolveExistingTierKey(ctx, cmd, h, target)
+		if errors.Is(err, errMemoryNotFound) {
+			if !memAppendCreate {
+				return fmt.Errorf("%w (pass --create to start it)", err)
+			}
+			tier = target.Tier
+			key, err = target.storedKey()
+		}
+		if err != nil {
+			return err
+		}
+
+		a := engram.MemoryAppend{
+			Tier:   tier,
+			Key:    key,
+			Text:   strings.Join(args[1:], " "),
+			Sep:    expandSepEscapes(memAppendSep),
+			Create: memAppendCreate,
+		}
+		if cmd.Flag("tldr").Changed {
+			a.Tldr = &memTldr
+		}
+		m, created, err := engram.AppendMemory(ctx, h.DB, a,
+			engram.WithCurationSource(engram.SourceInteractive),
+			engram.WithCurationScope(scopeName(target.Global)))
+		if err != nil {
+			return fmt.Errorf("memory was not changed: %w", err)
+		}
+		if m == nil {
+			return fmt.Errorf("not found: %s/%s (pass --create to start it)", tier, target.Key)
+		}
+
+		if created {
+			fmt.Printf("created %s %s memory: %s\n", scopeName(target.Global), tier, target.Key)
+			return nil
+		}
+		fmt.Printf("appended to %s %s memory: %s\n", scopeName(target.Global), tier, target.Key)
+		if a.Tldr == nil && m.Tier != engram.TierInvariant {
+			fmt.Printf("tldr unchanged: %s\n", m.InjectSummary())
+		}
+		if n := utf8.RuneCountInString(m.Content); n > appendConsolidationThreshold {
+			fmt.Printf("warning: %s is now %d characters. Check whether it still holds one idea; "+
+				"if it has accumulated overlapping or superseded entries, propose a consolidated "+
+				"rewrite (or a split) to the user.\n", engram.MemoryLabel(*m), n)
+		}
 		return nil
 	},
 }
@@ -376,6 +467,39 @@ write, delete, tldr, list, and move:
 	},
 }
 
+// errMemoryNotFound reports that a memory command's target does not exist.
+var errMemoryNotFound = errors.New("not found")
+
+// resolveExistingTierKey returns the tier and stored key of the memory a command
+// targets. With an explicit tier it trusts the target; otherwise it infers the
+// tier from the memories that exist under the key, printing the candidates when
+// more than one tier holds it.
+func resolveExistingTierKey(ctx context.Context, cmd *cobra.Command, h *engram.DBHandle, target memoryTarget) (engram.Tier, string, error) {
+	if target.TierExplicit {
+		key, err := target.storedKey()
+		return target.Tier, key, err
+	}
+	tiers, err := target.viewTiers(cmd)
+	if err != nil {
+		return "", "", err
+	}
+	matches, err := engram.ListMemoriesForView(ctx, h.DB, tiers, target.Agent, target.Key)
+	if err != nil {
+		return "", "", err
+	}
+	if len(matches) == 0 {
+		return "", "", fmt.Errorf("%w: %s", errMemoryNotFound, target.Key)
+	}
+	if len(matches) > 1 {
+		fmt.Printf("ambiguous: %q found in multiple tiers, specify --tier:\n", target.Key)
+		for _, m := range matches {
+			fmt.Printf("  %s\n", engram.MemoryLabel(m))
+		}
+		return "", "", fmt.Errorf("ambiguous key")
+	}
+	return matches[0].Tier, matches[0].Key, nil
+}
+
 var memDeleteCmd = &cobra.Command{
 	Use:   "delete <key-or-address>",
 	Short: "Delete a memory entry. Omit --tier to delete if unambiguous.",
@@ -392,34 +516,9 @@ var memDeleteCmd = &cobra.Command{
 		}
 		defer h.DB.Close()
 
-		tier := target.Tier
-		key := target.Key
-		if !target.TierExplicit {
-			tiers, err := target.viewTiers(cmd)
-			if err != nil {
-				return err
-			}
-			matches, err := engram.ListMemoriesForView(ctx, h.DB, tiers, target.Agent, target.Key)
-			if err != nil {
-				return err
-			}
-			if len(matches) == 0 {
-				return fmt.Errorf("not found: %s", target.Key)
-			}
-			if len(matches) > 1 {
-				fmt.Printf("ambiguous: %q found in multiple tiers, specify --tier:\n", target.Key)
-				for _, m := range matches {
-					fmt.Printf("  %s\n", engram.MemoryLabel(m))
-				}
-				return fmt.Errorf("ambiguous key")
-			}
-			tier = matches[0].Tier
-			key = matches[0].Key
-		} else {
-			key, err = target.storedKey()
-			if err != nil {
-				return err
-			}
+		tier, key, err := resolveExistingTierKey(ctx, cmd, h, target)
+		if err != nil {
+			return err
 		}
 
 		if err := engram.DeleteMemory(ctx, h.DB, tier, key,
@@ -462,34 +561,9 @@ content. Omit --tier to resolve the key automatically when it is unambiguous.`,
 		}
 		defer h.DB.Close()
 
-		tier := target.Tier
-		key := target.Key
-		if !target.TierExplicit {
-			tiers, err := target.viewTiers(cmd)
-			if err != nil {
-				return err
-			}
-			matches, err := engram.ListMemoriesForView(ctx, h.DB, tiers, target.Agent, target.Key)
-			if err != nil {
-				return err
-			}
-			if len(matches) == 0 {
-				return fmt.Errorf("not found: %s", target.Key)
-			}
-			if len(matches) > 1 {
-				fmt.Printf("ambiguous: %q found in multiple tiers, specify --tier:\n", target.Key)
-				for _, m := range matches {
-					fmt.Printf("  %s\n", engram.MemoryLabel(m))
-				}
-				return fmt.Errorf("ambiguous key")
-			}
-			tier = matches[0].Tier
-			key = matches[0].Key
-		} else {
-			key, err = target.storedKey()
-			if err != nil {
-				return err
-			}
+		tier, key, err := resolveExistingTierKey(ctx, cmd, h, target)
+		if err != nil {
+			return err
 		}
 
 		// Getter: no summary given -> print the current tldr, or the first-line
@@ -692,6 +766,9 @@ var memPopCmd = &cobra.Command{
 
 func init() {
 	memWriteCmd.Flags().StringVar(&memTldr, "tldr", "", fmt.Sprintf("one-line summary shown at inject time (max %d chars; falls back to the first line of content)", engram.MaxTldrLen))
+	memAppendCmd.Flags().StringVar(&memTldr, "tldr", "", fmt.Sprintf("replace the one-line summary shown at inject time (max %d chars; default keeps the existing tldr)", engram.MaxTldrLen))
+	memAppendCmd.Flags().StringVar(&memAppendSep, "sep", `\n\n`, "separator between existing content and the appended text")
+	memAppendCmd.Flags().BoolVar(&memAppendCreate, "create", false, "create the memory when the key does not exist")
 	memListCmd.Flags().BoolVar(&memListJSON, "json", false, "output as JSON array")
 	memListCmd.Flags().BoolVar(&memListMissingTldr, "missing-tldr", false, "list only memories with no tldr (excludes invariants)")
 	memListCmd.Flags().BoolVar(&memListKeys, "keys", false, "output visible keys only, one per line")
@@ -700,5 +777,5 @@ func init() {
 	memMoveCmd.Flags().StringVar(&moveTo, "to", "", "destination tier (required)")
 	memMoveCmd.Flags().StringVar(&moveToDB, "to-db", "", `destination database: "global" or "project" (default: same as source)`)
 
-	memCmd.AddCommand(memWriteCmd, memReadCmd, memListCmd, memDeleteCmd, memMoveCmd, memPopCmd, memTldrCmd)
+	memCmd.AddCommand(memWriteCmd, memAppendCmd, memReadCmd, memListCmd, memDeleteCmd, memMoveCmd, memPopCmd, memTldrCmd)
 }

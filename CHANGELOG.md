@@ -11,6 +11,17 @@ in-repo companion.
 
 ## [Unreleased]
 
+### Added
+
+- `engram mem append` adds text to the end of an existing memory in one atomic
+  update, so extending a memory no longer means reading the body back and
+  rewriting it. `--sep` sets the separator (default: a blank line), `--tldr`
+  replaces the summary (otherwise kept), and `--create` starts a missing memory.
+  Append bumps the timestamp, records only the appended text in the curation log
+  under the new `append` action, and warns past 3000 characters so the agent can
+  propose consolidating the memory. The safe-memory-updates kernel entry and
+  topic now point to it.
+
 ## [0.16.3] - 2026-09-22
 
 ### Fixed

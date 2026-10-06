@@ -75,6 +75,7 @@ engram mem search "deployment" --limit 10    # cap the ranked result set
 engram mem search "deployment" --full        # include complete bodies
 engram mem tldr engram:long/deployment       # show its session-start summary
 engram mem write engram:long/decision "body" # store a settled project memory
+engram mem append engram:long/decision "more" # add to its body, keeping the rest
 engram mem move engram:short/plan --to cold  # archive without deleting it
 ```
 

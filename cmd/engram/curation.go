@@ -23,7 +23,7 @@ var curationCmd = &cobra.Command{
 	Use:   "curation",
 	Short: "List the append-only log of human curation actions on memory",
 	Long: `Show the append-only curation log: one immutable row per mutating curation
-action (create, update, delete, move, tldr-set, skill-adopt, skill-classify).
+action (create, update, delete, move, tldr-set, append, skill-adopt, skill-classify).
 
 The memories table is last-write-wins, so an overwrite or delete erases all prior
 state. This log preserves that history -- including the content and tldr snapshot
@@ -100,7 +100,7 @@ The exact query behind this command:
 func init() {
 	curationCmd.Flags().BoolVarP(&curationGlobal, "global", "g", false, "read the global (~/.engram) curation log")
 	curationCmd.Flags().IntVar(&curationLimit, "limit", 50, "maximum number of events to show (0 for all)")
-	curationCmd.Flags().StringVar(&curationAction, "action", "", "filter by action (create, update, delete, move, tldr-set, skill-adopt, skill-classify)")
+	curationCmd.Flags().StringVar(&curationAction, "action", "", "filter by action (create, update, delete, move, tldr-set, append, skill-adopt, skill-classify)")
 	curationCmd.Flags().StringVar(&curationSession, "session", "", "filter by session id")
 	curationCmd.Flags().StringVar(&curationKey, "key", "", "filter by memory key")
 	curationCmd.Flags().BoolVar(&curationJSON, "json", false, "output as a JSON array")

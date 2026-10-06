@@ -37,6 +37,9 @@ const (
 	CurationMove CurationAction = "move"
 	// CurationTldrSet curates a memory's one-line summary without rewriting content.
 	CurationTldrSet CurationAction = "tldr-set"
+	// CurationAppend adds text to the end of an existing memory; the row records
+	// only the appended text.
+	CurationAppend CurationAction = "append"
 	// CurationSkillAdopt promotes an existing long-term memory into a skill by
 	// attaching a retrieval trigger, without rewriting its body.
 	CurationSkillAdopt CurationAction = "skill-adopt"
@@ -210,7 +213,7 @@ func captureCuration(ctx context.Context, db curationExecer, ev CurationEvent) {
 func validCurationAction(action CurationAction) string {
 	switch action {
 	case CurationCreate, CurationUpdate, CurationDelete, CurationMove,
-		CurationTldrSet, CurationSkillAdopt, CurationSkillClassify:
+		CurationTldrSet, CurationAppend, CurationSkillAdopt, CurationSkillClassify:
 		return ""
 	case "":
 		return "empty"

@@ -58,6 +58,7 @@ Common operations:
   engram mem -g list personality            list primary + agent personality layers
   engram mem -g -t preference write <key> <content> --tldr "<summary>"
   engram mem write engram:long/<key> <content>   write project long-term memory
+  engram mem append engram:long/<key> <text>     add to an existing memory's body
   engram mem move engram:short/<key> --to long   promote a project memory
   engram mem search <query>                 ranked addresses and summaries
   engram mem search <query> --limit 10      cap the ranked result set

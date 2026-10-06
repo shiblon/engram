@@ -1672,6 +1672,68 @@ func TestInjectContextTextTldrAndProjectPreferences(t *testing.T) {
 	})
 }
 
+func TestAppendMemory(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+
+	if err := WriteMemory(ctx, db, Memory{Tier: TierLong, Key: "k", Content: "one\n\n", Tldr: "gist", TS: 100}); err != nil {
+		t.Fatal(err)
+	}
+
+	m, _, err := AppendMemory(ctx, db, MemoryAppend{Tier: TierLong, Key: "k", Text: "  two\n", Sep: "\n\n"})
+	if err != nil || m == nil {
+		t.Fatalf("append: m=%v err=%v", m, err)
+	}
+	if m.Content != "one\n\ntwo" {
+		t.Errorf("content = %q, want trailing whitespace collapsed into one separator", m.Content)
+	}
+	if m.Tldr != "gist" {
+		t.Errorf("tldr = %q, want existing tldr kept", m.Tldr)
+	}
+	if m.TS <= 100 {
+		t.Errorf("ts = %d, want bumped past 100", m.TS)
+	}
+
+	tldr := "new gist"
+	m, _, err = AppendMemory(ctx, db, MemoryAppend{Tier: TierLong, Key: "k", Text: "three", Sep: "; ", Tldr: &tldr})
+	if err != nil || m == nil {
+		t.Fatalf("append with tldr: m=%v err=%v", m, err)
+	}
+	stored, err := ReadMemory(ctx, db, TierLong, "k")
+	if err != nil || stored == nil {
+		t.Fatalf("read: %v", err)
+	}
+	if stored.Content != "one\n\ntwo; three" || stored.Tldr != "new gist" {
+		t.Errorf("stored = %q / %q", stored.Content, stored.Tldr)
+	}
+
+	// Missing key: nil without Create, a fresh memory with it.
+	m, _, err = AppendMemory(ctx, db, MemoryAppend{Tier: TierLong, Key: "missing", Text: "x"})
+	if err != nil || m != nil {
+		t.Fatalf("append to missing key: m=%v err=%v, want nil, nil", m, err)
+	}
+	if got, _ := ReadMemory(ctx, db, TierLong, "missing"); got != nil {
+		t.Fatalf("append without Create created %+v", got)
+	}
+	m, created, err := AppendMemory(ctx, db, MemoryAppend{Tier: TierLong, Key: "missing", Text: "x", Sep: "\n", Create: true})
+	if err != nil || m == nil || m.Content != "x" || !created {
+		t.Fatalf("append with Create: m=%+v created=%v err=%v", m, created, err)
+	}
+
+	// An empty existing body takes the text without a leading separator.
+	if err := WriteMemory(ctx, db, Memory{Tier: TierShort, Key: "empty", Content: ""}); err != nil {
+		t.Fatal(err)
+	}
+	m, _, err = AppendMemory(ctx, db, MemoryAppend{Tier: TierShort, Key: "empty", Text: "first", Sep: "\n\n"})
+	if err != nil || m == nil || m.Content != "first" {
+		t.Fatalf("append to empty body: m=%+v err=%v", m, err)
+	}
+
+	if _, _, err := AppendMemory(ctx, db, MemoryAppend{Tier: TierLong, Key: "k", Text: "  "}); err == nil {
+		t.Error("blank append text accepted")
+	}
+}
+
 func TestSetMemoryTldr(t *testing.T) {
 	ctx := context.Background()
 	db := testDB(t)

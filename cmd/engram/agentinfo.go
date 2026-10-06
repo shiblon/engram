@@ -76,6 +76,15 @@ const memoryWriteSafetyGuidance = `## Safe memory updates
 
 To change only the tldr of an existing memory, preserve its body structurally:
   engram mem ... tldr <key> "<one-line summary>"
+To add to an existing memory's body, append instead of rewriting it:
+  engram mem ... append <key> "<text>" [--tldr "<revised summary>"]
+The text joins the body after a blank line (--sep changes the separator), the
+tldr is kept unless --tldr replaces it, and a missing key is an error unless
+--create is given. Revise the tldr when the addition changes what the memory is
+about. When append warns that a memory has grown large, check whether it still
+holds one idea; if it has accumulated overlapping or superseded entries, propose
+a consolidated rewrite or a split to the user.
+
 Do not feed ` + "`engram mem read`" + ` output back into ` + "`engram mem write`" + `. Read output is
 display-formatted, not a round-trip format; after a failed write it also contains
 the old body, so a read-back retry can silently discard the intended edit.`
@@ -92,7 +101,7 @@ Three things qualify: an existing entry answers the same question differently; a
 existing entry states the same intent, and a second copy will drift; or you are
 about to write "this outranks X" instead of a principle covering both.
 
-When one fires, do not append. Iterate with the user on a replacement memory that
+When one fires, do not write another memory or append to the existing one. Iterate with the user on a replacement memory that
 covers the confusing cases and harmonizes them. Sometimes existing memories must
 be conditionally scoped; in the best case a single new principle replaces them
 all. Write the result and retire what it replaced.
@@ -246,6 +255,12 @@ that structural change and store only a terse pointer to where it is enforced --
 memory alone loses to harness/config defaults at the point of action. Otherwise
 choose the tier and database (below), write it with engram mem, give it a tldr,
 and tell the user where it went and why.
+
+When the new information extends an existing memory -- another item for a list,
+a follow-up to a decision, progress on in-flight work -- add it to that entry
+with engram mem append <address> "<text>" instead of creating a sibling memory
+or rewriting the body. Revise its tldr with --tldr when the addition changes
+what the memory is about.
 
 When starting a digression, or when the user says "come back to this": save the
 current context to short-term first, confirm it is saved, then proceed. Re-read
@@ -509,9 +524,9 @@ func guidanceTopics() []guidanceTopic {
 		{
 			Name:        "safe-memory-updates",
 			Title:       "Safe memory updates",
-			Summary:     "Change summaries without corrupting memory bodies.",
-			When:        "When changing only an existing memory's tldr.",
-			Do:          "Use `engram mem ... tldr`; never feed display-formatted `engram mem read` output back into `engram mem write`.",
+			Summary:     "Change summaries and extend bodies without corrupting memory.",
+			When:        "When changing only an existing memory's tldr, or adding to its body.",
+			Do:          "Use `engram mem ... tldr` for a summary and `engram mem ... append` to add to a body; never feed display-formatted `engram mem read` output back into `engram mem write`.",
 			Read:        "Read `engram agentinfo safe-memory-updates` before retrying a failed memory edit.",
 			BodyHeading: "Safe memory updates",
 		},
