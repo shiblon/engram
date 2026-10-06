@@ -11,6 +11,8 @@ in-repo companion.
 
 ## [Unreleased]
 
+## [0.16.4] - 2026-10-05
+
 ### Added
 
 - `engram mem append` adds text to the end of an existing memory in one atomic
@@ -690,7 +692,8 @@ _Internal changes only._
 - first take
 - Initial commit
 
-[Unreleased]: https://github.com/shiblon/engram/compare/v0.16.3...HEAD
+[Unreleased]: https://github.com/shiblon/engram/compare/v0.16.4...HEAD
+[0.16.4]: https://github.com/shiblon/engram/compare/v0.16.3...v0.16.4
 [0.16.3]: https://github.com/shiblon/engram/compare/v0.16.2...v0.16.3
 [0.16.2]: https://github.com/shiblon/engram/compare/v0.16.1...v0.16.2
 [0.16.1]: https://github.com/shiblon/engram/compare/v0.16.0...v0.16.1
