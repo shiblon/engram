@@ -28,15 +28,21 @@ homebrew_casks:
     license: "Apache-2.0"
     # The binary is unsigned/un-notarized, and casks quarantine what they
     # download -- without this, macOS Gatekeeper blocks the first run with
-    # "engram is damaged and cannot be opened." The old brews formula never
-    # quarantined; casks do, so the migration has to strip the attribute itself.
-    # Proper signing + notarization would be the real fix.
-    hooks:
-      post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/engram"]
-          end
+    # "engram is damaged and cannot be opened." Proper signing + notarization
+    # would be the real fix.
+    #
+    # Homebrew 7 sandboxes postflight_steps: the run step may write only to its
+    # writable_paths. GoReleaser's hooks still emit the deprecated postflight
+    # block (goreleaser/goreleaser#6870), so the stanza is written here by hand.
+    # The custom block is a Go template, hence the escaped Homebrew placeholders.
+    custom_block: |
+      postflight_steps do
+        on_macos do
+          run "/usr/bin/xattr",
+              args:           ["-dr", "com.apple.quarantine", "{{ "{{" }}staged_path{{ "}}" }}/engram"],
+              writable_paths: ["{{ "{{" }}staged_path{{ "}}" }}/engram"]
+        end
+      end
 
 # Debian packages attached to each release for dpkg install. No apt repo yet --
 # these are download-and-install artifacts, not an auto-updating source. nFPM is

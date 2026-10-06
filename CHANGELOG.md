@@ -11,6 +11,14 @@ in-repo companion.
 
 ## [Unreleased]
 
+### Fixed
+
+- The Homebrew cask strips macOS quarantine with Homebrew 7's
+  `postflight_steps` instead of the deprecated `postflight` block, so
+  `brew install` and `brew upgrade` no longer warn. GoReleaser's cask hooks
+  still emit the old stanza (goreleaser/goreleaser#6870), so the release
+  config writes the steps through `custom_block`.
+
 ## [0.16.4] - 2026-10-05
 
 ### Added
