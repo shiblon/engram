@@ -11,6 +11,8 @@ in-repo companion.
 
 ## [Unreleased]
 
+## [0.16.5] - 2026-10-05
+
 ### Fixed
 
 - The Homebrew cask strips macOS quarantine with Homebrew 7's
@@ -700,7 +702,8 @@ _Internal changes only._
 - first take
 - Initial commit
 
-[Unreleased]: https://github.com/shiblon/engram/compare/v0.16.4...HEAD
+[Unreleased]: https://github.com/shiblon/engram/compare/v0.16.5...HEAD
+[0.16.5]: https://github.com/shiblon/engram/compare/v0.16.4...v0.16.5
 [0.16.4]: https://github.com/shiblon/engram/compare/v0.16.3...v0.16.4
 [0.16.3]: https://github.com/shiblon/engram/compare/v0.16.2...v0.16.3
 [0.16.2]: https://github.com/shiblon/engram/compare/v0.16.1...v0.16.2
